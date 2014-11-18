@@ -1,0 +1,28 @@
+This git repo does not contain the original DVIDSparkServices git history!
+
+What happened here?
+
+Why don't the commit SHA values in this repo match the ones in the
+  main DVIDSparkServices repo?
+
+And where are all the test input data files?
+
+I deleted them.  The 'flyemflows' repo is based on an older
+project named DVIDSparkServices.  Despite the significant break
+with the old project, I wanted to preserve the git history of
+the old project. However, the old project made the unfortunate
+decision to include large binary files in its git repo.
+Definitely a no-no.
+
+Due to that unnecessary weight, I considered simply starting a
+brand new git repo from scratch when I started the flyemflows project.
+But that would lose the git history altogether. Instead, I rewrote the git
+history entirely, and dropped all the binary test input files.
+
+This means you won't be able to check out an old commit and run the integration tests.
+(If you're really interested in that, find the original DVIDSparkServices repo.)
+But at least you can see the full git commit history for the source code.
+
+Stuart Berg
+@stuarteberg
+2019-06-10
