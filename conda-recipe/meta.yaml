@@ -1,5 +1,5 @@
 package:
-  name: dvidsparkservices 
+  name: flyemflows 
 
   # If we're using a non-tagged revision, append '.postN' to the version
   {% if GIT_DESCRIBE_NUMBER|int != 0 %}
@@ -9,7 +9,7 @@ package:
   {% endif %}
 
 source:
-  git_url: ../
+  path: ../
 
 build:
   number: 0
@@ -17,10 +17,7 @@ build:
 
   noarch: python  
   script: python setup.py install --single-version-externally-managed --record=record.txt
-  entry_points:
-    - launchworkflow = DVIDSparkServices.workflow.launchworkflow:main
-    - sparklaunch_janelia_lsf = DVIDSparkServices.spark_launch_scripts.janelia_lsf.sparklaunch_janelia_lsf:main
-    - sparklaunch_janelia_lsf_int = DVIDSparkServices.spark_launch_scripts.janelia_lsf.sparklaunch_janelia_lsf_int:main
+  #entry_points:
 
 requirements:
   build:
@@ -30,39 +27,33 @@ requirements:
   run:
     - python >=3.6
     - python {{PY_VER}}*
-    - jsonschema
-    - pyspark
+    - requests
+    - psutil
+
     - numpy
+    - pandas
     - numba
-    - neuroproof
-    - neutube-python >=0.1.post8
+    - scipy
+    - scikit-image
+
+    - dask
+    - dask-jobqueue
+
+    # Misc. serialization tools
+    - cloudpickle
+    - tblib
+
+    - confiddler
+
+    # DVID support
     - libdvid-cpp >=0.2
     - neuclease >=0.2.post107
-    - vol2mesh >=0.0.post116
-    - requests
-    - scikit-image
-    - pillow
-    - scipy
-    - python-lz4
-    - python-snappy
-    #- ilastik-versions-no-solvers  1.2  np111py27_14   # [osx]
-    #- ilastik-versions-no-solvers  1.2  np111py27_12   # [linux]
-    #- ilastik-meta
-    - quilted >=0.0.post13
-    - logcollector >=0.1.post13
-    - dvid-resource-manager
-    - psutil
-    - pandas
-    - munkres
-    - ruamel.yaml >=0.15.71
-    - z5py
-    - google-cloud-storage
-    - tblib
     - dvidutils >=0.0.post44
-    - pyspark-flame
-    - tqdm # For progress bar reporting
-    - protobuf
-    - cloudpickle
+    - dvid-resource-manager
+
+    # misc. image formats
+    - pillow
+    - z5py
     
     # Needed for brainmaps support:
     - httplib2
@@ -70,15 +61,14 @@ requirements:
 
 test:
   requires:
-    - nose
+    - pytest
     - numpy-allocation-tracking
 
   imports:
-    - DVIDSparkServices
-    #- ilastik
+    - flyemflows
 
 about:
-  home: http://github.com/janelia-flyem/DVIDSparkServices
+  home: http://github.com/janelia-flyem/flyemflows
   license: BSD (3-clause)
   license_file: LICENSE.txt
-  summary: Python framework for EM Spark-based services 
+  summary: Various compute-cluster workflows for the FlyEM project.
