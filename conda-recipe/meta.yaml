@@ -40,6 +40,7 @@ requirements:
     - dask-jobqueue
 
     # Misc. serialization tools
+    - lz4
     - cloudpickle
     - tblib
 

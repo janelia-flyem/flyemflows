@@ -3,7 +3,7 @@ import numpy as np
 
 from . import VolumeServiceReader
 
-from DVIDSparkServices.json_util import flow_style
+from confiddler import flow_style
 
 logger = logging.getLogger(__name__)
 

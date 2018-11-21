@@ -1,13 +1,11 @@
 import os
 import lz4
-
 import numpy as np
 
 
 from dvidutils import LabelMapper
 
-from DVIDSparkServices.json_util import validate
-from DVIDSparkServices.sparkdvid.CompressedNumpyArray import CompressedNumpyArray
+from confiddler import validate
 from DVIDSparkServices.io_util.labelmap_utils import LabelMapSchema, load_labelmap
 
 from . import VolumeServiceWriter
@@ -61,7 +59,7 @@ class LabelmappedVolumeService(VolumeServiceWriter):
         if self._compressed_mapping_pairs is None:
             # Load the labelmapping and then compress 
             mapping_pairs = self.mapping_pairs
-            self._compressed_mapping_pairs = CompressedNumpyArray(mapping_pairs)
+            self._compressed_mapping_pairs = (mapping_pairs.shape, mapping_pairs.dtype, lz4.compress(self.mapping_pairs))
 
         d = self.__dict__.copy()
         
@@ -76,7 +74,8 @@ class LabelmappedVolumeService(VolumeServiceWriter):
     def mapping_pairs(self):
         if self._mapping_pairs is None:
             if self._compressed_mapping_pairs is not None:
-                self._mapping_pairs = self._compressed_mapping_pairs.deserialize()
+                shape, dtype, compressed = self._compressed_mapping_pairs
+                self._mapping_pairs = np.frombuffer(lz4.uncompress(compressed), dtype).reshape(shape)
             else:
                 self._mapping_pairs = load_labelmap(self.labelmap_config, self.config_dir)
                 

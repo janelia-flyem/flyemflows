@@ -1,16 +1,14 @@
 import socket
 import numpy as np
+from requests import HTTPError
 
+from confiddler import validate
 from dvid_resource_manager.client import ResourceManagerClient
 
-from libdvid import DVIDException
+from neuclease.util import boxes_from_grid, box_to_slicing
+from neuclease.dvid import fetch_instance_info, fetch_raw, post_raw, fetch_labelarray_voxels, post_labelarray_blocks
 
-from DVIDSparkServices.util import replace_default_entries
-from DVIDSparkServices.json_util import validate
-from DVIDSparkServices.auto_retry import auto_retry
-from DVIDSparkServices.sparkdvid.sparkdvid import sparkdvid, retrieve_node_service
-from DVIDSparkServices.dvid.metadata import DataInstance, get_blocksize
-
+from ..util import auto_retry, replace_default_entries
 from . import GeometrySchema, VolumeServiceReader, VolumeServiceWriter, NewAxisOrderSchema, RescaleLevelSchema, LabelMapSchema
 
 DvidServiceSchema = \
@@ -144,6 +142,8 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         ## instance, dtype, etc.
         ##
 
+        config_block_width = volume_config["geometry"]["block-width"]
+
         if "segmentation-name" in volume_config["dvid"]:
             self._instance_name = volume_config["dvid"]["segmentation-name"]
             self._dtype = np.uint64
@@ -154,17 +154,30 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         self._dtype_nbytes = np.dtype(self._dtype).type().nbytes
 
         try:
-            data_instance = DataInstance(self._server, self._uuid, self._instance_name)
-            self._instance_type = data_instance.datatype
-            self._is_labels = data_instance.is_labels()
-        except ValueError:
+            instance_info = fetch_instance_info(self._server, self._uuid, self._instance_name)
+        except HTTPError as ex:
+            if ex.response.status_code != 400:
+                raise
+
             # Instance doesn't exist yet -- we are going to create it.
             if "segmentation-name" in volume_config["dvid"]:
-                self._instance_type = 'labelarray' # get_voxels doesn't really care if it's labelarray or labelmap...
+                self._instance_type = 'labelmap' # get_voxels doesn't really care if it's labelarray or labelmap...
                 self._is_labels = True
             else:
                 self._instance_type = 'uint8blk'
                 self._is_labels = False
+            
+            block_width = config_block_width
+        else:
+            self._instance_type = instance_info["Base"]["TypeName"]
+            self._is_labels = self._instance_type in ('labelblk', 'labelarray', 'labelmap')
+            if self._instance_type == "googlevoxels" and instance_info["Extended"]["Scales"][0]["channelType"] == "UINT64":
+                self._is_labels = True
+
+            bs_x, bs_y, bs_z = instance_info["Extended"]["BlockSize"]
+            assert (bs_x, bs_y, bs_z), "Expected blocks to be cubes."
+            block_width = bs_x
+
 
         if "disable-indexing" in volume_config["dvid"]:
             self.disable_indexing = volume_config["dvid"]["disable-indexing"]
@@ -174,25 +187,16 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         # Whether or not to read the supervoxels from the labelmap instance instead of agglomerated labels.
         self.supervoxels = ("supervoxels" in volume_config["dvid"]) and (volume_config["dvid"]["supervoxels"])
 
-        ##
-        ## Block width
-        ##
-        config_block_width = volume_config["geometry"]["block-width"]
 
-        try:
-            block_shape = get_blocksize(self._server, self._uuid, self._instance_name)
-            assert block_shape[0] == block_shape[1] == block_shape[2], \
-                "Expected blocks to be cubes."
-            block_width = block_shape[0]
-        except DVIDException:
-            block_width = config_block_width
-
+        ##
+        ## default block width
+        ##
+        assert config_block_width in (-1, block_width), \
+            f"DVID volume block-width ({config_block_width}) from config does not match server metadata ({block_width})"
         if block_width == -1:
             # No block-width specified; choose default
             block_width = 64
 
-        assert config_block_width in (-1, block_width), \
-            f"DVID volume block-width ({config_block_width}) from config does not match server metadata ({block_width})"
 
         ##
         ## bounding-box
@@ -254,19 +258,6 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         return self._instance_name
 
     @property
-    def node_service(self):
-        if self._node_service is None:
-            try:
-                # We don't pass the resource manager details here
-                # because we use the resource manager from python.
-                self._node_service = retrieve_node_service(self._server, self._uuid, "", "")
-            except Exception as ex:
-                host = socket.gethostname()
-                msg = f"Host {host}: Failed to connect to {self._server} / {self._uuid}"
-                raise RuntimeError(msg) from ex
-        return self._node_service
-
-    @property
     def dtype(self):
         return self._dtype
 
@@ -293,24 +284,22 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
                 predicate=lambda ex: '503' in str(ex.args[0]) or '504' in str(ex.args[0]))
     @auto_retry(3, pause_between_tries=60.0, logging_name=__name__)
     def get_subvolume(self, box_zyx, scale=0):
-        shape = np.asarray(box_zyx[1]) - box_zyx[0]
         req_bytes = self._dtype_nbytes * np.prod(box_zyx[1] - box_zyx[0])
         throttle = (self._resource_manager_client.server_ip == "")
 
         instance_name = self._instance_name
-        if self._instance_type == 'uint8blk' and scale > 0:
+        if self._instance_type.endswith('blk') and scale > 0:
             # Grayscale multi-scale is achieved via multiple instances
             instance_name = f"{instance_name}_{scale}"
             scale = 0
 
         try:
             with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
-                return sparkdvid.get_voxels( self._server, self._uuid, instance_name,
-                                             scale, self._instance_type, self._is_labels,
-                                             shape, box_zyx[0],
-                                             throttle=throttle,
-                                             supervoxels=self.supervoxels,
-                                             node_service=self.node_service )
+                if self._instance_type in ('labelarray', 'labelmap'):
+                    return fetch_labelarray_voxels(self._server, self._uuid, instance_name, box_zyx, scale, throttle, supervoxels=self.supervoxels)
+                else:
+                    return fetch_raw(self._server, self._uuid, instance_name, box_zyx, throttle)
+
         except Exception as ex:
             host = socket.gethostname()
             msg = f"Host {host}: Failed to fetch subvolume: box_zyx = {box_zyx.tolist()}"
@@ -325,32 +314,41 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
     def write_subvolume(self, subvolume, offset_zyx, scale):
         req_bytes = self._dtype_nbytes * np.prod(subvolume.shape)
         throttle = (self._resource_manager_client.server_ip == "")
+
+        offset_zyx = np.asarray(offset_zyx)
+        shape_zyx = np.asarray(subvolume.shape)
+        box_zyx = np.array([offset_zyx,
+                            offset_zyx + shape_zyx])
         
         instance_name = self._instance_name
-        if self._instance_type == 'uint8blk' and scale > 0:
+
+        if self._instance_type.endswith('blk') and scale > 0:
             # Grayscale multi-scale is achieved via multiple instances
             instance_name = f"{instance_name}_{scale}"
             scale = 0
 
+        if self._instance_type == 'labelmap':
+            assert self.supervoxels, "You cannot post data to a labelmap instance unless you specify 'supervoxels: true' in your config."
+
+        is_block_aligned = (box_zyx % self.block_width == 0).all()
+        
         try:
-            with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
-                return sparkdvid.post_voxels( self._server, self._uuid, instance_name,
-                                              scale, self._instance_type, self._is_labels,
-                                              subvolume, offset_zyx,
-                                              throttle=throttle,
-                                              disable_indexing=self.disable_indexing,
-                                              node_service=self.node_service )
+            # Labelarray data can be posted very efficiently if the request is block-aligned
+            if self._instance_type in ('labelarray', 'labelmap') and is_block_aligned:
+                block_boxes = list(boxes_from_grid(box_zyx, self.block_width))
+                corners = [box[0] for box in block_boxes]
+                blocks = (subvolume[box_to_slicing(*(box - offset_zyx))] for box in block_boxes)
+
+                with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
+                    post_labelarray_blocks( self._server, self._uuid, self.instance_name, corners, blocks, scale,
+                                            downres=False, noindexing=self.disable_indexing, throttle=throttle )
+            else:
+                with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
+                    post_raw( self._server, self._uuid, self.instance_name, offset_zyx, subvolume,
+                              throttle=throttle, mutate=not self.disable_indexing )
+
         except Exception as ex:
             host = socket.gethostname()
             msg = f"Host {host}: Failed to write subvolume: offset_zyx = {offset_zyx.tolist()}, shape = {subvolume.shape}"
             raise RuntimeError(msg) from ex
 
-    def __getstate__(self):
-        """
-        Pickle representation.
-        """
-        d = self.__dict__.copy()
-        # Don't attempt to pickle the DVIDNodeService (it isn't pickleable).
-        # Instead, set it to None so it will be lazily regenerated after unpickling.
-        d['_node_service'] = None
-        return d

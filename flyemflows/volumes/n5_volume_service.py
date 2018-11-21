@@ -6,8 +6,8 @@ import z5py
 
 from neuclease.util import box_to_slicing
 
-from DVIDSparkServices.json_util import validate
-from DVIDSparkServices.util import replace_default_entries
+from confiddler import validate
+from ..util import replace_default_entries
 
 from . import VolumeServiceReader, GeometrySchema
 

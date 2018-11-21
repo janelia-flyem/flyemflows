@@ -1,4 +1,3 @@
-
 from abc import ABCMeta, abstractmethod, abstractproperty
 
 class VolumeService(metaclass=ABCMeta):

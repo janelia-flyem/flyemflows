@@ -2,11 +2,11 @@ import numpy as np
 
 from dvid_resource_manager.client import ResourceManagerClient
 
-from DVIDSparkServices.util import replace_default_entries
-from DVIDSparkServices.json_util import validate
-from DVIDSparkServices.auto_retry import auto_retry
-from DVIDSparkServices.io_util.brainmaps import BrainMapsVolume
+from confiddler import validate
 
+from ..util import auto_retry, replace_default_entries
+
+from .brainmaps_volume import BrainMapsVolume
 from . import VolumeServiceReader, GeometrySchema
 
 BrainMapsSegmentationServiceSchema = \

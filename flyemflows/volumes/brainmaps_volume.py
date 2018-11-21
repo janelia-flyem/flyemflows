@@ -8,7 +8,6 @@ from oauth2client.service_account import ServiceAccountCredentials
 import numpy as np
 import snappy
 
-from .labelmap_utils import groups_from_edges, mapping_from_groups
 
 # DEBUG 'logging' (Doesn't actually use logging module)
 #import httplib2
@@ -442,6 +441,53 @@ def fetch_subvol_data(http, project, dataset, volume_id, corner_xyz, size_xyz, s
     if response['status'] != '200':
         raise RuntimeError(f"Bad response ({response['status']}):\n{content.decode('utf-8')}")
     return content
+
+###
+### Helper functions
+###
+
+def groups_from_edges(edges):
+    """
+    The given list of edges [(node_a, node_b),(node_a, node_b),...] encode a graph.
+    Find the connected components in the graph and return them as a dict:
+    
+    { group_id : [node_id, node_id, node_id] }
+    
+    ...where each group_id is the minimum node_id of the group.
+    """
+    import networkx as nx
+    g = nx.Graph()
+    g.add_edges_from(edges)
+    
+    groups = {}
+    for segment_set in nx.connected_components(g):
+        # According to Jeremy, group_id == the min segment_id of the group.
+        groups[min(segment_set)] = list(sorted(segment_set))
+
+    return groups
+
+
+def mapping_from_groups(groups):
+    """
+    Given a dict of { group_id: [node_a, node_b,...] },
+    Return a reverse-mapping in the form of an ndarray:
+        
+        [[node_a, group_id],
+         [node_b, group_id],
+         [node_c, group_id],
+         ...
+        ]
+    """
+    element_count = sum(map(len, groups.values()))
+    
+    def generate():
+        for group_id, members in groups.items():
+            for member in members:
+                yield member
+                yield group_id
+
+    mapping = np.fromiter( generate(), np.uint64, 2*element_count ).reshape(-1,2)
+    return mapping
 
 
 class NumpyConvertingEncoder(json.JSONEncoder):

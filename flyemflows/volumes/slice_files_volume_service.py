@@ -5,10 +5,10 @@ import glob
 import numpy as np
 from PIL import Image
 
+from confiddler import validate
 from neuclease.util import box_to_slicing
 
-from DVIDSparkServices.json_util import validate
-from DVIDSparkServices.util import replace_default_entries
+from ..util import replace_default_entries
 from . import VolumeServiceReader, VolumeServiceWriter, GeometrySchema
 
 

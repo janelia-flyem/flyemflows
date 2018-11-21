@@ -1,8 +1,9 @@
 import numpy as np
+import scipy.ndimage
 from skimage.util.shape import view_as_blocks
 
 from neuclease.util import box_to_slicing
-from DVIDSparkServices.reconutils.downsample import downsample_labels_3d, downsample_raw, downsample_box
+from dvidutils import downsample_labels
 
 from . import VolumeServiceReader
 
@@ -98,9 +99,9 @@ class ScaledVolumeService(VolumeServiceReader):
 
             if self.dtype == np.uint64:
                 # Assume that uint64 means labels.
-                downsampled_data, _ = downsample_labels_3d( orig_data, 2**self.scale_delta )
+                downsampled_data, _ = downsample_labels( orig_data, 2**self.scale_delta )
             else:
-                downsampled_data = downsample_raw( orig_data, self.scale_delta )[-1]
+                downsampled_data = scipy.ndimage.interpolation.zoom(orig_data, 1/(2**self.scale_delta), mode='reflect')
             return downsampled_data
         else:
             upsample_factor = int(2**-self.scale_delta)
@@ -117,3 +118,17 @@ class ScaledVolumeService(VolumeServiceReader):
 
             # Force contiguous so caller doesn't have to worry about it.
             return np.asarray(requested_data, order='C')
+
+
+def downsample_box( box, block_shape ):
+    """
+    Given a box (i.e. start and stop coordinates) and a
+    block_shape (downsampling factor), return the corresponding box
+    in downsampled coordinates, "rounding out" if the box is not an
+    even multiple of the block shape.
+    """
+    assert block_shape.shape[0] == box.shape[1]
+    downsampled_box = np.zeros_like(box)
+    downsampled_box[0] = box[0] // block_shape
+    downsampled_box[1] = (box[1] + block_shape - 1) // block_shape
+    return downsampled_box
