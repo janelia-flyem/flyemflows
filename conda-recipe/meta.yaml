@@ -58,6 +58,7 @@ requirements:
     # Needed for brainmaps support:
     - httplib2
     - oauth2client
+    - snappy
 
 test:
   requires:
