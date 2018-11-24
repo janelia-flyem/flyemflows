@@ -3,14 +3,10 @@ from functools import partial
 
 import cloudpickle
 import numpy as np
+import dask.bag
 
-from neuclease.util import Grid, boxes_from_grid, clipped_boxes_from_grid, box_intersection, box_to_slicing, overwrite_subvol, extract_subvol
-
-from DVIDSparkServices.util import box_as_tuple
-from DVIDSparkServices import rddtools as rt
-from DVIDSparkServices.util import cpus_per_worker, num_worker_nodes, persist_and_execute, unpersist
-from DVIDSparkServices.io_util.labelmap_utils import load_labelmap
-from DVIDSparkServices.sparkdvid.CompressedNumpyArray import CompressedNumpyArray
+from neuclease.util import Grid, boxes_from_grid, clipped_boxes_from_grid, box_intersection, box_to_slicing, box_as_tuple, overwrite_subvol, extract_subvol
+from ..util import CompressedNumpyArray
 
 logger = logging.getLogger(__name__)
 
@@ -77,12 +73,6 @@ class Brick:
         self._create_volume_fn = None
         if lazy_creation_fn is not None:
             self._create_volume_fn = cloudpickle.dumps(lazy_creation_fn)
-
-    def __hash__(self):
-        if self._hash is None:
-            return rt.better_hash(tuple(self.logical_box[0].tolist()))
-        else:
-            return self._hash
 
     def __str__(self):
         if (self.logical_box == self.physical_box).all():
@@ -163,9 +153,9 @@ class Brick:
         self._volume = None
         self._destroyed = True
 
-def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func, sc=None, rdd_partition_length=None, sparse_boxes=None, lazy=False ):
+def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func, client, partition_size=None, sparse_boxes=None, lazy=False ):
     """
-    Generate an RDD or iterable of Bricks for the given bounding box and grid.
+    Generate a dask.Bag of Bricks for the given bounding box and grid.
      
     Args:
         bounding_box:
@@ -179,11 +169,11 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
             Note: The callable will be unpickled only once per partition, so initialization
                   costs after unpickling are only incurred once per partition.
  
-        sc:
-            SparkContext. If provided, an RDD is returned.  Otherwise, returns an ordinary Python iterable.
+        client:
+            dask.Client
  
-        rdd_partition_length:
-            Optional. If provided, the RDD will have (approximately) this many bricks per partition.
+        partition_size:
+            Optional. If provided, the dask.Bag will have (approximately) this many bricks per partition.
         
         sparse_boxes:
             Optional.
@@ -226,38 +216,28 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
             return (physical_box[1] > logical_box[0]).all() and (physical_box[0] < logical_box[1]).all()
         logical_and_physical_boxes = filter(is_valid, logical_and_physical_boxes )
 
-    if sc:
-        if not hasattr(logical_and_physical_boxes, '__len__'):
-            logical_and_physical_boxes = list(logical_and_physical_boxes) # need len()
+    if not hasattr(logical_and_physical_boxes, '__len__'):
+        logical_and_physical_boxes = list(logical_and_physical_boxes) # need len()
 
-        num_rdd_partitions = None
-        if rdd_partition_length is not None:
-            rdd_partition_length = max(1, rdd_partition_length)
-            num_rdd_partitions = int( np.ceil( len(logical_and_physical_boxes) / rdd_partition_length ) )
+    num_bricks = len(logical_and_physical_boxes)
+
+    if partition_size is not None:
+        partition_size = max(1, partition_size)
 
         # If we're working with a tiny volume (e.g. testing),
         # make sure we at least parallelize across all cores.
-        if num_rdd_partitions is not None and (num_rdd_partitions < cpus_per_worker() * num_worker_nodes()):
-            num_rdd_partitions = cpus_per_worker() * num_worker_nodes()
+        total_cores = sum( client.ncores().values() )
+        if (num_bricks // partition_size) < total_cores:
+            partition_size = num_bricks // total_cores
 
-        def brick_size(log_phys):
-            _logical, physical = log_phys
-            return np.uint64(np.prod(physical[1] - physical[0]))
-        total_volume = sum(map(brick_size, logical_and_physical_boxes))
-        logger.info(f"Initializing RDD of {len(logical_and_physical_boxes)} Bricks "
-                    f"(over {num_rdd_partitions} partitions) with total volume {total_volume/1e9:.1f} Gvox")
+    def brick_size(log_phys):
+        _logical, physical = log_phys
+        return np.uint64(np.prod(physical[1] - physical[0]))
 
-        # Enumerate and repartition to get perfect partition sizes,
-        # rather than relying on spark's default hash
-        class _enumerated_value(tuple):
-            # Return a hash based on the key alone.
-            def __hash__(self):
-                return self[0]
-
-        enumerated_logical_and_physical_boxes = sc.parallelize( enumerate(logical_and_physical_boxes), num_rdd_partitions )
-        enumerated_logical_and_physical_boxes = enumerated_logical_and_physical_boxes.map(_enumerated_value)
-        enumerated_logical_and_physical_boxes = enumerated_logical_and_physical_boxes.partitionBy(num_rdd_partitions, lambda x: x)
-        logical_and_physical_boxes = enumerated_logical_and_physical_boxes.values()
+    boxes_bag = dask.bag.from_sequence( logical_and_physical_boxes, partition_size=partition_size )
+    total_volume = sum(map(brick_size, logical_and_physical_boxes))
+    logger.info(f"Initializing RDD of {num_bricks} Bricks "
+                f"(over {boxes_bag.npartitions} partitions) with total volume {total_volume/1e9:.1f} Gvox")
 
     def make_bricks( logical_and_physical_box ):
         logical_box, physical_box = logical_and_physical_box
@@ -267,8 +247,9 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
             volume = volume_accessor_func(physical_box)
             return Brick(logical_box, physical_box, volume)
     
-    bricks = rt.map( make_bricks, logical_and_physical_boxes )
+    bricks = boxes_bag.map( make_bricks )
     return bricks
+
 
 def clip_to_logical( brick ):
     """
@@ -374,42 +355,6 @@ def pad_brick_data_from_volume_source( padding_grid, volume_accessor_func, brick
     return Brick( brick.logical_box, padded_box, padded_volume )
 
 
-def apply_labelmap_to_bricks(bricks, labelmap_config, working_dir, unpersist_original=False):
-    """
-    Relabel the bricks with a labelmap.
-    If the given config specifies not labelmap, then the original is returned.
-
-    bricks: RDD of Bricks
-    
-    labelmap_config: config dict, adheres to LabelMapSchema
-    
-    working_dir: If labelmap is from a gbucket, it will be downlaoded to working_dir.
-    
-    unpersist_original: If True, unpersist (or replace) the input.
-                     Otherwise, the caller is free to unpersist the returned
-                     bricks without affecting the input.
-    
-    Returns:
-        remapped_bricks - Already computed and persisted.
-    """
-    path = labelmap_config["file"]
-    if not path:
-        if not unpersist_original:
-            # The caller wants to be sure that the result can be
-            # unpersisted safely without affecting the bricks he passed in,
-            # so we return a *new* RDD, even though it's just a copy of the original.
-            return rt.map( lambda brick: brick, bricks )
-        return bricks
-
-    mapping_pairs = load_labelmap(labelmap_config, working_dir)
-    remapped_bricks = apply_label_mapping(bricks, mapping_pairs)
-
-    if unpersist_original:
-        unpersist(bricks)
-
-    return remapped_bricks
-
-
 def apply_label_mapping(bricks, mapping_pairs):
     """
     Given an RDD of bricks (of label data) and a pre-loaded labelmap in
@@ -442,34 +387,34 @@ def apply_label_mapping(bricks, mapping_pairs):
         return partition_bricks
     
     # Use mapPartitions (instead of map) so LabelMapper can be constructed just once per partition
-    remapped_bricks = rt.map_partitions( remap_bricks, bricks )
-    persist_and_execute(remapped_bricks, f"Remapping bricks", logger)
+    remapped_bricks = bricks.map_partitions( remap_bricks )
+    
+    # FIXME: Time this persist()?
+    remapped_bricks.persist()
     return remapped_bricks
 
 
 def realign_bricks_to_new_grid(new_grid, original_bricks):
     """
-    Given a list/RDD of Bricks which are tiled over some original grid,
-    chop them up and reassemble them into a new list/RDD of Bricks,
+    Given a dask.Bag of Bricks which are tiled over some original grid,
+    chop them up and reassemble them into a new Bag of Bricks,
     tiled according to the given new_grid.
     
     Requires data shuffling.
     
-    Returns: RDD (or iterable):
-        [ (logical_box, Brick),
-          (logical_box, Brick), ...]
+    Returns: dask.Bag of Bricks
     """
     # For each original brick, split it up according
     # to the new logical box destinations it will map to.
-    new_logical_boxes_and_brick_fragments = rt.flat_map( partial(split_brick, new_grid), original_bricks )
+    brick_fragments = original_bricks.map( partial(split_brick, new_grid) ).flatten()
 
     # Group fragments according to their new homes
-    grouped_brick_fragments = rt.group_by_key( new_logical_boxes_and_brick_fragments )
+    grouped_brick_fragments = brick_fragments.groupby(lambda brick: box_as_tuple(brick.logical_box))
     
     # Re-assemble fragments into the new grid structure.
-    new_logical_boxes_and_bricks = rt.map_values(assemble_brick_fragments, grouped_brick_fragments)
-    new_logical_boxes_and_bricks = rt.filter( lambda key_brick: key_brick[1] is not None, new_logical_boxes_and_bricks )
-    return new_logical_boxes_and_bricks
+    realigned_bricks = grouped_brick_fragments.map(lambda k_v: k_v[1]).map(assemble_brick_fragments)
+    realigned_bricks = realigned_bricks.filter( lambda brick: brick is not None )
+    return realigned_bricks
 
 
 def split_brick(new_grid, original_brick):
@@ -490,11 +435,10 @@ def split_brick(new_grid, original_brick):
           grid to use a halo, in which case some pixels in the original brick will be
           duplicated to multiple destinations.
     
-    Returns: [(box,Brick), (box, Brick), ....],
+    Returns: [Brick, Brick, ....],
             where each Brick is a fragment (to be assembled later into the new grid's bricks),
-            and 'box' is the logical_box of the Brick into which this fragment should be assembled.
     """
-    new_logical_boxes_and_fragments = []
+    fragments = []
     
     # Forbid out-of-bounds physical_boxes. (See note above.)
     assert ((original_brick.physical_box[0] >= original_brick.logical_box[0]).all() and
@@ -515,14 +459,9 @@ def split_brick(new_grid, original_brick):
         fragment_brick = Brick(new_logical_box, split_box, fragment_vol)
         fragment_brick.compress()
 
-        # Append key (the new_logical_box, but with a special type and hash,
-        # to avoid bad collisions with the default spark hash function),
-        # and new brick fragment, to be assembled into the final brick in a later stage.
-        key = rt.tuple_with_hash( box_as_tuple(new_logical_box) )
-        key.set_hash( hash(tuple(new_logical_box[0] / new_grid.block_shape)) )
-        new_logical_boxes_and_fragments.append( (key, fragment_brick) )
+        fragments.append( fragment_brick )
 
-    return new_logical_boxes_and_fragments
+    return fragments
 
 
 def assemble_brick_fragments( fragments ):

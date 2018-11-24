@@ -1,13 +1,12 @@
 import numpy as np
 import scipy.ndimage
 
-from DVIDSparkServices import rddtools as rt
-from DVIDSparkServices.util import num_worker_nodes, cpus_per_worker
 from dvidutils import downsample_labels
-
 from neuclease.util import Grid, SparseBlockMask
-from .brick import ( Brick, generate_bricks_from_volume_source,
-                     realign_bricks_to_new_grid, pad_brick_data_from_volume_source, apply_labelmap_to_bricks )
+
+from ..util import persist_and_execute
+from .brick import ( Brick, generate_bricks_from_volume_source, realign_bricks_to_new_grid, pad_brick_data_from_volume_source )
+
 
 class BrickWall:
     """
@@ -33,7 +32,7 @@ class BrickWall:
     ##
 
     @classmethod
-    def from_accessor_func(cls, bounding_box, grid, volume_accessor_func=None, sc=None, target_partition_size_voxels=None, sparse_boxes=None, lazy=False):
+    def from_accessor_func(cls, bounding_box, grid, volume_accessor_func=None, client=None, target_partition_size_voxels=None, sparse_boxes=None, lazy=False):
         """
         Convenience constructor, taking an arbitrary volume_accessor_func.
         
@@ -64,12 +63,6 @@ class BrickWall:
                 If True, the bricks' data will not be created until their 'volume' member is first accessed.
         """
         if target_partition_size_voxels is None:
-            if sc:
-                num_threads = num_worker_nodes() * cpus_per_worker()
-            else:
-                # See RDDtools -- for now, non-spark pseudo-RDDs are just a single partition.
-                num_threads = 1
-
             if sparse_boxes is None:
                 total_voxels = np.prod(bounding_box[1] - bounding_box[0])
             else:
@@ -77,13 +70,13 @@ class BrickWall:
                     sparse_boxes = list(sparse_boxes)
                 total_voxels = sum( map(lambda physbox: np.prod(physbox[1] - physbox[0]), sparse_boxes ) )
             
-            voxels_per_thread = total_voxels / num_threads
+            voxels_per_thread = total_voxels / client.ncores
             target_partition_size_voxels = (voxels_per_thread // 2) # Arbitrarily aim for 2 partitions per thread
 
         block_size_voxels = np.prod(grid.block_shape)
         rdd_partition_length = target_partition_size_voxels // block_size_voxels
 
-        bricks = generate_bricks_from_volume_source(bounding_box, grid, volume_accessor_func, sc, rdd_partition_length, sparse_boxes, lazy)
+        bricks = generate_bricks_from_volume_source(bounding_box, grid, volume_accessor_func, client, rdd_partition_length, sparse_boxes, lazy)
         return BrickWall( bounding_box, grid, bricks )
 
 
@@ -161,7 +154,7 @@ class BrickWall:
         """
         Remove all empty (completely zero) bricks from the BrickWall.
         """
-        filtered_bricks = rt.filter(lambda brick: brick.volume.any(), self.bricks)
+        filtered_bricks = self.bricks.filter(lambda brick: brick.volume.any())
         return BrickWall( self.bounding_box, self.grid, filtered_bricks )
 
 
@@ -174,8 +167,8 @@ class BrickWall:
         
         Returns: A a new BrickWall, with a new internal RDD for bricks.
         """
-        new_logical_boxes_and_bricks = realign_bricks_to_new_grid( new_grid, self.bricks )
-        new_wall = BrickWall( self.bounding_box, new_grid, rt.values(new_logical_boxes_and_bricks) )
+        new_bricks = realign_bricks_to_new_grid( new_grid, self.bricks )
+        new_wall = BrickWall( self.bounding_box, new_grid, new_bricks )
         return new_wall
 
 
@@ -200,35 +193,9 @@ class BrickWall:
         def pad_brick(brick):
             return pad_brick_data_from_volume_source(padding_grid, volume_accessor_func, brick)
         
-        padded_bricks = rt.map( pad_brick, self.bricks )
+        padded_bricks = self.bricks.map( pad_brick )
         new_wall = BrickWall( self.bounding_box, self.grid, padded_bricks )
         return new_wall
-
-
-    def apply_labelmap(self, labelmap_config, working_dir, unpersist_original=False):
-        """
-        Relabel the bricks in this BrickWall with a labelmap.
-        If the given config specifies not labelmap, then the original is returned.
-        
-        NOTE: It is rarely necessary to call this function, since labelmaps can be
-              specified in a VolumeService config, in which case the labelmap is
-              automatically applied during reading/writing.
-    
-        bricks: RDD of Bricks
-        
-        labelmap_config: config dict, adheres to LabelMapSchema
-        
-        working_dir: If labelmap is from a gbucket, it will be downlaoded to working_dir.
-        
-        unpersist_original: If True, unpersist (or replace) the input.
-                            Otherwise, the caller is free to unpersist the returned
-                            BrickWall without affecting the input.
-        
-        Returns:
-            A new BrickWall, with remapped bricks.
-        """
-        remapped_bricks = apply_labelmap_to_bricks(self.bricks, labelmap_config, working_dir, unpersist_original)
-        return BrickWall( self.bounding_box, self.grid, remapped_bricks )
 
 
     def translate(self, offset_zyx):
@@ -243,7 +210,7 @@ class BrickWall:
                           brick.physical_box + offset_zyx,
                           brick.volume )
 
-        translated_bricks = rt.map( translate_brick, self.bricks )
+        translated_bricks = self.bricks.map( translate_brick )
         
         new_bounding_box = self.bounding_box + offset_zyx
         new_grid = Grid( self.grid.block_shape, self.grid.offset + offset_zyx )
@@ -251,13 +218,9 @@ class BrickWall:
 
     
     def persist_and_execute(self, description, logger=None, storage=None):
-        self.bricks = rt.persist_and_execute( self.bricks, description, logger, storage )
+        self.bricks = persist_and_execute( self.bricks, description, logger, storage )
     
     
-    def unpersist(self):
-        rt.unpersist(self.bricks)
-
-
     def downsample(self, block_shape, method):
         assert block_shape[0] == block_shape[1] == block_shape[2], \
             "Currently, downsampling must be isotropic"
@@ -290,16 +253,7 @@ class BrickWall:
 
         new_bounding_box = self.bounding_box // factor
         new_grid = Grid( self.grid.block_shape // factor, self.grid.offset // factor )
-        new_bricks = rt.map( downsample_brick, self.bricks )
+        new_bricks = self.bricks.map( downsample_brick )
         
         return BrickWall( new_bounding_box, new_grid, new_bricks )
-
-
-    def copy(self):
-        """
-        Return a duplicate of this BrickWall, with a new bricks RDD (which not persisted).
-        """
-        return BrickWall( self.bounding_box, self.grid, rt.map( lambda x:x, self.bricks ) )
-
-
 
