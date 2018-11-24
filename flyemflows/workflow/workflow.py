@@ -173,7 +173,7 @@ class Workflow(object):
         "type": "object",
         "description": "Workflow base config",
         "default": {},
-        "additionalProperties": True,
+        "additionalProperties": False,
         "required": ["workflow-name"],
         "properties": {
             "workflow-name": {
@@ -207,6 +207,10 @@ class Workflow(object):
         self.config = config
         neuclease.dvid.DEFAULT_APPNAME = self.config['workflow-name']
         self.num_workers = num_workers
+        
+        # Initialized in run()
+        self.cluster = None
+        self.client = None
 
 
     def execute(self):

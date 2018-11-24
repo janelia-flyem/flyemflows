@@ -1,15 +1,17 @@
+import os
 import copy
 import logging
 
+import dask.bag
 import numpy as np
 import pandas as pd
 
-from neuclease.util import read_csv_header, lexsort_columns, Timer, box_intersection, groupby_presorted, groupby_spans_presorted, SparseBlockMask
 from dvid_resource_manager.client import ResourceManagerClient
+from neuclease.util import read_csv_header, lexsort_columns, Timer, box_intersection, groupby_presorted, groupby_spans_presorted, SparseBlockMask
 
-from DVIDSparkServices.workflow.workflow import Workflow
-from DVIDSparkServices.io_util.volume_service import VolumeService, DvidSegmentationVolumeSchema
-from DVIDSparkServices.io_util.brickwall import BrickWall
+from ..brick import BrickWall
+from ..volumes import VolumeService, SegmentationVolumeSchema
+from . import Workflow
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +27,6 @@ CSV_TYPES = { 'x': np.int32,
               'sv': np.uint64 }
 
 
-
 class SamplePoints(Workflow):
     """
     Workflow to read a CSV of point coordinates and sample those points from a segmentation instance.
@@ -37,59 +38,51 @@ class SamplePoints(Workflow):
     All columns from the original CSV file are preserved, but the rows will not necessarily
     be in the same order as the input file.  They will be sorted by coordinate.
     """
-    SamplePointsOptionsSchema = copy.copy(Workflow.OptionsSchema)
-    SamplePointsOptionsSchema["additionalProperties"] = False
-    SamplePointsOptionsSchema["properties"].update(
+    SamplePointsOptionsSchema = \
     {
-        "input-table": {
-            "description": "Table to read points from. Must be .csv (with header!)",
-            "type": "string"
-        },
-        "output-table": {
-            "description": "Results file.  Must be .csv for now, and must contain at least columns x,y,z",
-            "type": "string",
-            "default": "point-samples.csv"
-        },
-        "rescale-points-to-level": {
-            "description": "Specifies a scale (power of 2) by which to divide the loaded point coordinates before beginning the analysis.\n"
-                           "Typically used if you are applying a 'rescale-level' to your input source.\n"
-                           "Note: The points will appear rescaled in the output file.  The original points are not preserved.\n",
-            "type": "integer",
-            "default": 0
-        },
-        "output-column": {
-            "description": "The name of the output column in the final CSV results",
-            "type": "string",
-            "default": "label"
-        }
-        # TODO:
-        # - Support .npy input
-        # - Support alternative column names instead of x,y,z (e.g. 'xa', 'ya', 'yb')
-    })
-
-    Schema = \
-    {
-        "$schema": "http://json-schema.org/schema#",
-        "title": "Service to sample points from a DVID segmentation instance",
         "type": "object",
+        "default": {},
         "additionalProperties": False,
         "properties": {
-            "input": DvidSegmentationVolumeSchema,
-            "options": SamplePointsOptionsSchema
+            "input-table": {
+                "description": "Table to read points from. Must be .csv (with header!)",
+                "type": "string"
+            },
+            "output-table": {
+                "description": "Results file.  Must be .csv for now, and must contain at least columns x,y,z",
+                "type": "string",
+                "default": "point-samples.csv"
+            },
+            "rescale-points-to-level": {
+                "description": "Specifies a scale (power of 2) by which to divide the loaded point coordinates before beginning the analysis.\n"
+                               "Typically used if you are applying a 'rescale-level' to your input source.\n"
+                               "Note: The points will appear rescaled in the output file.  The original points are not preserved.\n",
+                "type": "integer",
+                "default": 0
+            },
+            "output-column": {
+                "description": "The name of the output column in the final CSV results",
+                "type": "string",
+                "default": "label"
+            }
+            # TODO:
+            # - Support .npy input
+            # - Support alternative column names instead of x,y,z (e.g. 'xa', 'ya', 'yb')
         }
     }
+
+    Schema = copy.deepcopy(Workflow.BaseSchema)
+    Schema["properties"].update({
+        "input": SegmentationVolumeSchema,
+        "samplepoints": SamplePointsOptionsSchema
+    })
+
 
     @classmethod
     def schema(cls):
         return SamplePoints.Schema
 
-    # name of application for DVID queries
-    APPNAME = "samplepoints"
 
-
-    def __init__(self, config_filename):
-        super(SamplePoints, self).__init__( config_filename, SamplePoints.schema(), "Sample Points" )
-    
     def _sanitize_config(self):
         """
         - Normalize/overwrite certain config values
@@ -97,10 +90,7 @@ class SamplePoints(Workflow):
         - Simple sanity checks
         """
         # Convert input/output CSV to absolute paths
-        options = self.config_data["options"]
-        options["input-table"] = self.relpath_to_abspath(options["input-table"])
-        options["output-table"] = self.relpath_to_abspath(options["output-table"])
-        
+        options = self.config["samplepoints"]
         header = read_csv_header(options["input-table"])
         if header is None:
             raise RuntimeError(f"Input table does not have a header row: {options['input-table']}")
@@ -108,20 +98,23 @@ class SamplePoints(Workflow):
         if set('zyx') - set(header):
             raise RuntimeError(f"Input table does not have the expected column names: {options['input-table']}")
 
+
     def execute(self):
         self._sanitize_config()
-        config = self.config_data
-        options = config["options"]
 
-        resource_mgr_client = ResourceManagerClient(options["resource-server"], options["resource-port"])
-        volume_service = VolumeService.create_from_config(config["input"], self.config_dir, resource_mgr_client)
+        input_config = self.config["input"]
+        options = self.config["samplepoints"]
+        resource_config = self.config["resource-manager"]
 
-        input_csv = config["options"]["input-table"]
+        resource_mgr_client = ResourceManagerClient(resource_config["server"], resource_config["port"])
+        volume_service = VolumeService.create_from_config(input_config, os.getcwd(), resource_mgr_client)
+
+        input_csv = options["input-table"]
         with Timer(f"Reading {input_csv}", logger):
             coordinate_table_df = pd.read_csv(input_csv, header=0, dtype=CSV_TYPES)
             points = coordinate_table_df[['z', 'y', 'x']].values
 
-        rescale = config["options"]["rescale-points-to-level"]
+        rescale = options["rescale-points-to-level"]
         if rescale != 0:
             points //= 2**rescale
 
@@ -144,11 +137,6 @@ class SamplePoints(Workflow):
             point_group_starts = (start for start, stop in point_group_spans)
             unique_brick_ids = brick_ids[np.fromiter(point_group_starts, np.int32)]
 
-        with Timer("Distributing points", logger):
-            # This is faster than pandas.DataFrame.groupby() for large data
-            point_groups = groupby_presorted(points, brick_ids)
-            id_and_ptgroup = self.sc.parallelize(zip(map(tuple, unique_brick_ids), point_groups))
-        
         with Timer("Constructing sparse mask", logger):
             # BrickWall.from_volume_service() supports the ability to initialize a sparse RDD,
             # with only a subset of Bricks (rather than a dense RDD containing every brick
@@ -166,19 +154,25 @@ class SamplePoints(Workflow):
             # Aim for 2 GB RDD partitions when loading segmentation
             GB = 2**30
             target_partition_size_voxels = 2 * GB // np.uint64().nbytes
-            brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.sc, target_partition_size_voxels, sbm, lazy=True)
+            brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.client, target_partition_size_voxels, sbm, lazy=True)
         
-        with Timer("Joining point groups with bricks", logger):
-            id_and_brick = brickwall.bricks.map(lambda brick: (tuple(brick.logical_box[0] // brick_shape), brick))
-            brick_and_ptgroup = id_and_brick.join(id_and_ptgroup).values() # discard id
+        with Timer("Grouping points", logger):
+            # This is faster than pandas.DataFrame.groupby() for large data
+            point_groups = groupby_presorted(points, brick_ids)
+            id_and_ptgroups = list(zip(map(tuple, unique_brick_ids), point_groups))
 
-        def sample_points(brick_and_points):
+        with Timer("Joining point groups with bricks", logger):
+            ptgroup_and_brick = brickwall.bricks.join(id_and_ptgroups,
+                                                      lambda brick: tuple(brick.logical_box[0] // brick_shape),
+                                                      lambda id_and_ptgroup: id_and_ptgroup[0])
+
+        def sample_points(points_and_brick):
             """
             Given a Brick and array of points (N,3) that lie within it,
             sample labels from the points within the brick and return
             a record array containing the points and the sampled labels.
             """
-            brick, points = brick_and_points
+            (_brick_id, points), brick = points_and_brick
 
             result_dtype = [('z', np.int32), ('y', np.int32), ('x', np.int32), ('label', np.uint64)]
             result = np.zeros((len(points),), result_dtype)
@@ -193,7 +187,7 @@ class SamplePoints(Workflow):
             return result
 
         with Timer("Sampling bricks", logger):
-            brick_samples = brick_and_ptgroup.map(sample_points).collect()
+            brick_samples = ptgroup_and_brick.map(sample_points).compute()
 
         with Timer("Concatenating samples", logger):
             sample_table = np.concatenate(brick_samples)
@@ -210,7 +204,7 @@ class SamplePoints(Workflow):
         coordinate_table_df[output_col] = sample_table['label']
 
         with Timer("Exporting samples", logger):
-            coordinate_table_df.to_csv(config["options"]["output-table"], header=True, index=False)
+            coordinate_table_df.to_csv(options["output-table"], header=True, index=False)
 
         logger.info("DONE.")
 
