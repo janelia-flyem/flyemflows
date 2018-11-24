@@ -7,8 +7,8 @@ import z5py
 from neuclease.util import box_to_slicing
 
 from confiddler import validate
-from ..util import replace_default_entries
 
+from ..util import replace_default_entries
 from . import VolumeServiceReader, GeometrySchema
 
 N5ServiceSchema = \
