@@ -6,6 +6,7 @@ import subprocess
 import numpy as np
 import pandas as pd
 
+from neuclease.util import Timer
 from neuclease.merge_table import load_edge_csv
 
 import logging
@@ -22,8 +23,6 @@ try:
 except ImportError:
     _graph_tool_available = False
     
-
-from ..util import Timer
 
 LabelMapSchema = \
 {

@@ -2,14 +2,10 @@ import os
 import lz4
 import numpy as np
 
-
 from dvidutils import LabelMapper
-
 from confiddler import validate
 
-# FIXME
-#from DVIDSparkServices.io_util.labelmap_utils import LabelMapSchema, load_labelmap
-
+from .labelmap_utils import LabelMapSchema, load_labelmap
 from . import VolumeServiceWriter
 
 
