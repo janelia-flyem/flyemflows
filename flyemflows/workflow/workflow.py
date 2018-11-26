@@ -297,7 +297,7 @@ class Workflow(object):
         os.environ.update(self._old_env)
 
 
-    def _init_dask(self):
+    def _init_dask(self, wait_for_workers=True):
         # Consider using client.register_worker_callbacks() to configure
         # - faulthandler (later)
         # - excepthook?
@@ -356,6 +356,13 @@ class Workflow(object):
 
         if cluster:
             client = Client(cluster)
+
+            # Wait for the workers to spin up.
+            with Timer("Waiting for workers to launch", logger):
+                while ( wait_for_workers
+                        and client.status == "running"
+                        and len(cluster.scheduler.workers) < self.num_workers ):
+                    time.sleep(0.1)
 
         return cluster, client
 
