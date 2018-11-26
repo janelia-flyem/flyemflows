@@ -4,6 +4,8 @@ __pycache__/
 
 .cache
 
+dask-worker-space
+
 temp_data/
 integration_tests/resources/*.npy
 integration_tests/resources/*.xml
