@@ -40,7 +40,8 @@ class Workflow(object):
         "default": {},
         "properties": {
             "cores": {
-                "description": "How many cores for each 'job', (typically an entire node's worth).",
+                "description": "How many cores for each 'job', (typically an entire node's worth).\n"
+                               "The 'workers' (processes) in each job will share these cores amongst them.",
                 "type": "integer",
                 "minimum": 1,
                 "default": 16
@@ -48,27 +49,32 @@ class Workflow(object):
             "ncpus": {
                 "description": "How many CPUs to reserve for each 'job'.\n"
                                "Typically, this should be the same as 'cores' (which is the default behavior if not specified),\n"
-                               "unless you're worried about your RAM usage, in which case you may want it to be higher.\n",
+                               "unless you're worried about your RAM usage, in which case you may want it to be higher.\n"
+                               "(This setting has no direct effect on dask behavior;\n"
+                               "it is solely for fine-tuning resource reservations in the LSF scheduler.)\n",
                 "type": "integer",
                 "default": -1
             },
             "processes": {
-                        "description": "How many processes per 'job'.\n"
+                        "description": "How many processes ('workers') per 'job'.\n"
+                                       "These processes will collectively share the 'cores' you specify for the job.\n"
                                        "https://jobqueue.dask.org/en/latest/configuration-setup.html#processes",
                         "type": "integer",
                         "minimum": 1,
                         "default": 1
             },
-            
             "memory": {
                 "description": "How much memory to allot to each 'job' (typically an entire node's worth, assuming the job reserved all CPUs).\n"
-                               "Specified as a string with a suffix for units, e.g. 4GB",
+                               "Specified as a string with a suffix for units, e.g. 4GB\n",
                 "type": "string",
                 "default": "128GB"
             },
             "mem": {
                 "description": "How much memory to reserve from LSF for each 'job'.\n"
-                               "Typically should be the same as the dask 'memory' setting, which is the default if not specified here.\n",
+                               "Typically should be the same as the dask 'memory' setting,\n"
+                               "which is the default if not specified here.\n"
+                               "(This setting has no direct effect on dask behavior;\n"
+                               "it is solely for fine-tuning resource reservations in the LSF scheduler.)\n",
                 "type": "string",
                 "default": ""
                 
@@ -358,7 +364,7 @@ class Workflow(object):
             client = Client(cluster)
 
             # Wait for the workers to spin up.
-            with Timer("Waiting for workers to launch", logger):
+            with Timer(f"Waiting for {self.num_workers} workers to launch", logger):
                 while ( wait_for_workers
                         and client.status == "running"
                         and len(cluster.scheduler.workers) < self.num_workers ):
