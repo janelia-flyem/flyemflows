@@ -2,7 +2,7 @@ from abc import ABCMeta, abstractmethod, abstractproperty
 
 class VolumeService(metaclass=ABCMeta):
 
-    SUPPORTED_SERVICES = ['dvid', 'brainmaps', 'n5', 'slice-files']
+    SUPPORTED_SERVICES = ['hdf5', 'dvid', 'brainmaps', 'n5', 'slice-files']
 
     @abstractproperty
     def dtype(self):
@@ -38,6 +38,7 @@ class VolumeService(metaclass=ABCMeta):
 
     @classmethod
     def create_from_config( cls, volume_config, config_dir, resource_manager_client=None ):
+        from .hdf5_volume_service import Hdf5VolumeService
         from .dvid_volume_service import DvidVolumeService
         from .brainmaps_volume_service import BrainMapsVolumeServiceReader
         from .n5_volume_service import N5VolumeServiceReader
@@ -50,7 +51,9 @@ class VolumeService(metaclass=ABCMeta):
             raise RuntimeError(f"Unsupported service (or too many specified): {service_keys}")
         
         # Choose base service
-        if "dvid" in volume_config:
+        if "hdf5" in volume_config:
+            service = Hdf5VolumeService( volume_config )
+        elif "dvid" in volume_config:
             service = DvidVolumeService( volume_config, resource_manager_client )
         elif "brainmaps" in volume_config:
             service = BrainMapsVolumeServiceReader( volume_config, resource_manager_client )

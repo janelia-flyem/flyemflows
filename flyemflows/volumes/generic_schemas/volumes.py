@@ -1,4 +1,5 @@
-from .. import ( DvidGrayscaleServiceSchema, SliceFilesServiceSchema, N5ServiceSchema, 
+from .. import ( Hdf5ServiceSchema,
+                 DvidGrayscaleServiceSchema, SliceFilesServiceSchema, N5ServiceSchema, 
                  DvidSegmentationServiceSchema, BrainMapsSegmentationServiceSchema, 
                  NewAxisOrderSchema, RescaleLevelSchema, LabelMapSchema )
 
@@ -20,6 +21,7 @@ GrayscaleVolumeSchema = \
     "type": "object",
     "default": {},
     "oneOf": [
+        { "properties": { "hdf5": Hdf5ServiceSchema }, "required": ["hdf5"] },
         { "properties": { "dvid": DvidGrayscaleServiceSchema } },
         { "properties": { "slice-files": SliceFilesServiceSchema } },
         { "properties": { "n5": N5ServiceSchema } }
@@ -43,6 +45,7 @@ SegmentationVolumeSchema = \
     "required": ["geometry"],
     "default": {},
     "oneOf": [
+        { "properties": { "hdf5": Hdf5ServiceSchema }, "required": ["hdf5"] },
         { "properties": { "dvid": DvidSegmentationServiceSchema }, "required": ["dvid"] },
         { "properties": { "brainmaps": BrainMapsSegmentationServiceSchema }, "required": ["brainmaps"] }
     ],
