@@ -175,7 +175,7 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
                 self._is_labels = True
 
             bs_x, bs_y, bs_z = instance_info["Extended"]["BlockSize"]
-            assert (bs_x, bs_y, bs_z), "Expected blocks to be cubes."
+            assert (bs_x == bs_y == bs_z), "Expected blocks to be cubes."
             block_width = bs_x
 
 
