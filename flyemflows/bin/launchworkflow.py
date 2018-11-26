@@ -10,12 +10,16 @@ from datetime import datetime
 
 import confiddler.json as json
 from confiddler import dump_default_config, load_config
+
+from neuclease import configure_default_logging
 from flyemflows.workflow import AVAILABLE_WORKFLOWS
 
 logger = logging.getLogger(__name__)
 
 
 def main():
+    configure_default_logging()
+    
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 
     # Workflow info
