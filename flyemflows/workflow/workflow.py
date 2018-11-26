@@ -361,7 +361,7 @@ class Workflow(object):
             assert False, "Unknown cluster type"
 
         if cluster:
-            client = Client(cluster)
+            client = Client(cluster, timeout='60s') # Note: Overrides config value: distributed.comm.timeouts.connect
 
             # Wait for the workers to spin up.
             with Timer(f"Waiting for {self.num_workers} workers to launch", logger):
