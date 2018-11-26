@@ -227,12 +227,16 @@ class Workflow(object):
         self.cluster = None
         self.client = None
 
+    def __del__(self):
+        # If the cluster is still alive (a debugging feature),
+        # kill it now.
+        self._cleanup_dask()
 
     def execute(self):
         raise NotImplementedError
 
     
-    def run(self):
+    def run(self, kill_cluster=True):
         """
         Run the workflow by calling the subclass's execute() function
         (with some startup/shutdown steps before/after).
@@ -248,6 +252,8 @@ class Workflow(object):
                 sys.stderr.flush()
                 
                 self._kill_initialization_procs(worker_init_pids, driver_init_pid)
+                if kill_cluster:
+                    self._cleanup_dask()
                 self._kill_resource_server(resource_server_proc)
     
                 # Only the workflow calls cleanup_faulthandler, once all workers have exited
@@ -308,6 +314,8 @@ class Workflow(object):
             class SynchronousClient:
                 def ncores(self):
                     return {'driver': 1}
+                def close(self):
+                    pass
             client = SynchronousClient()
         else:
             assert False, "Unknown cluster type"
@@ -317,6 +325,13 @@ class Workflow(object):
 
         return cluster, client
 
+    def _cleanup_dask(self):
+        if self.client:
+            self.client.close()
+            self.client = None
+        if self.cluster:
+            self.cluster.close()
+            self.cluster = None
 
     def _start_resource_server(self):
         """

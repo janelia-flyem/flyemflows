@@ -2,7 +2,6 @@ import os
 import copy
 import logging
 
-import dask.bag
 import numpy as np
 import pandas as pd
 
@@ -207,6 +206,3 @@ class SamplePoints(Workflow):
             coordinate_table_df.to_csv(options["output-table"], header=True, index=False)
 
         logger.info("DONE.")
-
-
-

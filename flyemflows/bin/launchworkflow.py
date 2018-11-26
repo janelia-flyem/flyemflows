@@ -3,6 +3,7 @@ Entry point to launch a workflow for a given config, from a template directory.
 """
 import os
 import sys
+import time
 import shutil
 import logging
 import argparse
@@ -37,6 +38,8 @@ def main():
     # Launch parameters
     parser.add_argument('--num-workers', '-n', type=int, default=1,
                         help='Number of workers to launch (i.e. each worker is launched with a single bsub command)')
+    parser.add_argument('--pause-before-exit', '-p', action='store_true',
+                        help="Pause before exiting, to allow you to inspect the dask dashboard before it is shut down.")
     parser.add_argument('template_dir', nargs='?',
                         help='A template directory with a workflow config file '
                              '(and possibly other files/scripts to be used by the workflow.)')
@@ -65,10 +68,21 @@ def main():
         print("Error: No config directory specified. Exiting.", file=sys.stderr)
         sys.exit(1)
     
-    launch_workflow(args.template_dir, args.num_workers)
+    _exc_dir, workflow = launch_workflow(args.template_dir, args.num_workers, not args.pause_before_exit)
+    
+    if args.pause_before_exit:
+        logger.info("Workflow complete, but pausing now due to --pause-before-exit.  Hit Ctrl+C to exit.")
+        try:
+            while True:
+                time.sleep(1.0)
+        except KeyboardInterrupt:
+            pass
+
+    # Workflow must not be deleted until we're ready to exit.
+    del workflow
 
 
-def launch_workflow(template_dir, num_workers):    
+def launch_workflow(template_dir, num_workers, kill_cluster=True):
     config_path = f'{template_dir}/workflow.yaml'
     if not os.path.exists(config_path):
         raise RuntimeError(f"Error: workflow.yaml not found in {template_dir}")
@@ -86,17 +100,17 @@ def launch_workflow(template_dir, num_workers):
     execution_dir = f'{template_dir}-{timestamp}'
     shutil.copytree(template_dir, execution_dir, symlinks=True)
 
-    workflow_inst = _execute_workflow(workflow_cls, execution_dir, config_data, num_workers)
+    workflow_inst = _execute_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster)
     return execution_dir, workflow_inst
 
 
-def _execute_workflow(workflow_cls, execution_dir, config_data, num_workers):
+def _execute_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster=True):
     # This function is separate just for convenient testing.
     orig_dir = os.getcwd()
     try:
         os.chdir(execution_dir)
         workflow_inst = workflow_cls(config_data, num_workers)
-        workflow_inst.run()
+        workflow_inst.run(kill_cluster)
     finally:
         os.chdir(orig_dir)
 
