@@ -158,12 +158,12 @@ class SamplePoints(Workflow):
         with Timer("Grouping points", logger):
             # This is faster than pandas.DataFrame.groupby() for large data
             point_groups = groupby_presorted(points, brick_ids)
-            id_and_ptgroups = list(zip(map(tuple, unique_brick_ids), point_groups))
+            id_and_ptgroups = list(zip(unique_brick_ids, point_groups))
 
         with Timer("Joining point groups with bricks", logger):
             ptgroup_and_brick = brickwall.bricks.join(id_and_ptgroups,
                                                       lambda brick: tuple(brick.logical_box[0] // brick_shape),
-                                                      lambda id_and_ptgroup: id_and_ptgroup[0])
+                                                      lambda id_and_ptgroup: tuple(id_and_ptgroup[0]))
 
         def sample_points(points_and_brick):
             """

@@ -79,9 +79,7 @@ def print_validation_errors(f):
 def test_samplepoints(setup_samplepoints):
     template_dir, _config, volume, points_df = setup_samplepoints
     
-    print("launching...")
     execution_dir, workflow = launch_workflow(template_dir, 1)
-    print("workflow completed")
     
     final_config = workflow.config
     output_df = pd.read_csv(f'{execution_dir}/{final_config["samplepoints"]["output-table"]}')
