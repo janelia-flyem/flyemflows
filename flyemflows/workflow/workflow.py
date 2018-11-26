@@ -9,6 +9,7 @@ import subprocess
 
 import dask
 from distributed import Client, LocalCluster
+from distributed.utils import parse_bytes
 
 import neuclease
 from neuclease.util import Timer
@@ -45,6 +46,13 @@ class Workflow(object):
                 "minimum": 1,
                 "default": 16
             },
+            "ncpus": {
+                "description": "How many CPUs to reserve for each 'job'.\n"
+                               "Typically, this should be the same as 'cores' (which is the default behavior if not specified),\n"
+                               "unless you're worried about your RAM usage, in which case you may want it to be higher.\n",
+                "type": "integer",
+                "default": -1
+            },
             "processes": {
                         "description": "How many processes per 'job'.\n"
                                        "https://jobqueue.dask.org/en/latest/configuration-setup.html#processes",
@@ -58,6 +66,13 @@ class Workflow(object):
                                "Specified as a string with a suffix for units, e.g. 4GB",
                 "type": "string",
                 "default": "128GB"
+            },
+            "mem": {
+                "description": "How much memory to reserve from LSF for each 'job'.\n"
+                               "Typically should be the same as the dask 'memory' setting, which is the default if not specified here.\n",
+                "type": "string",
+                "default": ""
+                
             },
             "log-directory": {
                 "description": "Where LSF worker logs (from stdout) will be stored.",
@@ -247,14 +262,25 @@ class Workflow(object):
         # - faulthandler (later)
         # - excepthook?
         # - (okay, maybe it's just best to put that stuff in __init__.py, like in DSS)
-        new_config = dask.config.update(dask.config.config, self.config['dask-config'])
-        dask.config.set(new_config)
-
         cluster = None
         client = None
 
+        new_config = dask.config.update(dask.config.config, self.config['dask-config'])
+        dask.config.set(new_config)
+
         if self.config["cluster-type"] == "lsf":
             from dask_jobqueue import LSFCluster #@UnresolvedImport
+
+            ncpus = self.config["dask-config"]["jobqueue"]["lsf"]["ncpus"]
+            if ncpus == -1:
+                ncpus = self.config["dask-config"]["jobqueue"]["lsf"]["cores"]
+                self.config["dask-config"]["jobqueue"]["lsf"]["ncpus"] = ncpus
+
+            mem = self.config["dask-config"]["jobqueue"]["lsf"]["mem"]
+            if not mem:
+                memory = self.config["dask-config"]["jobqueue"]["lsf"]["memory"]
+                mem = parse_bytes(memory)
+                self.config["dask-config"]["jobqueue"]["lsf"]["mem"] = mem
 
             local_dir = self.config["dask-config"]["jobqueue"]["lsf"]["local-directory"]
             if not local_dir:
@@ -265,6 +291,10 @@ class Workflow(object):
                 # Set tmp dir, too.
                 tempfile.tempdir = local_dir
                 os.environ['TMPDIR'] = local_dir # Forked processes will use this for tempfile.tempdir
+
+            # Reconfigure
+            new_config = dask.config.update(dask.config.config, self.config['dask-config'])
+            dask.config.set(new_config)
 
             cluster = LSFCluster()
             cluster.scale(self.num_workers)
