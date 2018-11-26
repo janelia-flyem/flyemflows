@@ -16,7 +16,6 @@ from neuclease.util import Timer
 
 import confiddler.json as json
 from dvid_resource_manager.server import DEFAULT_CONFIG as DEFAULT_RESOURCE_MANAGER_CONFIG
-
 from ..util import kill_if_running, get_localhost_ip_address
 
 
@@ -182,6 +181,25 @@ class Workflow(object):
             }
         }
     }
+    
+    EnvironmentVariablesSchema = \
+    {
+        "type": "object",
+        "default": {},
+        "additionalProperties": { "type": "string" },
+        "description": "Extra environment variables to set on the driver and workers.\n"
+                       "Some are provided by default, but you may add any others you like.\n",
+        "properties": {
+            "OMP_NUM_THREADS": {
+                "description": "Some pandas and numpy functions will use OpenMP (via MKL or OpenBLAS),\n"
+                               "which causes each process to use many threads.\n"
+                               "That's bad, since you can end up with N^2 threads on a machine with N cores.\n"
+                               "Unless you know what you're doing, it's best to force OpenMP to use only 1 core per process.\n",
+                "type": "string",
+                "default": "1"
+            }
+        }
+    }
 
     BaseSchema = \
     {
@@ -204,7 +222,8 @@ class Workflow(object):
             },
             "dask-config": DaskConfigSchema,
             "resource-manager": ResourceManagerSchema,
-            "worker-initialization": WorkerInitSchema
+            "worker-initialization": WorkerInitSchema,
+            "environment-variables": EnvironmentVariablesSchema
         }
     }
     
@@ -227,10 +246,12 @@ class Workflow(object):
         self.cluster = None
         self.client = None
 
+
     def __del__(self):
         # If the cluster is still alive (a debugging feature),
         # kill it now.
         self._cleanup_dask()
+
 
     def execute(self):
         raise NotImplementedError
@@ -241,6 +262,7 @@ class Workflow(object):
         Run the workflow by calling the subclass's execute() function
         (with some startup/shutdown steps before/after).
         """
+        self._init_environment_variables()
         resource_server_proc = self._start_resource_server()
         self.cluster, self.client = self._init_dask()
         worker_init_pids, driver_init_pid = self._run_worker_initializations()
@@ -256,11 +278,23 @@ class Workflow(object):
                     self._cleanup_dask()
                 self._kill_resource_server(resource_server_proc)
     
+                self._restore_original_environment_variables()
+
                 # Only the workflow calls cleanup_faulthandler, once all workers have exited
                 # (All workers share the same output file for faulthandler.)
     
                 # FIXME
                 #cleanup_faulthandler()
+                
+
+    def _init_environment_variables(self):
+        self._old_env = os.environ.copy()
+        os.environ.update(self.config["environment-variables"])
+
+
+    def _restore_original_environment_variables(self):
+        os.environ.clear()
+        os.environ.update(self._old_env)
 
 
     def _init_dask(self):
@@ -325,6 +359,7 @@ class Workflow(object):
 
         return cluster, client
 
+
     def _cleanup_dask(self):
         if self.client:
             self.client.close()
@@ -332,6 +367,7 @@ class Workflow(object):
         if self.cluster:
             self.cluster.close()
             self.cluster = None
+
 
     def _start_resource_server(self):
         """
