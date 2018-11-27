@@ -270,7 +270,8 @@ class Workflow(object):
         """
         self._init_environment_variables()
         resource_server_proc = self._start_resource_server()
-        self.cluster, self.client = self._init_dask()
+        self._init_dask()
+        
         worker_init_pids, driver_init_pid = self._run_worker_initializations()
         
         with Timer(f"Running {self.config['workflow-name']}", logger):
@@ -308,9 +309,6 @@ class Workflow(object):
         # - faulthandler (later)
         # - excepthook?
         # - (okay, maybe it's just best to put that stuff in __init__.py, like in DSS)
-        cluster = None
-        client = None
-
         new_config = dask.config.update(dask.config.config, self.config['dask-config'])
         dask.config.set(new_config)
 
@@ -342,11 +340,11 @@ class Workflow(object):
             new_config = dask.config.update(dask.config.config, self.config['dask-config'])
             dask.config.set(new_config)
 
-            cluster = LSFCluster()
-            cluster.scale(self.num_workers)
+            self.cluster = LSFCluster()
+            self.cluster.scale(self.num_workers)
         elif self.config["cluster-type"] == "local-cluster":
-            cluster = LocalCluster()
-            cluster.scale(self.num_workers)
+            self.cluster = LocalCluster()
+            self.cluster.scale(self.num_workers)
         elif self.config["cluster-type"] == "synchronous":
             # Synchronous mode is for testing and debugging only
             assert self.config['dask-config'].get('scheduler', 'synchronous') == 'synchronous'
@@ -356,21 +354,19 @@ class Workflow(object):
                     return {'driver': 1}
                 def close(self):
                     pass
-            client = SynchronousClient()
+            self.client = SynchronousClient()
         else:
             assert False, "Unknown cluster type"
 
-        if cluster:
-            client = Client(cluster, timeout='60s') # Note: Overrides config value: distributed.comm.timeouts.connect
+        if self.cluster:
+            self.client = Client(self.cluster, timeout='60s') # Note: Overrides config value: distributed.comm.timeouts.connect
 
             # Wait for the workers to spin up.
             with Timer(f"Waiting for {self.num_workers} workers to launch", logger):
                 while ( wait_for_workers
-                        and client.status == "running"
-                        and len(cluster.scheduler.workers) < self.num_workers ):
+                        and self.client.status == "running"
+                        and len(self.cluster.scheduler.workers) < self.num_workers ):
                     time.sleep(0.1)
-
-        return cluster, client
 
 
     def _cleanup_dask(self):
