@@ -164,6 +164,11 @@ class SamplePoints(Workflow):
             ptgroup_and_brick = brickwall.bricks.join(id_and_ptgroups,
                                                       lambda brick: tuple(brick.logical_box[0] // brick_shape),
                                                       lambda id_and_ptgroup: tuple(id_and_ptgroup[0]))
+            
+        with Timer("Persisting joined point groups", logger):
+            # Persist and force computation before proceeding.
+            ptgroup_and_brick = ptgroup_and_brick.persist()
+            ptgroup_and_brick.count().compute()
 
         def sample_points(points_and_brick):
             """
