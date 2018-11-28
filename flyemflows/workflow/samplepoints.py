@@ -8,6 +8,7 @@ import pandas as pd
 from dvid_resource_manager.client import ResourceManagerClient
 from neuclease.util import read_csv_header, lexsort_columns, Timer, box_intersection, groupby_presorted, groupby_spans_presorted, SparseBlockMask
 
+from ..util.dask import persist_and_execute
 from ..brick import BrickWall
 from ..volumes import VolumeService, SegmentationVolumeSchema
 from . import Workflow
@@ -165,12 +166,10 @@ class SamplePoints(Workflow):
             ptgroup_and_brick = brickwall.bricks.join(id_and_ptgroups,
                                                       lambda brick: tuple(brick.logical_box[0] // brick_shape),
                                                       lambda id_and_ptgroup: tuple(id_and_ptgroup[0]))
-            
-        with Timer("Persisting joined point groups", logger):
-            # Persist and force computation before proceeding.
-            ptgroup_and_brick = ptgroup_and_brick.persist(optimize_graph=False)
-            joined_count = ptgroup_and_brick.count().compute(optimize_graph=False)
-            assert joined_count == len(id_and_ptgroups) == brickwall.num_bricks
+
+        # Persist and force computation before proceeding.
+        ptgroup_and_brick = persist_and_execute(ptgroup_and_brick, "Persisting joined point groups", logger, False)
+        assert ptgroup_and_brick.count().compute() == len(id_and_ptgroups) == brickwall.num_bricks
 
         def sample_points(points_and_brick):
             """
