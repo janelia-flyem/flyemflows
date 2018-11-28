@@ -227,6 +227,8 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
         if (num_bricks // partition_size) < total_cores:
             partition_size = num_bricks // total_cores
 
+        partition_size = max(1, partition_size)
+
     def brick_size(log_phys):
         _logical, physical = log_phys
         return np.uint64(np.prod(physical[1] - physical[0]))
