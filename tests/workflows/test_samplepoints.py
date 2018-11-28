@@ -28,6 +28,10 @@ def setup_samplepoints():
     
     points_df = pd.DataFrame({'z': points_z, 'y': points_y, 'x': points_x})
     points_df["extra"] = np.random.choice(['foo', 'bar'], num_points)
+    
+    # The workflow should be able to handle 'empty' bricks properly.
+    # To test that, we'll remove points from a slab in the middle
+    points_df = points_df.query('(z // 64) == 1')
 
     points_path = f'{template_dir}/input.csv'
     points_df.to_csv(points_path, index=False)
