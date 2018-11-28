@@ -168,7 +168,8 @@ class SamplePoints(Workflow):
         with Timer("Persisting joined point groups", logger):
             # Persist and force computation before proceeding.
             ptgroup_and_brick = ptgroup_and_brick.persist(optimize_graph=False)
-            ptgroup_and_brick.count().compute(optimize_graph=False)
+            joined_count = ptgroup_and_brick.count().compute(optimize_graph=False)
+            assert joined_count == len(id_and_ptgroups) == brickwall.num_bricks
 
         def sample_points(points_and_brick):
             """

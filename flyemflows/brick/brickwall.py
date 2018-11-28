@@ -17,7 +17,7 @@ class BrickWall:
     ## Generic Constructor (See also: convenience constructors below) 
     ##
 
-    def __init__(self, bounding_box, grid, bricks):
+    def __init__(self, bounding_box, grid, bricks, num_bricks=None):
         """
         bounding_box: (start, stop)
         grid: Grid
@@ -26,6 +26,9 @@ class BrickWall:
         self.bounding_box = np.array(bounding_box)
         self.grid = grid
         self.bricks = bricks
+
+        # Valid after initialization, but could be None after various manipulations
+        self.num_bricks = num_bricks
     
     ##
     ## Convenience Constructors
@@ -76,8 +79,8 @@ class BrickWall:
         block_size_voxels = np.prod(grid.block_shape)
         rdd_partition_length = target_partition_size_voxels // block_size_voxels
 
-        bricks = generate_bricks_from_volume_source(bounding_box, grid, volume_accessor_func, client, rdd_partition_length, sparse_boxes, lazy)
-        return BrickWall( bounding_box, grid, bricks )
+        bricks, num_bricks = generate_bricks_from_volume_source(bounding_box, grid, volume_accessor_func, client, rdd_partition_length, sparse_boxes, lazy)
+        return BrickWall( bounding_box, grid, bricks, num_bricks )
 
 
     @classmethod
@@ -155,7 +158,7 @@ class BrickWall:
         Remove all empty (completely zero) bricks from the BrickWall.
         """
         filtered_bricks = self.bricks.filter(lambda brick: brick.volume.any())
-        return BrickWall( self.bounding_box, self.grid, filtered_bricks )
+        return BrickWall( self.bounding_box, self.grid, filtered_bricks, None ) # Don't know num_bricks any more
 
 
     def realign_to_new_grid(self, new_grid):
@@ -168,7 +171,7 @@ class BrickWall:
         Returns: A a new BrickWall, with a new internal RDD for bricks.
         """
         new_bricks = realign_bricks_to_new_grid( new_grid, self.bricks )
-        new_wall = BrickWall( self.bounding_box, new_grid, new_bricks )
+        new_wall = BrickWall( self.bounding_box, new_grid, new_bricks ) # Don't know num_bricks any more
         return new_wall
 
 
@@ -194,7 +197,7 @@ class BrickWall:
             return pad_brick_data_from_volume_source(padding_grid, volume_accessor_func, brick)
         
         padded_bricks = self.bricks.map( pad_brick )
-        new_wall = BrickWall( self.bounding_box, self.grid, padded_bricks )
+        new_wall = BrickWall( self.bounding_box, self.grid, padded_bricks, self.num_bricks )
         return new_wall
 
 
@@ -214,7 +217,7 @@ class BrickWall:
         
         new_bounding_box = self.bounding_box + offset_zyx
         new_grid = Grid( self.grid.block_shape, self.grid.offset + offset_zyx )
-        return BrickWall( new_bounding_box, new_grid, translated_bricks )
+        return BrickWall( new_bounding_box, new_grid, translated_bricks, self.num_bricks )
 
     
     def persist_and_execute(self, description, logger=None, storage=None):
@@ -255,5 +258,5 @@ class BrickWall:
         new_grid = Grid( self.grid.block_shape // factor, self.grid.offset // factor )
         new_bricks = self.bricks.map( downsample_brick )
         
-        return BrickWall( new_bounding_box, new_grid, new_bricks )
+        return BrickWall( new_bounding_box, new_grid, new_bricks, self.num_bricks )
 

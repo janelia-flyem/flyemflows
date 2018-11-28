@@ -74,18 +74,12 @@ class Brick:
         if lazy_creation_fn is not None:
             self._create_volume_fn = cloudpickle.dumps(lazy_creation_fn)
 
+
     def __str__(self):
         if (self.logical_box == self.physical_box).all():
             return f"logical & physical: {self.logical_box.tolist()}"
         return f"logical: {self.logical_box.tolist()}, physical: {self.physical_box.tolist()}"
 
-    def set_hash(self, new_hash):
-        """
-        Explicitly set the hash value for this brick.
-        Returns self so this function is easily used in map(), etc.
-        """
-        self._hash = new_hash
-        return self
 
     @property
     def volume(self):
@@ -113,6 +107,7 @@ class Brick:
         
         raise AssertionError("This brick has no data, and no way to create it.")
     
+
     def compress(self):
         """
         Compress the volume.
@@ -125,6 +120,7 @@ class Brick:
             self._compressed_volume = CompressedNumpyArray(self._volume)
             self._volume = None
     
+
     def __getstate__(self):
         """
         Pickle representation.
@@ -152,6 +148,7 @@ class Brick:
     def destroy(self):
         self._volume = None
         self._destroyed = True
+
 
 def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func, client, partition_size=None, sparse_boxes=None, lazy=False ):
     """
@@ -248,7 +245,7 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
             return Brick(logical_box, physical_box, volume)
     
     bricks = boxes_bag.map( make_bricks )
-    return bricks
+    return bricks, num_bricks
 
 
 def clip_to_logical( brick ):
@@ -521,7 +518,3 @@ def assemble_brick_fragments( fragments ):
     brick = Brick( final_logical_box, final_physical_box, final_volume )
     brick.compress()
     return brick
-
-
-
-
