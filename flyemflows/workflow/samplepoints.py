@@ -154,13 +154,14 @@ class SamplePoints(Workflow):
             GB = 2**30
             target_partition_size_voxels = 2 * GB // np.uint64().nbytes
             brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.client, target_partition_size_voxels, sbm, lazy=True)
+            brickwall.persist_and_execute("Persisting lazy bricks", logger)
         
-        with Timer("Grouping points", logger):
+        with Timer(f"Grouping {len(points)} points", logger):
             # This is faster than pandas.DataFrame.groupby() for large data
             point_groups = groupby_presorted(points, brick_ids)
             id_and_ptgroups = list(zip(unique_brick_ids, point_groups))
 
-        with Timer("Joining point groups with bricks", logger):
+        with Timer(f"Joining {len(id_and_ptgroups)} point groups with bricks", logger):
             ptgroup_and_brick = brickwall.bricks.join(id_and_ptgroups,
                                                       lambda brick: tuple(brick.logical_box[0] // brick_shape),
                                                       lambda id_and_ptgroup: tuple(id_and_ptgroup[0]))
