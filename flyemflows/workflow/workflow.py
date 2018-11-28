@@ -100,6 +100,11 @@ class Workflow(object):
                 "description": "Seconds to wait for a scheduler before closing workers",
                 "type": "integer",
                 "default": 60
+            },
+            "name": {
+                "description": "The name of the dask worker jobs when submitted to LSF.\n",
+                "type": "string",
+                "default": "dask-worker"
             }
         }
     }
