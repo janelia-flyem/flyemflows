@@ -220,8 +220,8 @@ class BrickWall:
         return BrickWall( new_bounding_box, new_grid, translated_bricks, self.num_bricks )
 
     
-    def persist_and_execute(self, description, logger=None, storage=None):
-        self.bricks = persist_and_execute( self.bricks, description, logger, storage )
+    def persist_and_execute(self, description, logger=None, optimize_graph=True):
+        self.bricks = persist_and_execute(self.bricks, description, logger, optimize_graph)
     
     
     def downsample(self, block_shape, method):
