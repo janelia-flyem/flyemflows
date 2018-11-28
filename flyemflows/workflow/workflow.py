@@ -56,12 +56,12 @@ class Workflow(object):
                 "default": -1
             },
             "processes": {
-                        "description": "How many processes ('workers') per 'job'.\n"
-                                       "These processes will collectively share the 'cores' you specify for the job.\n"
-                                       "https://jobqueue.dask.org/en/latest/configuration-setup.html#processes",
-                        "type": "integer",
-                        "minimum": 1,
-                        "default": 1
+                "description": "How many processes ('workers') per 'job'.\n"
+                               "These processes will collectively share the 'cores' you specify for the job.\n"
+                               "https://jobqueue.dask.org/en/latest/configuration-setup.html#processes",
+                "type": "integer",
+                "minimum": 1,
+                "default": 1
             },
             "memory": {
                 "description": "How much memory to allot to each 'job' (typically an entire node's worth, assuming the job reserved all CPUs).\n"
@@ -247,7 +247,9 @@ class Workflow(object):
 
         Args:
             config (dict): loaded config data for workflow, as a dict
-            schema (dict): json schema for workflow (already loaded as dict)
+            num_workers: How many workers to launch for the job.
+                         Note that this is not necessarily the same as the number of nodes (machines),
+                         depending on the dask config.
         """
         self.config = config
         neuclease.dvid.DEFAULT_APPNAME = self.config['workflow-name']
