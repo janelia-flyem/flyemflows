@@ -41,7 +41,9 @@ def setup_samplepoints():
                 "path": volume_path,
                 "dataset": "volume"
             },
-            "geometry": {},
+            "geometry": {
+                "message-block-shape": [64,64,256]
+            },
         },
         
         "samplepoints": {
