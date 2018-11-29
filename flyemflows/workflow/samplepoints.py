@@ -163,15 +163,22 @@ class SamplePoints(Workflow):
             id_and_ptgroups = list(zip(unique_brick_ids, point_groups))
             num_groups = len(id_and_ptgroups)
 
-        with Timer(f"Zipping {num_groups} point groups with bricks", logger):
+        with Timer(f"Join {num_groups} point groups with bricks", logger):
             # We can use zip because both the bricks and the pointgroups are sorted in scan-order,
             # and we're choosing the same partition size for both.
             # Otherwise, we would have to use join(), which is much slower.
             id_and_ptgroups = dask.bag.from_sequence( id_and_ptgroups,
                                                       npartitions=brickwall.bricks.npartitions )
 
-            ptgroup_and_brick = dask.bag.zip(id_and_ptgroups, brickwall.bricks)
+            id_and_ptgroups = id_and_ptgroups.map(lambda i_p: (*i_p[0], i_p[1]))
+            id_and_ptgroups_df = id_and_ptgroups.to_dataframe(columns=['z', 'y', 'x', 'pointgroup'])
 
+            ids_and_bricks = brickwall.bricks.map(lambda brick: (*(brick.logical_box[0] // brick_shape), brick))
+            ids_and_bricks_df = ids_and_bricks.to_dataframe(columns=['z', 'y', 'x', 'brick'])
+            
+            ptgroup_and_brick_df = id_and_ptgroups_df.merge(ids_and_bricks_df, on=['z', 'y', 'x'], how='left')[['pointgroup', 'brick']]
+            ptgroup_and_brick = ptgroup_and_brick_df.to_bag()
+            
         # Persist and force computation before proceeding.
         #ptgroup_and_brick = persist_and_execute(ptgroup_and_brick, "Persisting joined point groups", logger, False)
         #assert ptgroup_and_brick.count().compute() == num_groups == brickwall.num_bricks
@@ -182,7 +189,7 @@ class SamplePoints(Workflow):
             sample labels from the points within the brick and return
             a record array containing the points and the sampled labels.
             """
-            (_brick_id, points), brick = points_and_brick
+            points, brick = points_and_brick
 
             result_dtype = [('z', np.int32), ('y', np.int32), ('x', np.int32), ('label', np.uint64)]
             result = np.zeros((len(points),), result_dtype)
