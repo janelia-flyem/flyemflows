@@ -7,9 +7,10 @@ import numpy as np
 import pandas as pd
 
 from dvid_resource_manager.client import ResourceManagerClient
-from neuclease.util import read_csv_header, lexsort_columns, Timer, box_intersection, groupby_presorted, groupby_spans_presorted, SparseBlockMask
+from neuclease.util import ( read_csv_header, lexsort_columns, Timer, box_intersection,
+                             groupby_presorted, groupby_spans_presorted, SparseBlockMask,
+                             encode_coords_to_uint64 )
 
-from ..util.dask import persist_and_execute
 from ..brick import BrickWall
 from ..volumes import VolumeService, SegmentationVolumeSchema
 from . import Workflow
@@ -164,24 +165,32 @@ class SamplePoints(Workflow):
             num_groups = len(id_and_ptgroups)
 
         with Timer(f"Join {num_groups} point groups with bricks", logger):
-            ##
-            ## We use a fast index-on-index join.
-            ## That's trivial in this case because the two dataframes happen
-            ## to be in the same order, so the default index (after reset_index)
-            ## works just fine as long as the two dataframes are partitioned identically.
-            ##
             id_and_ptgroups = dask.bag.from_sequence( id_and_ptgroups,
                                                       npartitions=brickwall.bricks.npartitions )
 
             id_and_ptgroups = id_and_ptgroups.map(lambda i_p: (*i_p[0], i_p[1]))
             id_and_ptgroups_df = id_and_ptgroups.to_dataframe(columns=['z', 'y', 'x', 'pointgroup'])
-            id_and_ptgroups_df.reset_index(drop=True)
-
+            
             ids_and_bricks = brickwall.bricks.map(lambda brick: (*(brick.logical_box[0] // brick_shape), brick))
             ids_and_bricks_df = ids_and_bricks.to_dataframe(columns=['z', 'y', 'x', 'brick'])
-            ids_and_bricks_df.reset_index(drop=True)
-            
-            ptgroup_and_brick_df = id_and_ptgroups_df.merge(ids_and_bricks_df, left_index=True, right_index=True, how='left')[['pointgroup', 'brick']]
+
+            def set_brick_id_index(df):
+                def set_brick_id(df):
+                    df['brick_id'] = encode_coords_to_uint64( df[['z', 'y', 'x']].values.astype(np.int32) )
+                    return df
+                df['brick_id'] = np.uint64(0)
+                df = df.map_partitions(set_brick_id, meta=df)
+                df = df.set_index('brick_id')
+                return df
+
+            # Give them matching indexes
+            ids_and_bricks_df = set_brick_id_index(ids_and_bricks_df)
+            id_and_ptgroups_df = set_brick_id_index(id_and_ptgroups_df)
+
+            # Join (index-on-index, so it should be fast)
+            ptgroup_and_brick_df = id_and_ptgroups_df.merge( ids_and_bricks_df,
+                                                             how='left', left_index=True, right_index=True )
+            ptgroup_and_brick_df = ptgroup_and_brick_df[['pointgroup', 'brick']]
             ptgroup_and_brick = ptgroup_and_brick_df.to_bag()
             
         # Persist and force computation before proceeding.
