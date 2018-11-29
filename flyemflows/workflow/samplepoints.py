@@ -164,19 +164,24 @@ class SamplePoints(Workflow):
             num_groups = len(id_and_ptgroups)
 
         with Timer(f"Join {num_groups} point groups with bricks", logger):
-            # We can use zip because both the bricks and the pointgroups are sorted in scan-order,
-            # and we're choosing the same partition size for both.
-            # Otherwise, we would have to use join(), which is much slower.
+            ##
+            ## We use a fast index-on-index join.
+            ## That's trivial in this case because the two dataframes happen
+            ## to be in the same order, so the default index (after reset_index)
+            ## works just fine as long as the two dataframes are partitioned identically.
+            ##
             id_and_ptgroups = dask.bag.from_sequence( id_and_ptgroups,
                                                       npartitions=brickwall.bricks.npartitions )
 
             id_and_ptgroups = id_and_ptgroups.map(lambda i_p: (*i_p[0], i_p[1]))
             id_and_ptgroups_df = id_and_ptgroups.to_dataframe(columns=['z', 'y', 'x', 'pointgroup'])
+            id_and_ptgroups_df.reset_index(drop=True)
 
             ids_and_bricks = brickwall.bricks.map(lambda brick: (*(brick.logical_box[0] // brick_shape), brick))
             ids_and_bricks_df = ids_and_bricks.to_dataframe(columns=['z', 'y', 'x', 'brick'])
+            ids_and_bricks_df.reset_index(drop=True)
             
-            ptgroup_and_brick_df = id_and_ptgroups_df.merge(ids_and_bricks_df, on=['z', 'y', 'x'], how='left')[['pointgroup', 'brick']]
+            ptgroup_and_brick_df = id_and_ptgroups_df.merge(ids_and_bricks_df, left_index=True, right_index=True, how='left')[['pointgroup', 'brick']]
             ptgroup_and_brick = ptgroup_and_brick_df.to_bag()
             
         # Persist and force computation before proceeding.
