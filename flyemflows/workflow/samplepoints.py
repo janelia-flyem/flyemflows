@@ -2,6 +2,7 @@ import os
 import copy
 import logging
 
+import dask.bag
 import numpy as np
 import pandas as pd
 
@@ -161,15 +162,20 @@ class SamplePoints(Workflow):
             # This is faster than pandas.DataFrame.groupby() for large data
             point_groups = groupby_presorted(points, brick_ids)
             id_and_ptgroups = list(zip(unique_brick_ids, point_groups))
+            num_groups = len(id_and_ptgroups)
 
-        with Timer(f"Joining {len(id_and_ptgroups)} point groups with bricks", logger):
-            ptgroup_and_brick = brickwall.bricks.join(id_and_ptgroups,
-                                                      lambda brick: tuple(brick.logical_box[0] // brick_shape),
-                                                      lambda id_and_ptgroup: tuple(id_and_ptgroup[0]))
+        with Timer(f"Zipping {num_groups} point groups with bricks", logger):
+            # We can use zip because both the bricks and the pointgroups are sorted in scan-order,
+            # and we're choosing the same partition size for both.
+            # Otherwise, we would have to use join(), which is much slower.
+            id_and_ptgroups = dask.bag.from_sequence( id_and_ptgroups,
+                                                      npartitions=brickwall.bricks.npartitions )
+
+            ptgroup_and_brick = dask.bag.zip(id_and_ptgroups, brickwall.bricks)
 
         # Persist and force computation before proceeding.
         ptgroup_and_brick = persist_and_execute(ptgroup_and_brick, "Persisting joined point groups", logger, False)
-        assert ptgroup_and_brick.count().compute() == len(id_and_ptgroups) == brickwall.num_bricks
+        assert ptgroup_and_brick.count().compute() == num_groups == brickwall.num_bricks
 
         def sample_points(points_and_brick):
             """
