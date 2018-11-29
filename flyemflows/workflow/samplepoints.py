@@ -156,7 +156,6 @@ class SamplePoints(Workflow):
             GB = 2**30
             target_partition_size_voxels = 2 * GB // np.uint64().nbytes
             brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.client, target_partition_size_voxels, sbm, lazy=True)
-            brickwall.persist_and_execute("Persisting lazy bricks", logger)
         
         with Timer(f"Grouping {len(points)} points", logger):
             # This is faster than pandas.DataFrame.groupby() for large data
@@ -174,8 +173,8 @@ class SamplePoints(Workflow):
             ptgroup_and_brick = dask.bag.zip(id_and_ptgroups, brickwall.bricks)
 
         # Persist and force computation before proceeding.
-        ptgroup_and_brick = persist_and_execute(ptgroup_and_brick, "Persisting joined point groups", logger, False)
-        assert ptgroup_and_brick.count().compute() == num_groups == brickwall.num_bricks
+        #ptgroup_and_brick = persist_and_execute(ptgroup_and_brick, "Persisting joined point groups", logger, False)
+        #assert ptgroup_and_brick.count().compute() == num_groups == brickwall.num_bricks
 
         def sample_points(points_and_brick):
             """
