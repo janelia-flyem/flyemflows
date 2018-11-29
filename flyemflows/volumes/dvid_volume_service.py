@@ -294,10 +294,22 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             scale = 0
 
         try:
-            with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
-                if self._instance_type in ('labelarray', 'labelmap'):
-                    return fetch_labelarray_voxels(self._server, self._uuid, instance_name, box_zyx, scale, throttle, supervoxels=self.supervoxels)
-                else:
+            if self._instance_type in ('labelarray', 'labelmap'):
+                # Obtain permission from the resource manager while fetching the compressed data,
+                # but release the resource token before inflating the data.
+                with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
+                    vol_proxy = fetch_labelarray_voxels( self._server,
+                                                         self._uuid,
+                                                         instance_name,
+                                                         box_zyx,
+                                                         scale,
+                                                         throttle,
+                                                         supervoxels=self.supervoxels,
+                                                         inflate=False )
+                # Inflate
+                return vol_proxy()
+            else:
+                with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
                     return fetch_raw(self._server, self._uuid, instance_name, box_zyx, throttle)
 
         except Exception as ex:
