@@ -51,8 +51,8 @@ class BrickWall:
                 Note: The callable will be unpickled only once per partition, so initialization
                       costs after unpickling are only incurred once per partition.
      
-            sc:
-                SparkContext. If provided, an RDD is returned.  Otherwise, returns an ordinary Python iterable.
+            client:
+                dask distributed.Client
      
             target_partition_size_voxels:
                 Optional. If provided, the RDD partition lengths (i.e. the number of bricks per RDD partition)
@@ -84,7 +84,7 @@ class BrickWall:
 
 
     @classmethod
-    def from_volume_service(cls, volume_service, scale=0, bounding_box_zyx=None, sc=None, target_partition_size_voxels=None, sparse_block_mask=None, lazy=False):
+    def from_volume_service(cls, volume_service, scale=0, bounding_box_zyx=None, client=None, target_partition_size_voxels=None, sparse_block_mask=None, lazy=False):
         """
         Convenience constructor, initialized from a VolumeService object.
         
@@ -103,8 +103,8 @@ class BrickWall:
                 (Note: The bricks' sizes will still be the the full volume_service.preferred_message_shape,
                        but the overall bounding-box of the BrickWall be scaled down.) 
      
-            sc:
-                SparkContext. If provided, an RDD is returned.  Otherwise, returns an ordinary Python iterable.
+            client:
+                dask distributed.Client
      
             target_partition_size_voxels:
                 Optional. If provided, the RDD partition lengths (i.e. the number of bricks per RDD partition)
@@ -144,7 +144,7 @@ class BrickWall:
         return BrickWall.from_accessor_func( downsampled_box,
                                              grid,
                                              lambda box: volume_service.get_subvolume(box, scale),
-                                             sc,
+                                             client,
                                              target_partition_size_voxels,
                                              sparse_boxes,
                                              lazy )
