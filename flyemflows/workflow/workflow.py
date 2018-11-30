@@ -361,10 +361,10 @@ class Workflow(object):
             new_config = dask.config.update(dask.config.config, self.config['dask-config'])
             dask.config.set(new_config)
 
-            self.cluster = LSFCluster()
+            self.cluster = LSFCluster(ip='0.0.0.0')
             self.cluster.scale(self.num_workers)
         elif self.config["cluster-type"] == "local-cluster":
-            self.cluster = LocalCluster()
+            self.cluster = LocalCluster(ip='0.0.0.0')
             self.cluster.scale(self.num_workers)
         elif self.config["cluster-type"] == "synchronous":
             # Synchronous mode is for testing and debugging only
