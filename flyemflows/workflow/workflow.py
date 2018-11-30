@@ -30,6 +30,12 @@ USER = getpass.getuser()
 class Workflow(object):
     """
     Base class for all Workflows.
+
+    TODO:
+    - Log RTM graph links
+    - Log dashboard link
+    - Possibly produce profiles of driver functions
+
     """
     LsfJobSchema = \
     {
