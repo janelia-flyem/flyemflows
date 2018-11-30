@@ -6,6 +6,7 @@ import getpass
 import logging
 import tempfile
 import subprocess
+from os.path import basename, splitext
 
 import dask
 from distributed import Client, LocalCluster
@@ -180,6 +181,13 @@ class Workflow(object):
                 "type": "array",
                 "items": { "type": "string" },
                 "default": []
+            },
+            "only-once-per-machine": {
+                "description": "Depending on your cluster configuration, dask might start multiple workers on a single machine.\n"
+                               "Use this setting you only want this initialization script to be run ONCE per machine\n"
+                               "(even if there are multiple workers on that machine)",
+                "type": "boolean",
+                "default": False
             },
             "launch-delay": {
                 "description": "By default, wait for the script to complete before continuing.\n"
@@ -498,14 +506,7 @@ class Workflow(object):
             dict of { hostname : PID } containing the PIDs of the init process
             IDs running on the workers.
         """
-        from subprocess import STDOUT
-        from os.path import basename, splitext
-
-        try:
-            init_options = self.config["worker-initialization"]
-        except KeyError:
-            # old workflows haven't been updated to inherit from the base workflow schema
-            return ({}, None)
+        init_options = self.config["worker-initialization"]
             
         if not init_options["script-path"]:
             return ({}, None)
@@ -522,7 +523,8 @@ class Workflow(object):
 
             try:
                 script_args = [str(a) for a in init_options["script-args"]]
-                p = subprocess.Popen( [init_options["script-path"], *script_args], stdout=log_file, stderr=STDOUT )
+                p = subprocess.Popen( [init_options["script-path"], *script_args],
+                                      stdout=log_file, stderr=subprocess.STDOUT )
             except OSError as ex:
                 if ex.errno == 8: # Exec format error
                     raise RuntimeError("OSError: [Errno 8] Exec format error\n"
@@ -542,7 +544,7 @@ class Workflow(object):
             time.sleep(init_options["launch-delay"])
             return p.pid
         
-        worker_init_pids = self.run_on_each_worker(launch_init_script)
+        worker_init_pids = self.run_on_each_worker(launch_init_script, init_options["only-once-per-machine"])
 
         driver_init_pid = None
         if init_options["also-run-on-driver"]:
