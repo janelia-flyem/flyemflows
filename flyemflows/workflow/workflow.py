@@ -17,7 +17,8 @@ from neuclease.util import Timer
 
 import confiddler.json as json
 from dvid_resource_manager.server import DEFAULT_CONFIG as DEFAULT_RESOURCE_MANAGER_CONFIG
-from ..util import kill_if_running, get_localhost_ip_address
+from ..util import kill_if_running, get_localhost_ip_address, extract_ip_from_link
+from ..util.lsf import get_hostgraph_url
 
 
 logger = logging.getLogger(__name__)
@@ -33,8 +34,6 @@ class Workflow(object):
     Base class for all Workflows.
 
     TODO:
-    - Log RTM graph links
-    - Log dashboard link
     - Possibly produce profiles of driver functions
 
     """
@@ -294,7 +293,8 @@ class Workflow(object):
         self._init_dask()
         
         worker_init_pids, driver_init_pid = self._run_worker_initializations()
-        
+
+        logger.info(f"Working dir: {os.getcwd()}")
         with Timer(f"Running {self.config['workflow-name']}", logger):
             try:
                 self.execute()
@@ -379,7 +379,23 @@ class Workflow(object):
         else:
             assert False, "Unknown cluster type"
 
+        try:
+            driver_jobid = os.environ['LSB_JOBID']
+        except KeyError:
+            pass
+        else:
+            driver_rtm_url = get_hostgraph_url(driver_jobid)
+            logger.info(f"Driver host is: {socket.gethostname()}")
+            logger.info(f"Driver RTM graphs: {driver_rtm_url}")
+
+
         if self.cluster:
+            dashboard = self.cluster.dashboard_link
+            logger.info(f"Dashboard running on {dashboard}")
+            dashboard_ip = extract_ip_from_link(dashboard)
+            dashboard = dashboard.replace(dashboard_ip, socket.gethostname())
+            logger.info(f"              a.k.a. {dashboard}")
+            
             self.client = Client(self.cluster, timeout='60s') # Note: Overrides config value: distributed.comm.timeouts.connect
 
             # Wait for the workers to spin up.
@@ -388,6 +404,15 @@ class Workflow(object):
                         and self.client.status == "running"
                         and len(self.cluster.scheduler.workers) < self.num_workers ):
                     time.sleep(0.1)
+
+            if wait_for_workers and self.config["cluster-type"] == "lsf":
+                hostgraph_url_path = 'rtm-links.txt'
+                logger.info(f"Writing RTM Hostgraph URLs to {hostgraph_url_path}")
+                hostgraph_urls = self.run_on_each_worker(get_hostgraph_url, False, True)
+                with open(hostgraph_url_path, 'w') as f:
+                    f.write(f"driver ({socket.gethostname()}): {driver_rtm_url}\n")
+                    for addr, url in hostgraph_urls.items():
+                        f.write(f"{addr}: {url}\n")
 
 
     def _cleanup_dask(self):
@@ -460,9 +485,10 @@ class Workflow(object):
                 kill_if_running(resource_server_proc.pid, 10.0)
 
 
-    def run_on_each_worker(self, func, once_per_machine=True):
+    def run_on_each_worker(self, func, once_per_machine=False, return_hostnames=True):
         """
         Run the given function once per worker (or once per worker machine).
+        Results are returned in a dict of { worker: result }
         
         Args:
             func:
@@ -472,6 +498,13 @@ class Workflow(object):
                 Ensure that the function is only run once per machine,
                 even if your cluster is configured to run more than one
                 worker on each node.
+            
+            return_hostnames:
+                If True, result keys use hostnames instead of IPs.
+        Returns:
+            dict:
+            { 'ip:port' : result } OR
+            { 'hostname:port' : result }
         """
         if self.config["cluster-type"] == "synchronous":
             results = {'driver': func()}
@@ -494,10 +527,21 @@ class Workflow(object):
         workers = list(worker_hostnames.keys())
         hostnames = list(worker_hostnames.values())
         results = self.client.run(func, workers=workers)
-        logger.info(f"Ran {func.__name__} on {len(hostnames)} nodes: {hostnames}")
-        return results
 
+        logger.info(f"Ran {func.__name__} on {len(hostnames)} nodes: {hostnames}")
+        
+        if not return_hostnames:
+            return results
     
+        final_results = {}
+        for address, result in results.items():
+            hostname = worker_hostnames[address]
+            ip = extract_ip_from_link(address)
+            final_results[address.replace(ip, hostname)] = result
+
+        return final_results
+
+
     def _run_worker_initializations(self):
         """
         Run an initialization script (e.g. a bash script) on each worker node.

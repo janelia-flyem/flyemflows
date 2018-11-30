@@ -38,7 +38,7 @@ def setup_samplepoints():
 
     config = {
         "workflow-name": "samplepoints",
-        "cluster-type": "synchronous", # DEBUG
+        "cluster-type": "synchronous",
         
         "input": {
             "hdf5": {

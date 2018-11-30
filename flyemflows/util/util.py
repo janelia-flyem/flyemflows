@@ -1,3 +1,4 @@
+import re
 import socket
 import numpy as np
 
@@ -52,3 +53,38 @@ def get_localhost_ip_address():
     return ip_addr
     
 
+def is_port_open(port):
+    """
+    Return True if the given port is already open on the local machine.
+    
+    https://stackoverflow.com/questions/19196105/python-how-to-check-if-a-network-port-is-open-on-linux
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        sock.connect_ex(('127.0.0.1',port))
+    except ConnectionRefusedError:
+        return False
+    else:
+        return True
+    finally:
+        sock.close()
+
+
+def extract_ip_from_link(link):
+    """
+    Given a link with an IP address instead of a hostname,
+    returns the IP (as a string).
+    If the link does not contain an IP, returns None.
+
+    Example inputs:
+    
+        http://127.0.0.1/foo
+        http://10.36.111.11:38817/status
+        tcp://10.36.111.11:38003
+        
+    """
+    m = re.match(r'.*://(\d+\.\d+\.\d+.\d+).*', link)
+    if m:
+        return m.groups()[0]
+    else:
+        return None
