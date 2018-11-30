@@ -5,120 +5,110 @@ from functools import partial
 import numpy as np
 from skimage.util import view_as_blocks
 
-from dvidutils import destripe
-from neuclease.util import Grid, slabs_from_box, Timer, box_to_slicing
-from neuclease.focused.hotknife import HEMIBRAIN_TAB_BOUNDARIES
+from dvidutils import destripe #@UnresolvedImport 
 from dvid_resource_manager.client import ResourceManagerClient
 
-from DVIDSparkServices import rddtools as rt
-from DVIDSparkServices.util import num_worker_nodes, cpus_per_worker, replace_default_entries
-from DVIDSparkServices.io_util.brick import Brick
-from DVIDSparkServices.io_util.brickwall import BrickWall
-from DVIDSparkServices.io_util.volume_service import VolumeService, VolumeServiceWriter, GrayscaleVolumeSchema
-from DVIDSparkServices.workflow.workflow import Workflow
-from DVIDSparkServices.dvid.metadata import ( is_datainstance, create_rawarray8, Compression,
-                                              extend_list_value, update_extents, reload_server_metadata )
+from neuclease.util import Grid, slabs_from_box, Timer, box_to_slicing
+from neuclease.dvid import update_extents, reload_metadata, extend_list_value, create_voxel_instance, fetch_repo_instances
+from neuclease.focused.hotknife import HEMIBRAIN_TAB_BOUNDARIES
+
+from ..util import replace_default_entries
+from ..brick import Brick, BrickWall
+from ..volumes import VolumeService, VolumeServiceWriter, GrayscaleVolumeSchema
+
+from . import Workflow
+
+from flyemflows.util.auto_retry import auto_retry
 
 logger = logging.getLogger(__name__)
 
-class ConvertGrayscaleVolume(Workflow):
-    OptionsSchema = copy.deepcopy(Workflow.OptionsSchema)
-    OptionsSchema["additionalProperties"] = False
-    OptionsSchema["properties"].update(
+class CopyGrayscale(Workflow):
+    CopyGrayscaleSchema = \
     {
-        "min-pyramid-scale": {
-            "description": "The first scale to copy from input to output.",
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 10,
-            "default": 0
-        },
-
-        "max-pyramid-scale": {
-            "description": "The maximum scale to copy from input to output.",
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 10,
-            ##
-            ## NO DEFAULT: Must choose!
-            #"default": -1
-        },
-        
-        "pyramid-source": {
-            "description": "How to create the downsampled pyramid volumes, either copied \n"
-                           "from the input source (if available) or computed from scale 0.\n",
-            "type": "string",
-            "enum": ["copy", "compute"],
-            "default": "copy"
-        },
-        
-        "slab-depth": {
-            "description": "The volume is processed iteratively, in 'slabs'.\n"
-                           "This setting determines the thickness of each slab.\n"
-                           "Must be a multiple of the output brick width, in whichever dimension \n"
-                           "is specified by the 'slab-axis' setting, below (by default, the Z-axis).\n",
-            "type": "integer",
-            "minimum": 1
-            ##
-            ## NO DEFAULT: Must choose!
-            #"default": -1
-        },
-        
-        "slab-axis": {
-            "description": "The axis across which the volume will be cut to create \n"
-                           "'slabs' to be processed one at a time.  See 'slab-depth'.",
-            "type": "string",
-            "enum": ["x", "y", "z"],
-            "default": "z"
-        },
-        
-        "starting-slice": {
-            "description": "In case of a failed job, you may want to restart at a particular slice.",
-            "type": "integer",
-            "default": 0
-        },
-        
-        "contrast-adjustment": {
-            "description": "How to adjust the contrast before uploading.",
-            "type": "string",
-            "enum": ["none", "clahe", "hotknife-destripe"],
-            "default": "none"
-        },
-        
-        "hotknife-seams": {
-            "description": "Used by the hotknife-destripe contrast adjustment method. \n",
-                           "See dvidutils.destripe() for details."
-            "type": "array",
-            "items": {"type": "integer"},
-            "minItems": 2,
-            "default": [-1] + HEMIBRAIN_TAB_BOUNDARIES[1:] # Must begin with -1, not 0
-        }
-    })
-
-    Schema = \
-    {
-        "$schema": "http://json-schema.org/schema#",
-        "title": "Convert a grayscale volume from one format to another.",
         "type": "object",
-        "required": ["input", "output"],
+        "default": {},
+        "additionalProperties": False,
         "properties": {
-            "input": GrayscaleVolumeSchema,
-            "output": GrayscaleVolumeSchema,
-            "options": OptionsSchema
+            "min-pyramid-scale": {
+                "description": "The first scale to copy from input to output.",
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10,
+                "default": 0
+            },
+    
+            "max-pyramid-scale": {
+                "description": "The maximum scale to copy from input to output.",
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10,
+                ##
+                ## NO DEFAULT: Must choose!
+                #"default": -1
+            },
+            
+            "pyramid-source": {
+                "description": "How to create the downsampled pyramid volumes, either copied \n"
+                               "from the input source (if available) or computed from scale 0.\n",
+                "type": "string",
+                "enum": ["copy", "compute"],
+                "default": "copy"
+            },
+            
+            "slab-depth": {
+                "description": "The volume is processed iteratively, in 'slabs'.\n"
+                               "This setting determines the thickness of each slab.\n"
+                               "Must be a multiple of the output brick width, in whichever dimension \n"
+                               "is specified by the 'slab-axis' setting, below (by default, the Z-axis).\n",
+                "type": "integer",
+                "minimum": 1
+                ##
+                ## NO DEFAULT: Must choose!
+                #"default": -1
+            },
+            
+            "slab-axis": {
+                "description": "The axis across which the volume will be cut to create \n"
+                               "'slabs' to be processed one at a time.  See 'slab-depth'.",
+                "type": "string",
+                "enum": ["x", "y", "z"],
+                "default": "z"
+            },
+            
+            "starting-slice": {
+                "description": "In case of a failed job, you may want to restart at a particular slice.",
+                "type": "integer",
+                "default": 0
+            },
+            
+            "contrast-adjustment": {
+                "description": "How to adjust the contrast before uploading.",
+                "type": "string",
+                "enum": ["none", "clahe", "hotknife-destripe"],
+                "default": "none"
+            },
+            
+            "hotknife-seams": {
+                "description": "Used by the hotknife-destripe contrast adjustment method. \n",
+                               "See dvidutils.destripe() for details."
+                "type": "array",
+                "items": {"type": "integer"},
+                "minItems": 2,
+                "default": [-1] + HEMIBRAIN_TAB_BOUNDARIES[1:] # Must begin with -1, not 0
+            }
         }
     }
 
+    Schema = copy.deepcopy(Workflow.BaseSchema)
+    Schema["properties"].update({
+        "input": GrayscaleVolumeSchema,
+        "output": GrayscaleVolumeSchema,
+        "copygrayscale": CopyGrayscaleSchema
+    })
+
     @classmethod
     def schema(cls):
-        return ConvertGrayscaleVolume.Schema
-
-
-    # name of application for DVID queries
-    APPNAME = "ConvertGrayscaleVolume".lower()
-
-
-    def __init__(self, config_filename):
-        super().__init__( config_filename, ConvertGrayscaleVolume.schema(), "Convert Grayscale Volume" )
+        return CopyGrayscale.Schema
 
 
     def _init_services(self):
@@ -126,11 +116,11 @@ class ConvertGrayscaleVolume(Workflow):
         Initialize the input and output services,
         and fill in 'auto' config values as needed.
         """
-        input_config = self.config_data["input"]
-        output_config = self.config_data["output"]
-        options = self.config_data["options"]
+        input_config = self.config["input"]
+        output_config = self.config["output"]
+        mgr_options = self.config["resource-manager"]
 
-        self.mgr_client = ResourceManagerClient( options["resource-server"], options["resource-port"] )
+        self.mgr_client = ResourceManagerClient( mgr_options["resource-server"], mgr_options["resource-port"] )
         self.input_service = VolumeService.create_from_config( input_config, self.config_dir, self.mgr_client )
 
         replace_default_entries(output_config["geometry"]["bounding-box"], self.input_service.bounding_box_zyx[:, ::-1])
@@ -144,7 +134,7 @@ class ConvertGrayscaleVolume(Workflow):
         """
         Validate config values.
         """
-        options = self.config_data["options"]
+        options = self.config["copygrayscale"]
 
         axis_name = options["slab-axis"]
         axis = 'zyx'.index(axis_name)
@@ -171,8 +161,8 @@ class ConvertGrayscaleVolume(Workflow):
         """
         Create DVID data instances (including multi-scale) and update metadata.
         """
-        output_config = self.config_data["output"]
-        max_scale = self.config_data["options"]["max-pyramid-scale"]
+        output_config = self.config["output"]
+        max_scale = self.config["copygrayscale"]["max-pyramid-scale"]
 
         # Only dvid supported so far...
         assert "dvid" in output_config, "Unsupported output service type"
@@ -182,10 +172,9 @@ class ConvertGrayscaleVolume(Workflow):
         instance_name = output_config["dvid"]["grayscale-name"]
         block_width = output_config["geometry"]["block-width"]
 
-        if output_config["dvid"]["compression"] == "raw":
-            compression = Compression.DEFAULT
-        elif output_config["dvid"]["compression"] == "jpeg":
-            compression = Compression.JPEG
+        compression = output_config["dvid"]["compression"]
+        if compression == "raw":
+            compression = None
 
         full_output_box_zyx = np.array(output_config["geometry"]["bounding-box"])[:, ::-1]
 
@@ -197,10 +186,15 @@ class ConvertGrayscaleVolume(Workflow):
             else:
                 scaled_instance_name = f"{instance_name}_{scale}"
     
-            if is_datainstance(server, uuid, scaled_instance_name):
+            if scaled_instance_name in fetch_repo_instances(server, uuid):
                 logger.info(f"'{scaled_instance_name}' already exists, skipping creation")
             else:
-                create_rawarray8( server, uuid, scaled_instance_name, 3*(block_width,), compression )
+                create_voxel_instance( server,
+                                       uuid,
+                                       scaled_instance_name,
+                                       typename='uint8blk',
+                                       compression=compression,
+                                       block_size=block_width )
     
             update_extents( server, uuid, scaled_instance_name, scaled_output_box_zyx )
 
@@ -211,8 +205,9 @@ class ConvertGrayscaleVolume(Workflow):
         # and the gbucket backend needs to be explicitly reloaded
         # (TODO: Is this still true, or has it been fixed by now?)
         if server.startswith("http://127.0.0.1"):
+            @auto_retry(3, 5.0, __name__)
             def reload_meta():
-                reload_server_metadata(server)
+                reload_metadata(server)
             self.run_on_each_worker( reload_meta )
 
 
@@ -221,7 +216,7 @@ class ConvertGrayscaleVolume(Workflow):
         self._validate_config()
         self._prepare_output()
         
-        options = self.config_data["options"]
+        options = self.config["copygrayscale"]
         input_bb_zyx = self.input_service.bounding_box_zyx
 
         min_scale = options["min-pyramid-scale"]
@@ -253,11 +248,10 @@ class ConvertGrayscaleVolume(Workflow):
 
 
     def _process_slab(self, scale, slab_fullres_box_zyx, slab_index, num_slabs, upscale_slab_wall):
-        num_threads = num_worker_nodes() * cpus_per_worker()
         slab_voxels = np.prod(slab_fullres_box_zyx[1] - slab_fullres_box_zyx[0]) // (2**scale)**3
-        voxels_per_thread = slab_voxels // num_threads
+        voxels_per_thread = slab_voxels // self.total_cores()
 
-        options = self.config_data["options"]
+        options = self.config["copygrayscale"]
         pyramid_source = options["pyramid-source"]
         
         if pyramid_source == "copy" or scale == 0:
@@ -297,13 +291,16 @@ class ConvertGrayscaleVolume(Workflow):
         del bricked_slab_wall
 
         logger.info(f"Slab {slab_index}: Writing scale {scale}", extra={"status": f"Writing {slab_index}/{num_slabs}"})
-        rt.foreach( partial(write_brick, self.output_service, scale), padded_slab_wall.bricks )
+        
+        def _write(brick):
+            write_brick(self.output_service, scale, brick)
+        padded_slab_wall.bricks.map(_write).compute()
 
         return padded_slab_wall
 
 
     def adjust_contrast(self, bricked_slab_wall, slab_index):
-        options = self.config_data["options"]
+        options = self.config["copygrayscale"]
         contrast_adjustment = options["contrast-adjustment"]
 
         if contrast_adjustment == "none":
@@ -317,7 +314,7 @@ class ConvertGrayscaleVolume(Workflow):
 
 
     def _hotknife_destripe(self, bricked_slab_wall, slab_index):
-        options = self.config_data["options"]
+        options = self.config["copygrayscale"]
         assert options["slab-axis"] == 'z', \
             "To use hotknife-destripe, processing slabs must be cut across the Z axis"
 
@@ -339,7 +336,7 @@ class ConvertGrayscaleVolume(Workflow):
             adjusted_slice = destripe(brick.volume[0], seams)
             return Brick(brick.logical_box, brick.physical_box, adjusted_slice[None])
         
-        adjusted_bricks = rt.map(destripe_brick, z_slice_slab.bricks)
+        adjusted_bricks = z_slice_slab.bricks.map(destripe_brick)
         adjusted_wall = BrickWall( bricked_slab_wall.bounding_box,
                                    bricked_slab_wall.grid,
                                    adjusted_bricks )
@@ -350,10 +347,6 @@ class ConvertGrayscaleVolume(Workflow):
 
     def _clahe_adjust(self, bricked_slab_wall, slab_index):
         raise NotImplementedError
-    
-        options = self.config_data["options"]
-        axis_name = options["slab-axis"]
-        axis = 'zyx'.index(axis_name)
 
 
 def write_brick(output_service, scale, brick):

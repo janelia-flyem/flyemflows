@@ -313,7 +313,10 @@ class Workflow(object):
     
                 # FIXME
                 #cleanup_faulthandler()
-                
+
+
+    def total_cores(self):
+        return sum( self.client.ncores().values() )
 
     def _init_environment_variables(self):
         self._old_env = os.environ.copy()
