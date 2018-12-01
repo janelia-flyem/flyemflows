@@ -76,6 +76,12 @@ def test_samplepoints(setup_samplepoints):
     labels = volume[(*sorted_coords.transpose(),)]
     assert (labels == output_df['label']).all()
 
+    # 'extra' columns should be preserved, even
+    # though they weren't used in the computation.
+    input_extra = points_df.sort_values(['z', 'y', 'x'])['extra'].values
+    output_extra = output_df.sort_values(['z', 'y', 'x'])['extra'].values
+    assert (output_extra == input_extra).all(), "Extra column was not correctly preserved"
+
 
 if __name__ == "__main__":
     pytest.main(['-s', '--tb=native', '--pyargs', 'tests.workflows.test_samplepoints'])
