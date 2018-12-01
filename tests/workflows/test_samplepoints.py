@@ -1,5 +1,4 @@
 import tempfile
-import functools
 
 import h5py
 import numpy as np
@@ -7,7 +6,6 @@ import pandas as pd
 
 import pytest
 from ruamel.yaml import YAML
-from jsonschema import ValidationError
 from flyemflows.bin.launchworkflow import launch_workflow
 
 
@@ -63,25 +61,6 @@ def setup_samplepoints():
     return template_dir, config, volume, points_df
 
 
-def print_validation_errors(f):
-    """
-    Decorator.
-    
-    Apparently pytest has trouble handling ValidationErrors for some reason,
-    so this decorator ensures that we at least see them on the console before pytest chokes.
-    """
-    @functools.wraps(f)
-    def wrapper(*args, **kwargs):
-        try:
-            return f(*args, **kwargs)
-        except ValidationError as ex:
-            print(ex)
-            raise
-
-    return wrapper
-
-
-@print_validation_errors
 def test_samplepoints(setup_samplepoints):
     template_dir, _config, volume, points_df = setup_samplepoints
     
