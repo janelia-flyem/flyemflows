@@ -79,7 +79,7 @@ class VolumeService(metaclass=ABCMeta):
 
         # Wrap with scaled service
         from . import ScaledVolumeService
-        if ("rescale-level" in volume_config) and (volume_config["rescale-level"] != 0):
+        if "rescale-level" in volume_config:
             service = ScaledVolumeService(service, volume_config["rescale-level"])
 
         return service

@@ -16,8 +16,14 @@ RescaleLevelSchema = \
                    "  1: downsample by 2x\n"
                    "  2: downsample by 4x\n"
                    " -1: upsample by 2x",
-    "type": "integer",
-    "default": 0
+    "type": "integer"
+
+    # NO DEFAULT
+    # The difference betwen rescale-level: 0 vs. completely ommitting it is
+    # that rescale-level: 0 actually results in a ScaledVolumeService,
+    # whereas the ScaledVolumeService is not created at all if no rescale-level is given.
+    # One reason to use rescale-level: 0 is to endow a single-scale volume service
+    # with multi-resolution capability, even though it wouldn't rescale by default.
 }
 
 class ScaledVolumeService(VolumeServiceReader):
@@ -88,25 +94,33 @@ class ScaledVolumeService(VolumeServiceReader):
               In the current implementation, it's just assumed that the requested scale exists,
               and then we downsample/upsample according to self.scale_delta.
         """
-        adjusted_scale = scale + self.scale_delta
-        if adjusted_scale in self.original_volume_service.available_scales:
+        true_scale = scale + self.scale_delta
+        
+        if true_scale in self.original_volume_service.available_scales:
             # The original source already has the data at the necessary scale.
-            return self.original_volume_service.get_subvolume( box_zyx, adjusted_scale )
+            return self.original_volume_service.get_subvolume( box_zyx, true_scale )
 
-        if self.scale_delta > 0:
-            orig_box_zyx = box_zyx * 2**self.scale_delta
-            orig_data = self.original_volume_service.get_subvolume(orig_box_zyx, scale)
+        # Start with the closest scale we've got
+        base_scales = np.array(self.original_volume_service.available_scales)
+        i_best = np.abs(base_scales - true_scale).argmin()
+        best_base_scale = base_scales[i_best]
+        
+        delta_from_best = true_scale - best_base_scale
+
+        if delta_from_best > 0:
+            orig_box_zyx = box_zyx * 2**delta_from_best
+            orig_data = self.original_volume_service.get_subvolume(orig_box_zyx, best_base_scale)
 
             if self.dtype == np.uint64:
                 # Assume that uint64 means labels.
-                downsampled_data, _ = downsample_labels( orig_data, 2**self.scale_delta )
+                downsampled_data, _ = downsample_labels( orig_data, 2**delta_from_best )
             else:
-                downsampled_data = scipy.ndimage.interpolation.zoom(orig_data, 1/(2**self.scale_delta), mode='reflect')
+                downsampled_data = scipy.ndimage.interpolation.zoom(orig_data, 1/(2**delta_from_best), mode='reflect')
             return downsampled_data
         else:
-            upsample_factor = int(2**-self.scale_delta)
+            upsample_factor = int(2**-delta_from_best)
             orig_box_zyx = downsample_box(box_zyx, np.array(3*(upsample_factor,)))
-            orig_data = self.original_volume_service.get_subvolume(orig_box_zyx, scale)
+            orig_data = self.original_volume_service.get_subvolume(orig_box_zyx, best_base_scale)
 
             orig_shape = np.array(orig_data.shape)
             upsampled_data = np.empty( orig_shape * upsample_factor, dtype=self.dtype )
