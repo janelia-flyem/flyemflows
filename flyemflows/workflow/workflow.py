@@ -241,7 +241,7 @@ class Workflow(object):
             "cluster-type": {
                 "description": "Whether or not to use an LSF cluster or a local cluster.",
                 "type": "string",
-                "enum": ["lsf", "local-cluster", "synchronous"],
+                "enum": ["lsf", "local-cluster", "synchronous", "processes"],
                 "default": "local-cluster"
             },
             "dask-config": DaskConfigSchema,
@@ -369,16 +369,26 @@ class Workflow(object):
         elif self.config["cluster-type"] == "local-cluster":
             self.cluster = LocalCluster(ip='0.0.0.0')
             self.cluster.scale(self.num_workers)
-        elif self.config["cluster-type"] == "synchronous":
-            # Synchronous mode is for testing and debugging only
-            assert self.config['dask-config'].get('scheduler', 'synchronous') == 'synchronous'
-            dask.config.set(scheduler='synchronous')
-            class SynchronousClient:
+        elif self.config["cluster-type"] in ("synchronous", "processes"):
+            cluster_type = self.config["cluster-type"]
+
+            # synchronous/processes mode is for testing and debugging only
+            assert self.config['dask-config'].get('scheduler', cluster_type) == cluster_type, \
+                "Inconsistency between the dask-config and the scheduler you chose."
+
+            if cluster_type == "synchronous":
+                ncores = 1
+            else:
+                import multiprocessing
+                ncores = multiprocessing.cpu_count()
+            
+            dask.config.set(scheduler=self.config["cluster-type"])
+            class DebugClient:
                 def ncores(self):
-                    return {'driver': 1}
+                    return {'driver': ncores}
                 def close(self):
                     pass
-            self.client = SynchronousClient()
+            self.client = DebugClient()
         else:
             assert False, "Unknown cluster type"
 
@@ -509,7 +519,7 @@ class Workflow(object):
             { 'ip:port' : result } OR
             { 'hostname:port' : result }
         """
-        if self.config["cluster-type"] == "synchronous":
+        if self.config["cluster-type"] in ("synchronous", "processes"):
             results = {'driver': func()}
             logger.info(f"Ran {func.__name__} on the driver only")
             return results
