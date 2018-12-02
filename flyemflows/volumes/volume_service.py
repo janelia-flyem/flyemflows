@@ -1,3 +1,4 @@
+import os
 from abc import ABCMeta, abstractmethod, abstractproperty
 
 class VolumeService(metaclass=ABCMeta):
@@ -37,12 +38,15 @@ class VolumeService(metaclass=ABCMeta):
         return [self]
 
     @classmethod
-    def create_from_config( cls, volume_config, config_dir, resource_manager_client=None ):
+    def create_from_config( cls, volume_config, config_dir=None, resource_manager_client=None ):
         from .hdf5_volume_service import Hdf5VolumeService
         from .dvid_volume_service import DvidVolumeService
         from .brainmaps_volume_service import BrainMapsVolumeServiceReader
         from .n5_volume_service import N5VolumeServiceReader
         from .slice_files_volume_service import SliceFilesVolumeServiceReader
+
+        if config_dir is None:
+            config_dir = os.getcwd()
 
         VolumeService._remove_default_service_configs(volume_config)
 
