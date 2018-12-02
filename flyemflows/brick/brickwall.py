@@ -4,7 +4,7 @@ import scipy.ndimage
 from dvidutils import downsample_labels
 from neuclease.util import Grid, SparseBlockMask
 
-from ..util import persist_and_execute
+from ..util import persist_and_execute, downsample
 from .brick import ( Brick, generate_bricks_from_volume_source, realign_bricks_to_new_grid, pad_brick_data_from_volume_source )
 
 
@@ -225,30 +225,18 @@ class BrickWall:
     
     
     def downsample(self, block_shape, method):
+        """
+        See util.downsample for available methods
+        """
         assert block_shape[0] == block_shape[1] == block_shape[2], \
             "Currently, downsampling must be isotropic"
-        assert method in ['label', 'grayscale']
 
         factor = block_shape[0]
         def downsample_brick(brick):
             assert (brick.physical_box % factor == 0).all()
             assert (brick.logical_box % factor == 0).all()
         
-            if method == 'grayscale':
-                downsampled_volume = scipy.ndimage.interpolation.zoom(brick.volume, 1/factor, mode='reflect')
-            elif method == 'label':
-                # Old: Python downsampling
-                # downsample_3Dlabels(brick.volume)
-            
-                # Newer: Numba downsampling
-                #downsampled_volume, _ = downsample_labels_3d_suppress_zero(brick.volume, (2,2,2), brick.physical_box)
-            
-                # Even Newer: C++ downsampling (note: only works on aligned data.)
-                # For consistency with DVID's on-demand downsampling, we suppress 0 pixels.
-                downsampled_volume = downsample_labels(brick.volume, factor, suppress_zero=True)
-            else:
-                assert False
-        
+            downsampled_volume = downsample(brick.volume, factor, method)
             downsampled_logical_box = brick.logical_box // factor
             downsampled_physical_box = brick.physical_box // factor
             

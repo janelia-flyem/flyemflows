@@ -1,7 +1,10 @@
 import re
 import socket
+
+import scipy.ndimage
 import numpy as np
 
+from dvidutils import downsample_labels
 
 def replace_default_entries(array, default_array, marker=-1):
     """
@@ -27,6 +30,23 @@ def replace_default_entries(array, default_array, marker=-1):
     else:
         raise RuntimeError("This function supports arrays and lists, nothing else.")
 
+DOWNSAMPLE_METHODS = ('subsample', 'zoom', 'grayscale', 'mode', 'labels', 'label')
+def downsample(volume, factor, method):
+    assert method in DOWNSAMPLE_METHODS
+    assert (np.array(volume.shape) % factor == 0).all(), \
+        "Volume dimensions must be a multiple of the downsample factor."
+    
+    if method == 'subsample':
+        sl = slice(None, None, factor)
+        return volume[(sl,)*volume.ndim].copy('C')
+    if method in ('zoom', 'grayscale'): # synonyms
+        return scipy.ndimage.zoom(volume, 1/factor)
+    if method == 'mode':
+        return downsample_labels(volume, factor, False)
+    if method in ('labels', 'label'): # synonyms
+        return downsample_labels(volume, factor, True)
+
+    raise AssertionError("Shouldn't get here.")
 
 def get_localhost_ip_address():
     """
