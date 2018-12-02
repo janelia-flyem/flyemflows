@@ -62,7 +62,7 @@ class VolumeService(metaclass=ABCMeta):
         elif "brainmaps" in volume_config:
             service = BrainMapsVolumeServiceReader( volume_config, resource_manager_client )
         elif "n5" in volume_config:
-            service = N5VolumeServiceReader( volume_config, config_dir )
+            service = N5VolumeServiceReader( volume_config )
         elif "slice-files" in volume_config:
             service = SliceFilesVolumeServiceReader( volume_config )
         else:

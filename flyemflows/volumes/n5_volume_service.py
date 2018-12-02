@@ -1,21 +1,19 @@
 import os
 
+import z5py
 import numpy as np
 
-import z5py
-
-from neuclease.util import box_to_slicing
-
 from confiddler import validate
+from neuclease.util import box_to_slicing
 
 from ..util import replace_default_entries
 from . import VolumeServiceReader, GeometrySchema
 
 N5ServiceSchema = \
 {
-    "description": "Parameters specify a DVID node",
+    "description": "Parameters to specify an N5 volume (or set of multiscale volumes)",
     "type": "object",
-    "required": ["path", "dataset-name"],
+    "required": ["path", "dataset"],
     "default": {},
     
     "properties": {
@@ -24,8 +22,11 @@ N5ServiceSchema = \
             "type": "string",
             "minLength": 1
         },
-        "dataset-name": {
-            "description": "Name of the volume",
+        "dataset": {
+            "description": "Name of the volume.\n"
+                           "If the volume is stored at multiple scales,\n"
+                           "then by convention the scale must be included as a suffix on each volume name.\n"
+                           "In this config, please list the scale-0 name, e.g. 'my-grayscale0', or '22-34/s0', etc.\n",
             "type": "string",
             "minLength": 1
         }
@@ -45,17 +46,17 @@ N5VolumeSchema = \
 
 class N5VolumeServiceReader(VolumeServiceReader):
 
-    def __init__(self, volume_config, config_dir):
-        validate(volume_config, N5VolumeSchema)
+    def __init__(self, volume_config):
+        validate(volume_config, N5VolumeSchema, inject_defaults=True)
         
         # Convert path to absolute if necessary (and write back to the config)
-        path = volume_config["n5"]["path"]
-        if not path.startswith('/'):
-            path = os.path.normpath( os.path.join(config_dir, path) )
-            volume_config["n5"]["path"] = path
+        self._path = os.path.abspath(volume_config["n5"]["path"])
+        volume_config["n5"]["path"] = self._path
 
-        self._path = path
-        self._dataset_name = volume_config["n5"]["dataset-name"]
+        self._dataset_name = volume_config["n5"]["dataset"]
+        if self._dataset_name.startswith('/'):
+            self._dataset_name = self._dataset_name[1:]
+        volume_config["n5"]["dataset"] = self._dataset_name
 
         self._n5_file = None
         self._n5_datasets = {}
@@ -136,6 +137,7 @@ class N5VolumeServiceReader(VolumeServiceReader):
             else:
                 assert self._dataset_name[-1] == '0', "The N5 dataset does not appear to be a multi-resolution dataset."
                 name = self._dataset_name[:-1] + f'{scale}'
+
             self._n5_datasets[scale] = self._n5_file[name]
 
         return self._n5_datasets[scale]

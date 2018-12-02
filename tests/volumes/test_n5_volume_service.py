@@ -1,60 +1,66 @@
-import os
-import unittest
+import tempfile
 
+import pytest
 import numpy as np
 
-import DVIDSparkServices
-from DVIDSparkServices.io_util.volume_service import N5VolumeServiceReader, GrayscaleVolumeSchema
-
-from DVIDSparkServices.json_util import validate_and_inject_defaults
 from neuclease.util import box_to_slicing
 
-TEST_VOLUME_N5 = os.path.dirname(DVIDSparkServices.__file__) + '/../integration_tests/resources/volume-256.n5'
-TEST_VOLUME_RAW = os.path.dirname(DVIDSparkServices.__file__) + '/../integration_tests/resources/grayscale-256-256-256-uint8.bin'
+from flyemflows.util.n5 import export_to_multiscale_n5
+from flyemflows.volumes import N5VolumeServiceReader
 
-class TestN5VolumeService(unittest.TestCase):
+
+@pytest.fixture(scope="module")
+def volume_setup():
+    test_dir = tempfile.mkdtemp()
+    path = f"{test_dir}/testvol.n5"
+    dataset = "/some/volume-s0"
     
-    @classmethod
-    def setUpClass(cls):
-        with open(TEST_VOLUME_RAW, 'rb') as f_raw:
-            cls.RAW_VOLUME_DATA = np.frombuffer(f_raw.read(), dtype=np.uint8).reshape((256,256,256))
-
-        cls.VOLUME_CONFIG = {
-          "n5": {
-            "path": TEST_VOLUME_N5,
-            "dataset-name": "s0"
-          }
-        }
-        
-        validate_and_inject_defaults(cls.VOLUME_CONFIG, GrayscaleVolumeSchema)
+    config = {
+        "n5": {
+            "path": path,
+            "dataset": dataset
+        },
+        "geometry": {}
+    }
     
-    def test_full_volume(self):
-        reader = N5VolumeServiceReader(self.VOLUME_CONFIG, os.getcwd())
-        assert (reader.bounding_box_zyx == [(0,0,0), (256,256,256)]).all()
-        full_from_n5 = reader.get_subvolume(reader.bounding_box_zyx)
-        assert full_from_n5.shape == self.RAW_VOLUME_DATA.shape
-        assert (full_from_n5 == self.RAW_VOLUME_DATA).all()
+    volume = np.random.randint(100, size=(256, 256, 256), dtype=np.uint8)
+    export_to_multiscale_n5(volume, path, dataset, chunks=(64,64,64), max_scale=3, downsample_method='subsample')
+    return config, volume
 
-    def test_slab(self):
-        box = np.array([(64,0,0), (128,256,256)])
-        
-        slab_from_raw = self.RAW_VOLUME_DATA[box_to_slicing(*box)]
+    
+def test_full_volume(volume_setup):
+    config, volume = volume_setup
+    reader = N5VolumeServiceReader(config)
+    assert (reader.bounding_box_zyx == [(0,0,0), (256,256,256)]).all()
+    full_from_n5 = reader.get_subvolume(reader.bounding_box_zyx)
+    assert full_from_n5.shape == volume.shape
+    assert (full_from_n5 == volume).all()
 
-        reader = N5VolumeServiceReader(self.VOLUME_CONFIG, os.getcwd())
-        slab_from_n5 = reader.get_subvolume(box)
 
-        assert slab_from_n5.shape == slab_from_raw.shape, \
-            f"Wrong shape: Expected {slab_from_raw.shape}, Got {slab_from_n5.shape}"
-        assert (slab_from_n5 == slab_from_raw).all()
+def test_slab(volume_setup):
+    config, volume = volume_setup
+    box = np.array([(64,0,0), (128,256,256)])
+    
+    slab_from_raw = volume[box_to_slicing(*box)]
 
-    def test_multiscale(self):
-        reader = N5VolumeServiceReader(self.VOLUME_CONFIG, os.getcwd())
-        assert (reader.bounding_box_zyx == [(0,0,0), (256,256,256)]).all()
-        
-        full_from_n5 = reader.get_subvolume(reader.bounding_box_zyx // 4, 2)
-        
-        assert (full_from_n5.shape == np.array(self.RAW_VOLUME_DATA.shape) // 4).all()
-        assert (full_from_n5 == self.RAW_VOLUME_DATA[::4, ::4, ::4]).all()
+    reader = N5VolumeServiceReader(config)
+    slab_from_n5 = reader.get_subvolume(box)
+
+    assert slab_from_n5.shape == slab_from_raw.shape, \
+        f"Wrong shape: Expected {slab_from_raw.shape}, Got {slab_from_n5.shape}"
+    assert (slab_from_n5 == slab_from_raw).all()
+
+
+def test_multiscale(volume_setup):
+    config, volume = volume_setup
+    reader = N5VolumeServiceReader(config)
+    assert (reader.bounding_box_zyx == [(0,0,0), (256,256,256)]).all()
+    
+    full_from_n5 = reader.get_subvolume(reader.bounding_box_zyx // 4, 2)
+    
+    assert (full_from_n5.shape == np.array(volume.shape) // 4).all()
+    assert (full_from_n5 == volume[::4, ::4, ::4]).all()
+
 
 if __name__ == "__main__":
-    unittest.main()
+    pytest.main(['-s', '--tb=native', '--pyargs', 'tests.volumes.test_n5_volume_service'])
