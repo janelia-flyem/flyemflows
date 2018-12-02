@@ -96,7 +96,7 @@ class TransposedVolumeService(VolumeServiceReader):
 
     @property
     def available_scales(self):
-        raise self.original_volume_service.available_scales
+        return self.original_volume_service.available_scales
 
     def get_subvolume(self, new_box_zyx, scale=0):
         """
