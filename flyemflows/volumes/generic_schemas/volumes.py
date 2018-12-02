@@ -21,7 +21,7 @@ GrayscaleVolumeSchema = \
     "type": "object",
     "default": {},
     "oneOf": [
-        { "properties": { "hdf5": Hdf5ServiceSchema }, "required": ["hdf5"] },
+        { "properties": { "hdf5": Hdf5ServiceSchema } },
         { "properties": { "dvid": DvidGrayscaleServiceSchema } },
         { "properties": { "slice-files": SliceFilesServiceSchema } },
         { "properties": { "n5": N5ServiceSchema } }
