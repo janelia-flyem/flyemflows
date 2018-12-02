@@ -352,11 +352,11 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
                 blocks = (subvolume[box_to_slicing(*(box - offset_zyx))] for box in block_boxes)
 
                 with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
-                    post_labelarray_blocks( self._server, self._uuid, self.instance_name, corners, blocks, scale,
+                    post_labelarray_blocks( self._server, self._uuid, instance_name, corners, blocks, scale,
                                             downres=False, noindexing=self.disable_indexing, throttle=throttle )
             else:
                 with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
-                    post_raw( self._server, self._uuid, self.instance_name, offset_zyx, subvolume,
+                    post_raw( self._server, self._uuid, instance_name, offset_zyx, subvolume,
                               throttle=throttle, mutate=not self.disable_indexing )
 
         except Exception as ex:
