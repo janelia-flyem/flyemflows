@@ -216,7 +216,9 @@ class Hdf5VolumeService(VolumeServiceReader, VolumeServiceWriter):
         return [0]
     
     def get_subvolume(self, box_zyx, scale=0):
-        assert scale == 0
+        assert scale == 0, \
+            ("Hdf5 volume service only supports scale 0 for now.]\n"
+             "As a workaround, try wrapping in a ScaledVolumeService by adding 'rescale-level: 0' to your config.")
         return self.dataset[box_to_slicing(*box_zyx)]
     
     def write_subvolume(self, subvolume, offset_zyx, scale=0):
