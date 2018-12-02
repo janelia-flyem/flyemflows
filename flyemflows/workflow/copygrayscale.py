@@ -1,3 +1,4 @@
+import os
 import copy
 import logging
 from functools import partial
@@ -51,8 +52,8 @@ class CopyGrayscale(Workflow):
                 "description": "How to create the downsampled pyramid volumes, either copied \n"
                                "from the input source (if available) or computed from scale 0.\n",
                 "type": "string",
-                "enum": ["copy", "compute"],
-                "default": "copy"
+                "enum": ["copy", "compute", "compute-as-labels"], # compute-as-labels is for debug and testing.
+                "default": "compute"
             },
             
             "slab-depth": {
@@ -120,11 +121,11 @@ class CopyGrayscale(Workflow):
         output_config = self.config["output"]
         mgr_options = self.config["resource-manager"]
 
-        self.mgr_client = ResourceManagerClient( mgr_options["resource-server"], mgr_options["resource-port"] )
-        self.input_service = VolumeService.create_from_config( input_config, self.config_dir, self.mgr_client )
+        self.mgr_client = ResourceManagerClient( mgr_options["server"], mgr_options["port"] )
+        self.input_service = VolumeService.create_from_config( input_config, os.getcwd(), self.mgr_client )
 
         replace_default_entries(output_config["geometry"]["bounding-box"], self.input_service.bounding_box_zyx[:, ::-1])
-        self.output_service = VolumeService.create_from_config( output_config, self.config_dir, self.mgr_client )
+        self.output_service = VolumeService.create_from_config( output_config, os.getcwd(), self.mgr_client )
         assert isinstance( self.output_service, VolumeServiceWriter )
 
         logger.info(f"Output bounding box: {self.output_service.bounding_box_zyx[:,::-1].tolist()}")
@@ -152,7 +153,7 @@ class CopyGrayscale(Workflow):
         assert ((output_bb_zyx == input_bb_zyx) | (output_bb_zyx == -1)).all(), \
             "Output bounding box must match the input bounding box exactly. (No translation permitted)."
 
-        if options["pyramid-source"] == "compute":
+        if options["pyramid-source"] != "copy":
             assert options["min-pyramid-scale"] == 0, \
                 "If computing downsample data, you must start with a minimum scale of 0."
         
@@ -256,13 +257,16 @@ class CopyGrayscale(Workflow):
         
         if pyramid_source == "copy" or scale == 0:
             # Copy from input source
-            bricked_slab_wall = BrickWall.from_volume_service(self.input_service, scale, slab_fullres_box_zyx, self.sc, voxels_per_thread // 2)
+            bricked_slab_wall = BrickWall.from_volume_service(self.input_service, scale, slab_fullres_box_zyx, self.client, voxels_per_thread // 2)
             bricked_slab_wall.persist_and_execute(f"Slab {slab_index}: Downloading scale {scale}", logger)
         else:
             # Downsample from previous scale
-            bricked_slab_wall = upscale_slab_wall.downsample( (2,2,2), 'grayscale' )
+            if pyramid_source == "compute-as-labels":
+                method = "label"
+            else:
+                method = "grayscale"
+            bricked_slab_wall = upscale_slab_wall.downsample( (2,2,2), method )
             bricked_slab_wall.persist_and_execute(f"Slab {slab_index}: Downsampling to scale {scale}", logger)
-            upscale_slab_wall.unpersist()
             del upscale_slab_wall
 
         if scale == 0:
@@ -287,7 +291,6 @@ class CopyGrayscale(Workflow):
         padded_slab_wall.persist_and_execute(f"Slab {slab_index}: Assembling scale {scale} bricks", logger)
 
         # Discard original bricks
-        bricked_slab_wall.unpersist()
         del bricked_slab_wall
 
         logger.info(f"Slab {slab_index}: Writing scale {scale}", extra={"status": f"Writing {slab_index}/{num_slabs}"})

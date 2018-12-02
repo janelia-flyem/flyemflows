@@ -65,6 +65,7 @@ test:
   requires:
     - pytest
     - numpy-allocation-tracking
+    - dvid
 
   imports:
     - flyemflows
