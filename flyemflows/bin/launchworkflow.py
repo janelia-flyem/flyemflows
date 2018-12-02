@@ -1,5 +1,26 @@
 """
 Entry point to launch a workflow for a given config, from a template directory.
+
+Example usage:
+
+  After you specify your configuration options in my-samplepoints-job/workflow.yaml,
+  this command will launch the workflow with 8 workers:
+  
+    $ launchworkflow -n 8 my-samplepoints-config-dir
+
+Tip:
+
+  For help understanding a particular workflow's config options,
+  try the --dump-default-verbose-yaml option (-v), which will dump out
+  a commented default configuration file.
+
+    $ launchworkflow -v samplepoints | less
+
+  Note: The default config is very verbose.
+        If you are satisified with the default setting
+        for any option, you may omit it from your config.
+        You must only specify those options which have no
+        provided default.
 """
 import os
 import sys
@@ -41,7 +62,7 @@ def main():
     parser.add_argument('--pause-before-exit', '-p', action='store_true',
                         help="Pause before exiting, to allow you to inspect the dask dashboard before it is shut down.")
     parser.add_argument('template_dir', nargs='?',
-                        help='A template directory with a workflow config file '
+                        help='A template directory with a workflow.yaml file '
                              '(and possibly other files/scripts to be used by the workflow.)')
     args = parser.parse_args()
 

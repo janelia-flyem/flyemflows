@@ -21,7 +21,10 @@ BoundingBoxSchema = \
 
 GeometrySchema = \
 {
-    "description": "Describes a volume's geometric and access pattern properties",
+    "description": "Describes a volume's geometric and access pattern properties.\n"
+                   "Note, you must always explicitly list the geometry section in\n"
+                   "your config, even if you leave it empty.\n"
+                   "An empty (default) geometry section is declared in YAML syntax as 'geometry: {}'\n",
     "type": "object",
     "default": {},
     "properties": {

@@ -17,7 +17,11 @@ from .geometry import GeometrySchema
 #
 GrayscaleVolumeSchema = \
 {
-    "description": "Describes a grayscale volume (service and geometry)",
+    "description": "Describes a grayscale volume (service and geometry).\n"
+                   "Only one of these service definitions (e.g. 'hdf5') should be\n"
+                   "listed in the config, and unused ones should be omitted.\n"
+                   "Regardless of service type, the 'geometry' section MUST be listed\n"
+                   "explicitly, even if it is empty.\n",
     "type": "object",
     "default": {},
     "oneOf": [
