@@ -1,13 +1,11 @@
 import numpy as np
 
+from confiddler import validate
 from dvid_resource_manager.client import ResourceManagerClient
 
-from confiddler import validate
-
 from ..util import auto_retry, replace_default_entries
-
-from .brainmaps_volume import BrainMapsVolume
 from . import VolumeServiceReader, GeometrySchema
+from .brainmaps_volume import BrainMapsVolume
 
 BrainMapsSegmentationServiceSchema = \
 {
@@ -62,7 +60,7 @@ class BrainMapsVolumeServiceReader(VolumeServiceReader):
     """
 
     def __init__(self, volume_config, resource_manager_client=None):
-        validate(volume_config, BrainMapsVolumeSchema)
+        validate(volume_config, BrainMapsVolumeSchema, inject_defaults=True)
         
         if resource_manager_client is None:
             # Dummy client
