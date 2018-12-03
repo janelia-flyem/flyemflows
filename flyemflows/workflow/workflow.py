@@ -88,7 +88,7 @@ class Workflow(object):
             "log-directory": {
                 "description": "Where LSF worker logs (from stdout) will be stored.",
                 "type": "string",
-                "default": "worker-logs"
+                "default": "dask-worker-stdout-logs"
             },
             "local-directory": {
                 "description": "Where dask should store temporary files when data spills to disk.\n"
@@ -196,7 +196,7 @@ class Workflow(object):
             },
             "log-dir": {
                 "type": "string",
-                "default": "/tmp"
+                "default": "worker-init-stdout-logs"
             },
             "also-run-on-driver": {
                 "description": "Also run this initialization script on the driver machine.\n",
