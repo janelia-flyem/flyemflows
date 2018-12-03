@@ -180,7 +180,11 @@ class SamplePoints(Workflow):
                     return df
                 df['brick_id'] = np.uint64(0)
                 df = df.map_partitions(set_brick_id, meta=df)
-                df = df.set_index('brick_id')
+
+                # Note: bricks and pointgroups are already sorted by
+                # brick scan-order so, brick_id is already sorted.
+                # Specifying sorted=True is critical to performance here.
+                df = df.set_index('brick_id', sorted=True)
                 return df
 
             # Give them matching indexes
