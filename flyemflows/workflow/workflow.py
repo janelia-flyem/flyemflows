@@ -538,10 +538,9 @@ class Workflow(object):
                     worker_hostnames[address] = name
         
         workers = list(worker_hostnames.keys())
-        hostnames = list(worker_hostnames.values())
         results = self.client.run(func, workers=workers)
 
-        logger.info(f"Ran {func.__name__} on {len(hostnames)} nodes: {hostnames}")
+        logger.info(f"Ran {func.__name__} on {len(workers)} workers")
         
         if not return_hostnames:
             return results
