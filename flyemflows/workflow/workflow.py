@@ -231,7 +231,7 @@ class Workflow(object):
         "description": "Workflow base config",
         "default": {},
         "additionalProperties": False,
-        "required": ["workflow-name"],
+        "required": ["workflow-name", "cluster-type"],
         "properties": {
             "workflow-name": {
                 "description": "The class name of the workflow which will be executed using this config.",
@@ -239,10 +239,11 @@ class Workflow(object):
                 "minLength": 1
             },
             "cluster-type": {
-                "description": "Whether or not to use an LSF cluster or a local cluster.",
+                "description": "Whether or not to use an LSF cluster or a local cluster.\n"
+                               "Choices: lsf, local-cluster, synchronous, processes",
                 "type": "string",
-                "enum": ["lsf", "local-cluster", "synchronous", "processes"],
-                "default": "local-cluster"
+                "enum": ["lsf", "local-cluster", "synchronous", "processes"]
+                # No default
             },
             "dask-config": DaskConfigSchema,
             "resource-manager": ResourceManagerSchema,
