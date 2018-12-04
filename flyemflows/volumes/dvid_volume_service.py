@@ -124,7 +124,7 @@ DvidSegmentationVolumeSchema = \
 class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
 
     def __init__(self, volume_config, resource_manager_client=None):
-        validate(volume_config, DvidGenericVolumeSchema)
+        validate(volume_config, DvidGenericVolumeSchema, inject_defaults=True)
         
         assert 'apply-labelmap' not in volume_config["dvid"].keys(), \
             "The apply-labelmap section should be parallel to 'dvid' and 'geometry', not nested within the 'dvid' section!"
