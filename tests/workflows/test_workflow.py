@@ -18,12 +18,23 @@ yaml.default_flow_style = False
 # Overridden below when running from __main__
 CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'local-cluster')
 
+
 def checkrun(f):
     """
-    Decorator to help you verify that a function was actually executed.
+    Decorator to help verify that a function was actually executed.
     
     Annotates a function with an attribute 'didrun',
     and only sets it to True if the function is actually called.
+    
+    Example:
+    
+        @checkrun
+        def myfunc():
+            pass
+        
+        assert (myfunc.didrun == False)
+        myfunc()
+        assert (myfunc.didrun == True)
     """
     def wrapper(*args, **kwargs):
         wrapper.didrun = True
@@ -39,8 +50,6 @@ def test_workflow_environment():
     
     Make sure those variables are set during the workflow, but not after.
     """
-    template_dir = tempfile.mkdtemp(suffix="test-workflow-environment-template")
-     
     config = {
         "workflow-name": "workflow",
         "cluster-type": CLUSTER_TYPE,
@@ -50,6 +59,7 @@ def test_workflow_environment():
         }
     }
  
+    template_dir = tempfile.mkdtemp(suffix="test-workflow-environment-template")
     with open(f"{template_dir}/workflow.yaml", 'w') as f:
         yaml.dump(config, f)
  
@@ -80,8 +90,6 @@ def test_resource_manager_on_driver():
     which means the workflow should launch the resource manager on the scheduler machine.
     Make sure it launches, but is also shut down after the workflow exits.
     """
-    template_dir = tempfile.mkdtemp(suffix="test-workflow-environment-template")
-     
     config = {
         "workflow-name": "workflow",
         "cluster-type": CLUSTER_TYPE,
@@ -98,6 +106,7 @@ def test_resource_manager_on_driver():
         }
     }
  
+    template_dir = tempfile.mkdtemp(suffix="test-workflow-environment-template")
     with open(f"{template_dir}/workflow.yaml", 'w') as f:
         yaml.dump(config, f)
  
@@ -120,7 +129,7 @@ def test_resource_manager_on_driver():
 def setup_worker_initialization_template(request):
     """
     Setup for test_worker_initialization(), below.
-    Parameterized for the "once-per-machine' case and it's opposite.
+    Parameterized for the "once-per-machine' case (and its opposite).
     """
     once_per_machine = request.param
     template_dir = tempfile.mkdtemp(suffix="test-worker-initialization")
@@ -147,7 +156,6 @@ def setup_worker_initialization_template(request):
         yaml.dump(config, f)
 
     return template_dir, config, once_per_machine
-
 
 
 def test_worker_initialization(setup_worker_initialization_template):
@@ -232,7 +240,12 @@ def test_worker_dvid_initialization():
 
 
 if __name__ == "__main__":
+    if 'CLUSTER_TYPE' in os.environ:
+        import warnings
+        warnings.warn("Disregarding CLUSTER_TYPE when running via __main__")
+
+    CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
+
     # I can't run 'local-cluster' tests from within eclipse,
     # hence the '-k not worker_initialization' option
-    CLUSTER_TYPE = "synchronous"
     pytest.main(['-s', '--tb=native', '-k', 'not worker_initialization', '--pyargs', 'tests.workflows.test_workflow'])

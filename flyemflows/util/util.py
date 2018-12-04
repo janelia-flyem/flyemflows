@@ -112,11 +112,20 @@ def extract_ip_from_link(link):
         return None
 
 
-def find_processes(searchstring):
+def find_processes(search_string):
+    """
+    Search all processes on the machine for one whose command
+    line invocation contains the given search string.
+    
+    Returns a list of psutil.Process objects of matching processes.
+    The list will be empty of no matches were found.
+
+    Note: Certain root-level processes cannot be scanned by this function.
+    """
     procs = []
     for p in psutil.process_iter():
         try:
-            if searchstring in ' '.join(p.cmdline()):
+            if search_string in ' '.join(p.cmdline()):
                 procs.append(procs)
         except psutil.AccessDenied:
             pass

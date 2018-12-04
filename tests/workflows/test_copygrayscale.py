@@ -1,3 +1,4 @@
+import os
 import tempfile
 import textwrap
 from io import StringIO
@@ -15,6 +16,9 @@ from flyemflows.bin.launchworkflow import launch_workflow
 
 TESTVOL_SHAPE = (256,256,256)
 
+# Overridden below when running from __main__
+CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'local-cluster')
+#CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'synchronous')
 
 @pytest.fixture
 def setup_dvid_grayscale_input(setup_dvid_repo):
@@ -33,7 +37,7 @@ def setup_dvid_grayscale_input(setup_dvid_repo):
  
     config_text = textwrap.dedent(f"""\
         workflow-name: copygrayscale
-        cluster-type: synchronous
+        cluster-type: {CLUSTER_TYPE}
          
         input:
           dvid:
@@ -85,7 +89,7 @@ def setup_hdf5_grayscale_input(setup_dvid_repo):
     
     config_text = textwrap.dedent(f"""\
         workflow-name: copygrayscale
-        cluster-type: synchronous
+        cluster-type: {CLUSTER_TYPE}
         
         input:
           hdf5:
@@ -199,4 +203,9 @@ def test_copygrayscale_from_hdf5_to_dvid_with_constrast_adjustment(setup_hdf5_gr
     
 
 if __name__ == "__main__":
+    if 'CLUSTER_TYPE' in os.environ:
+        import warnings
+        warnings.warn("Disregarding CLUSTER_TYPE when running via __main__")
+    
+    CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     pytest.main(['-s', '--tb=native', '--pyargs', 'tests.workflows.test_copygrayscale'])

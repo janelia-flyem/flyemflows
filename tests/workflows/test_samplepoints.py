@@ -1,3 +1,4 @@
+import os
 import tempfile
 
 import h5py
@@ -8,6 +9,11 @@ import pytest
 from ruamel.yaml import YAML
 from flyemflows.bin.launchworkflow import launch_workflow
 
+yaml = YAML()
+yaml.default_flow_style = False
+
+# Overridden below when running from __main__
+CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'local-cluster')
 
 @pytest.fixture(scope="module")
 def setup_samplepoints():
@@ -36,7 +42,7 @@ def setup_samplepoints():
 
     config = {
         "workflow-name": "samplepoints",
-        "cluster-type": "synchronous",
+        "cluster-type": CLUSTER_TYPE,
         
         "input": {
             "hdf5": {
@@ -53,8 +59,6 @@ def setup_samplepoints():
         }
     }
 
-    yaml = YAML()
-    yaml.default_flow_style = False
     with open(f"{template_dir}/workflow.yaml", 'w') as f:
         yaml.dump(config, f)
 
@@ -84,4 +88,5 @@ def test_samplepoints(setup_samplepoints):
 
 
 if __name__ == "__main__":
+    CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     pytest.main(['-s', '--tb=native', '--pyargs', 'tests.workflows.test_samplepoints'])
