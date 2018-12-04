@@ -95,7 +95,7 @@ class CopyGrayscale(Workflow):
                 "type": "array",
                 "items": {"type": "integer"},
                 "minItems": 2,
-                "default": [-1] + HEMIBRAIN_TAB_BOUNDARIES[1:] # Must begin with -1, not 0
+                "default": [-1] + HEMIBRAIN_TAB_BOUNDARIES[1:].tolist() # Must begin with -1, not 0
             }
         }
     }
