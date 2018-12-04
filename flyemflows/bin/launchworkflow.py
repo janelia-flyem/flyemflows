@@ -84,13 +84,20 @@ def main():
         dump_default_config(workflow_cls.schema(), sys.stdout, 'yaml-with-comments')
         sys.exit(0)
 
-    # Execute the workflow
     if not args.template_dir:
         print("Error: No config directory specified. Exiting.", file=sys.stderr)
         sys.exit(1)
     
-    _exc_dir, workflow = launch_workflow(args.template_dir, args.num_workers, not args.pause_before_exit)
+    if not os.path.exists(args.template_dir):
+        print(f"Error: template directory does not exist: {args.template_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    if not os.path.isdir(args.template_dir):
+        print(f"Error: Given template directory path is a file, not a directory: {args.template_dir}", file=sys.stderr)
+        sys.exit(1)
     
+    # Execute the workflow
+    _exc_dir, workflow = launch_workflow(args.template_dir, args.num_workers, not args.pause_before_exit)
     if args.pause_before_exit:
         logger.info("Workflow complete, but pausing now due to --pause-before-exit.  Hit Ctrl+C to exit.")
         try:
