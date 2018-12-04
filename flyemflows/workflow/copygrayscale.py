@@ -251,6 +251,7 @@ class CopyGrayscale(Workflow):
     def _process_slab(self, scale, slab_fullres_box_zyx, slab_index, num_slabs, upscale_slab_wall):
         slab_voxels = np.prod(slab_fullres_box_zyx[1] - slab_fullres_box_zyx[0]) // (2**scale)**3
         voxels_per_thread = slab_voxels // self.total_cores()
+        output_service = self.output_service
 
         options = self.config["copygrayscale"]
         pyramid_source = options["pyramid-source"]
@@ -273,20 +274,20 @@ class CopyGrayscale(Workflow):
             bricked_slab_wall = self.adjust_contrast(bricked_slab_wall, slab_index)
         
         # Remap to output bricks
-        output_grid = Grid(self.output_service.preferred_message_shape)
+        output_grid = Grid(output_service.preferred_message_shape)
         output_slab_wall = bricked_slab_wall.realign_to_new_grid( output_grid )
         
         # Pad from previously-existing pyramid data until
         # we have full storage blocks, e.g. (64,64,64),
         # but not necessarily full bricks, e.g. (64,64,6400)
-        output_accessor_func = partial(self.output_service.get_subvolume, scale=scale)
+        output_accessor_func = partial(output_service.get_subvolume, scale=scale)
 
         # But don't bother fetching real data for scale 0
         # the input slabs are already block-aligned, and the edges of each slice will be zeros anyway.
         if scale == 0:
             output_accessor_func = lambda _box: 0
 
-        padding_grid = Grid( 3*(self.output_service.block_width,), output_grid.offset )
+        padding_grid = Grid( 3*(output_service.block_width,), output_grid.offset )
         padded_slab_wall = output_slab_wall.fill_missing(output_accessor_func, padding_grid)
         padded_slab_wall.persist_and_execute(f"Slab {slab_index}: Assembling scale {scale} bricks", logger)
 
@@ -295,8 +296,9 @@ class CopyGrayscale(Workflow):
 
         logger.info(f"Slab {slab_index}: Writing scale {scale}", extra={"status": f"Writing {slab_index}/{num_slabs}"})
         
+        output_service = self.output_service
         def _write(brick):
-            write_brick(self.output_service, scale, brick)
+            write_brick(output_service, scale, brick)
         padded_slab_wall.bricks.map(_write).compute()
 
         return padded_slab_wall
