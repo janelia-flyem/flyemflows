@@ -492,7 +492,7 @@ class Workflow(object):
         # Overwrite workflow config data so workers see our IP address.
         self.config["resource-manager"]["server"] = server = driver_ip_addr
 
-        logger.info(f"Starting resource manager on the driver ({driver_ip_addr}:{port})")
+        logger.info(f"Starting resource manager on the driver ({driver_ip_addr}:{port}, a.k.a {socket.gethostname()}:{port})")
         
         python = sys.executable
         cmd = f"{python} {sys.prefix}/bin/dvid_resource_manager {port} {config_arg}"
@@ -555,9 +555,9 @@ class Workflow(object):
                     worker_hostnames[address] = name
         
         workers = list(worker_hostnames.keys())
-        results = self.client.run(func, workers=workers)
-
-        logger.info(f"Ran {func.__name__} on {len(workers)} workers")
+        
+        with Timer(f"Running {func.__name__} on {len(workers)} workers", logger):
+            results = self.client.run(func, workers=workers)
         
         if not return_hostnames:
             return results
