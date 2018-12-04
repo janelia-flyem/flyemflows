@@ -3,7 +3,7 @@ import scipy.ndimage
 from skimage.util.shape import view_as_blocks
 
 from neuclease.util import box_to_slicing
-from dvidutils import downsample_labels
+from ..util import downsample
 
 from . import VolumeServiceReader
 
@@ -113,9 +113,9 @@ class ScaledVolumeService(VolumeServiceReader):
 
             if self.dtype == np.uint64:
                 # Assume that uint64 means labels.
-                downsampled_data, _ = downsample_labels( orig_data, 2**delta_from_best )
+                downsampled_data = downsample( orig_data, 2**delta_from_best, 'labels' )
             else:
-                downsampled_data = scipy.ndimage.interpolation.zoom(orig_data, 1/(2**delta_from_best), mode='reflect')
+                downsampled_data = downsample( orig_data, 2**delta_from_best, 'grayscale' )
             return downsampled_data
         else:
             upsample_factor = int(2**-delta_from_best)

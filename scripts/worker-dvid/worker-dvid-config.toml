@@ -1,0 +1,22 @@
+[server]
+httpAddress = ":8000"
+rpcAddress = ":8001"
+instance_id_gen = "sequential"
+instance_id_start = 100  # new ids start at least from this.
+#webClient = DVID_PREFIX/http/dvid-web-console
+webDefaultFile = "index.html"
+
+
+[logging]
+logfile = "worker-dvid.log"
+max_log_size = 500 # MB
+max_log_age = 30   # days
+
+[store]
+    [store.mutable]
+    engine = "basholeveldb"
+    path = "worker-db"
+
+#    [store.mutable]
+#        engine = "gbucket"
+#        bucket= "BUCKET_NAME"

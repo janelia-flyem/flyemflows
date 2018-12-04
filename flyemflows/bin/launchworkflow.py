@@ -103,7 +103,27 @@ def main():
     del workflow
 
 
-def launch_workflow(template_dir, num_workers, kill_cluster=True):
+def launch_workflow(template_dir, num_workers, kill_cluster=True, _custom_execute_fn=None):
+    """
+    Args:
+        template_dir:
+            A directory containing 'workflow.yaml'.
+            The directory will be copied (with a timestamp in the name),
+            and the workflow will be executed from within the new copy.
+        
+        num_workers:
+            The number of dask workers to launch.
+        
+        kill_cluster:
+            If True, kill the cluster once execution is complete.
+            If False, leave the cluster running (to allow analysis of the diagnostics dashboard).
+        
+        _custom_execute_fn:
+            Test use only.  Used by unit tests to override the execute() function.
+    
+    Returns:
+        (execution_dir, workflow_inst)
+    """
     config_path = f'{template_dir}/workflow.yaml'
     if not os.path.exists(config_path):
         raise RuntimeError(f"Error: workflow.yaml not found in {template_dir}")
@@ -121,16 +141,21 @@ def launch_workflow(template_dir, num_workers, kill_cluster=True):
     execution_dir = f'{template_dir}-{timestamp}'
     shutil.copytree(template_dir, execution_dir, symlinks=True)
 
-    workflow_inst = _execute_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster)
+    workflow_inst = _execute_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster, _custom_execute_fn)
     return execution_dir, workflow_inst
 
 
-def _execute_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster=True):
+def _execute_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster=True, _custom_execute_fn=None):
     # This function is separate just for convenient testing.
     orig_dir = os.getcwd()
     try:
         os.chdir(execution_dir)
         workflow_inst = workflow_cls(config_data, num_workers)
+        
+        if _custom_execute_fn is not None:
+            # For testing only: monkey-patch the execute() function
+            workflow_inst.execute = lambda: _custom_execute_fn(workflow_inst)
+        
         workflow_inst.run(kill_cluster)
     finally:
         os.chdir(orig_dir)

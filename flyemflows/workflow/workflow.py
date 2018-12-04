@@ -9,7 +9,7 @@ import subprocess
 from os.path import basename, splitext
 
 import dask
-from distributed import Client, LocalCluster
+from distributed import Client, LocalCluster, get_worker
 from distributed.utils import parse_bytes
 
 import neuclease
@@ -253,7 +253,13 @@ class Workflow(object):
     
     @classmethod
     def schema(cls):
-        raise NotImplementedError
+        if cls is Workflow:
+            # The Workflow class itself is sometimes "executed" during unit tests,
+            # to test generic workflow features (such as worker initialization)
+            return Workflow.BaseSchema
+        else:
+            # Subclasses must implement schema() themselves.
+            raise NotImplementedError
     
     def __init__(self, config, num_workers):
         """Initialization of workflow object.
@@ -280,7 +286,13 @@ class Workflow(object):
 
 
     def execute(self):
-        raise NotImplementedError
+        if type(self) is Workflow:
+            # The Workflow class itself is sometimes "executed" during unit tests,
+            # to test generic workflow features (such as worker initialization)
+            pass
+        else:
+            # Subclasses must implement execute() themselves.
+            raise NotImplementedError
 
     
     def run(self, kill_cluster=True):
@@ -520,7 +532,10 @@ class Workflow(object):
             { 'hostname:port' : result }
         """
         if self.config["cluster-type"] in ("synchronous", "processes"):
-            results = {'driver': func()}
+            if return_hostnames:
+                results = {f'tcp://{socket.gethostname()}': func()}
+            else:
+                results = {'tcp://127.0.0.1': func()}
             logger.info(f"Ran {func.__name__} on the driver only")
             return results
         
@@ -531,8 +546,8 @@ class Workflow(object):
         if once_per_machine:
             machines = set()
             worker_hostnames = {}
-            for address, name in worker_hostnames.items():
-                ip = address.split('://')[1].split(':')[1]
+            for address, name in all_worker_hostnames.items():
+                ip = address.split('://')[1].split(':')[0]
                 if ip not in machines:
                     machines.add(ip)
                     worker_hostnames[address] = name
@@ -567,8 +582,8 @@ class Workflow(object):
         if not init_options["script-path"]:
             return ({}, None)
 
-        init_options["script-path"] = self.relpath_to_abspath(init_options["script-path"])
-        init_options["log-dir"] = self.relpath_to_abspath(init_options["log-dir"])
+        init_options["script-path"] = os.path.abspath(init_options["script-path"])
+        init_options["log-dir"] = os.path.abspath(init_options["log-dir"])
         os.makedirs(init_options["log-dir"], exist_ok=True)
         
         def launch_init_script():
@@ -600,7 +615,9 @@ class Workflow(object):
             time.sleep(init_options["launch-delay"])
             return p.pid
         
-        worker_init_pids = self.run_on_each_worker(launch_init_script, init_options["only-once-per-machine"])
+        worker_init_pids = self.run_on_each_worker(launch_init_script,
+                                                   init_options["only-once-per-machine"],
+                                                   return_hostnames=False)
 
         driver_init_pid = None
         if init_options["also-run-on-driver"]:
@@ -618,7 +635,14 @@ class Workflow(object):
         """
         def kill_init_proc():
             try:
-                pid_to_kill = worker_init_pids[socket.gethostname()]
+                worker_addr = get_worker().address
+            except ValueError:
+                # Special case for synchronous cluster.
+                # See run_on_each_worker
+                worker_addr = 'tcp://127.0.0.1'
+            
+            try:
+                pid_to_kill = worker_init_pids[worker_addr]
             except KeyError:
                 return
             else:

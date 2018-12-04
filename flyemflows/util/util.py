@@ -1,6 +1,8 @@
 import re
+import subprocess
 import socket
 
+import psutil
 import scipy.ndimage
 import numpy as np
 
@@ -108,3 +110,14 @@ def extract_ip_from_link(link):
         return m.groups()[0]
     else:
         return None
+
+
+def find_processes(searchstring):
+    procs = []
+    for p in psutil.process_iter():
+        try:
+            if searchstring in ' '.join(p.cmdline()):
+                procs.append(procs)
+        except psutil.AccessDenied:
+            pass
+    return procs
