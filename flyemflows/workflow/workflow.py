@@ -5,6 +5,7 @@ import socket
 import getpass
 import logging
 import tempfile
+import warnings
 import subprocess
 from os.path import basename, splitext
 
@@ -491,7 +492,7 @@ class Workflow(object):
         # Overwrite workflow config data so workers see our IP address.
         self.config["resource-manager"]["server"] = server = driver_ip_addr
 
-        logger.info(f"Starting resource manager on the driver ({driver_ip_addr})")
+        logger.info(f"Starting resource manager on the driver ({driver_ip_addr}:{port})")
         
         python = sys.executable
         cmd = f"{python} {sys.prefix}/bin/dvid_resource_manager {port} {config_arg}"
@@ -622,6 +623,8 @@ class Workflow(object):
 
         driver_init_pid = None
         if init_options["also-run-on-driver"]:
+            if self.config["cluster-type"] != "lsf":
+                warnings.warn("Warning: You are using a local-cluster, yet your worker initialization specified 'also-run-on-driver'.")
             driver_init_pid = launch_init_script()
         
         return (worker_init_pids, driver_init_pid)
