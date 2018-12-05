@@ -308,20 +308,22 @@ class Workflow(object):
                 self._init_environment_variables()
                 resource_server_proc = self._start_resource_server()
                 self._init_driver()
-                self._init_dask()
                 
-                worker_init_pids, driver_init_pid = self._run_worker_initializations()
+                # See also: reinitialize_cluster()
+                self._init_dask()
+                self._run_worker_initializations()
 
             try:
                 self.execute()
             finally:
                 sys.stderr.flush()
                 
-                self._kill_initialization_procs(worker_init_pids, driver_init_pid)
+                # See also: reinitialize_cluster()
+                self._kill_initialization_procs()
                 if kill_cluster:
                     self._cleanup_dask()
-                self._kill_resource_server(resource_server_proc)
-    
+
+                self._kill_resource_server(resource_server_proc)    
                 self._restore_original_environment_variables()
 
                 # Only the workflow calls cleanup_faulthandler, once all workers have exited
@@ -345,9 +347,12 @@ class Workflow(object):
         Note: Don't do this while there are tasks in-flight.
         """
         logger.info("Shutting down old cluster")
+        self._kill_initialization_procs()
         self._cleanup_dask()
+        
         logger.info("Initializing new cluster")
         self._init_dask()
+        self._run_worker_initializations()
 
 
     def _init_environment_variables(self):
@@ -370,9 +375,9 @@ class Workflow(object):
             logger.info(f"Driver host is: {socket.gethostname()}")
             logger.info(f"Driver RTM graphs: {driver_rtm_url}")
 
-        hostgraph_url_path = 'rtm-links.txt'
-        with open(hostgraph_url_path, 'a') as f:
-            f.write(f"driver ({socket.gethostname()}): {driver_rtm_url}\n")
+            hostgraph_url_path = 'rtm-links.txt'
+            with open(hostgraph_url_path, 'a') as f:
+                f.write(f"driver ({socket.gethostname()}): {driver_rtm_url}\n")
 
 
     def _init_dask(self, wait_for_workers=True):
@@ -602,7 +607,9 @@ class Workflow(object):
         init_options = self.config["worker-initialization"]
             
         if not init_options["script-path"]:
-            return ({}, None)
+            self.worker_init_pids = {}
+            self.driver_init_pid = None
+            return
 
         init_options["script-path"] = os.path.abspath(init_options["script-path"])
         init_options["log-dir"] = os.path.abspath(init_options["log-dir"])
@@ -652,10 +659,11 @@ class Workflow(object):
             logger.info(f"Pausing after launching worker initialization scripts ({launch_delay} seconds).")
             time.sleep(launch_delay)
 
-        return (worker_init_pids, driver_init_pid)
+        self.worker_init_pids = worker_init_pids
+        self.driver_init_pid = driver_init_pid
 
 
-    def _kill_initialization_procs(self, worker_init_pids, driver_init_pid):
+    def _kill_initialization_procs(self):
         """
         Kill any initialization processes (as launched from _run_worker_initializations)
         that might still running on the workers and/or the driver.
@@ -671,20 +679,20 @@ class Workflow(object):
                 worker_addr = 'tcp://127.0.0.1'
             
             try:
-                pid_to_kill = worker_init_pids[worker_addr]
+                pid_to_kill = self.worker_init_pids[worker_addr]
             except KeyError:
                 return
             else:
                 kill_if_running(pid_to_kill, 10.0)
         
-        if any(worker_init_pids.values()):
+        if any(self.worker_init_pids.values()):
             self.run_on_each_worker(kill_init_proc)
         else:
             logger.info("No worker init processes to kill")
             
 
-        if driver_init_pid:
-            kill_if_running(driver_init_pid, 10.0)
+        if self.driver_init_pid:
+            kill_if_running(self.driver_init_pid, 10.0)
         else:
             logger.info("No driver init process to kill")
 
