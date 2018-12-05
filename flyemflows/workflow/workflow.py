@@ -302,14 +302,15 @@ class Workflow(object):
         Run the workflow by calling the subclass's execute() function
         (with some startup/shutdown steps before/after).
         """
-        self._init_environment_variables()
-        resource_server_proc = self._start_resource_server()
-        self._init_dask()
-        
-        worker_init_pids, driver_init_pid = self._run_worker_initializations()
-
         logger.info(f"Working dir: {os.getcwd()}")
         with Timer(f"Running {self.config['workflow-name']}", logger):
+            with Timer("Running initialization steps"):
+                self._init_environment_variables()
+                resource_server_proc = self._start_resource_server()
+                self._init_dask()
+                
+                worker_init_pids, driver_init_pid = self._run_worker_initializations()
+
             try:
                 self.execute()
             finally:
@@ -497,8 +498,6 @@ class Workflow(object):
         python = sys.executable
         cmd = f"{python} {sys.prefix}/bin/dvid_resource_manager {port} {config_arg}"
         resource_server_process = subprocess.Popen(cmd, stderr=subprocess.STDOUT, shell=True)
-        logger.info("Started resource manager")
-
         return resource_server_process
 
 
