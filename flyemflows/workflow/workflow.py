@@ -307,6 +307,7 @@ class Workflow(object):
             with Timer("Running initialization steps"):
                 self._init_environment_variables()
                 resource_server_proc = self._start_resource_server()
+                self._init_driver()
                 self._init_dask()
                 
                 worker_init_pids, driver_init_pid = self._run_worker_initializations()
@@ -333,6 +334,22 @@ class Workflow(object):
     def total_cores(self):
         return sum( self.client.ncores().values() )
 
+
+    def reinitialize_cluster(self):
+        """
+        Discard the current cluster (and client) and start up a new one.
+        
+        Workflows can call this in between 'batches' of work
+        to get a new lease on cluster nodes from LSF.
+        
+        Note: Don't do this while there are tasks in-flight.
+        """
+        logger.info("Shutting down old cluster")
+        self._cleanup_dask()
+        logger.info("Initializing new cluster")
+        self._init_dask()
+
+
     def _init_environment_variables(self):
         self._old_env = os.environ.copy()
         os.environ.update(self.config["environment-variables"])
@@ -341,6 +358,21 @@ class Workflow(object):
     def _restore_original_environment_variables(self):
         os.environ.clear()
         os.environ.update(self._old_env)
+
+
+    def _init_driver(self):
+        try:
+            driver_jobid = os.environ['LSB_JOBID']
+        except KeyError:
+            pass
+        else:
+            driver_rtm_url = get_hostgraph_url(driver_jobid)
+            logger.info(f"Driver host is: {socket.gethostname()}")
+            logger.info(f"Driver RTM graphs: {driver_rtm_url}")
+
+        hostgraph_url_path = 'rtm-links.txt'
+        with open(hostgraph_url_path, 'a') as f:
+            f.write(f"driver ({socket.gethostname()}): {driver_rtm_url}\n")
 
 
     def _init_dask(self, wait_for_workers=True):
@@ -407,16 +439,6 @@ class Workflow(object):
         else:
             assert False, "Unknown cluster type"
 
-        try:
-            driver_jobid = os.environ['LSB_JOBID']
-        except KeyError:
-            pass
-        else:
-            driver_rtm_url = get_hostgraph_url(driver_jobid)
-            logger.info(f"Driver host is: {socket.gethostname()}")
-            logger.info(f"Driver RTM graphs: {driver_rtm_url}")
-
-
         if self.cluster:
             dashboard = self.cluster.dashboard_link
             logger.info(f"Dashboard running on {dashboard}")
@@ -435,10 +457,9 @@ class Workflow(object):
 
             if wait_for_workers and self.config["cluster-type"] == "lsf":
                 hostgraph_url_path = 'rtm-links.txt'
-                logger.info(f"Writing RTM Hostgraph URLs to {hostgraph_url_path}")
                 hostgraph_urls = self.run_on_each_worker(get_hostgraph_url, False, True)
-                with open(hostgraph_url_path, 'w') as f:
-                    f.write(f"driver ({socket.gethostname()}): {driver_rtm_url}\n")
+                with open(hostgraph_url_path, 'a') as f:
+                    f.write('-'*100 + '\n')
                     for addr, url in hostgraph_urls.items():
                         f.write(f"{addr}: {url}\n")
 
@@ -586,6 +607,8 @@ class Workflow(object):
         init_options["script-path"] = os.path.abspath(init_options["script-path"])
         init_options["log-dir"] = os.path.abspath(init_options["log-dir"])
         os.makedirs(init_options["log-dir"], exist_ok=True)
+
+        launch_delay = init_options["launch-delay"]
         
         def launch_init_script():
             script_name = splitext(basename(init_options["script-path"]))[0]
@@ -603,7 +626,7 @@ class Workflow(object):
                                        "Make sure your script begins with a shebang line, e.g. !#/bin/bash")
                 raise
 
-            if init_options["launch-delay"] == -1:
+            if launch_delay == -1:
                 p.wait()
                 if p.returncode == 126:
                     raise RuntimeError("Permission Error: Worker initialization script is not executable: {}"
@@ -613,12 +636,15 @@ class Workflow(object):
                     .format(init_options["script-path"], p.returncode)
                 return None
 
-            time.sleep(init_options["launch-delay"])
             return p.pid
         
         worker_init_pids = self.run_on_each_worker(launch_init_script,
                                                    init_options["only-once-per-machine"],
                                                    return_hostnames=False)
+
+        if launch_delay > 0:
+            logger.info(f"Pausing after launching worker initialization scripts ({launch_delay} seconds).")
+            time.sleep(launch_delay)
 
         driver_init_pid = None
         if init_options["also-run-on-driver"]:
