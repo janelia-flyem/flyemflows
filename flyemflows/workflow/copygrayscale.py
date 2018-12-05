@@ -214,7 +214,7 @@ class CopyGrayscale(Workflow):
             @auto_retry(3, 5.0, __name__)
             def reload_meta():
                 reload_metadata(server)
-            self.run_on_each_worker( reload_meta )
+            self.run_on_each_worker( reload_meta, once_per_machine=True )
 
 
     def execute(self):
