@@ -642,16 +642,16 @@ class Workflow(object):
                                                    init_options["only-once-per-machine"],
                                                    return_hostnames=False)
 
-        if launch_delay > 0:
-            logger.info(f"Pausing after launching worker initialization scripts ({launch_delay} seconds).")
-            time.sleep(launch_delay)
-
         driver_init_pid = None
         if init_options["also-run-on-driver"]:
             if self.config["cluster-type"] != "lsf":
                 warnings.warn("Warning: You are using a local-cluster, yet your worker initialization specified 'also-run-on-driver'.")
             driver_init_pid = launch_init_script()
         
+        if launch_delay > 0:
+            logger.info(f"Pausing after launching worker initialization scripts ({launch_delay} seconds).")
+            time.sleep(launch_delay)
+
         return (worker_init_pids, driver_init_pid)
 
 
