@@ -108,8 +108,8 @@ class Bjob(object):
         print(bsub_output)
         self.job_id, self.queue_name = parse_bsub_output(bsub_output)
         
-        self.rtm_url = get_hostgraph_url(self.job_id)
-        print ("Host graphs:")
+        self.rtm_url = construct_rtm_url(self.job_id)
+        print ("Job graphs:")
         print(self.rtm_url + "\n")
     
         if write_log_header:
@@ -168,17 +168,19 @@ class Bjob(object):
             f.write("Host graphs for this job can be found at the following URL:\n")
             f.write(self.rtm_url + "\n\n")
 
-def get_hostgraph_url(job_id=None):
+def construct_rtm_url(job_id=None, tab='jobgraph'):
     """
     Construct a URL that can be used to browse a job's host
     graphs on Janelia's RTM web server.
     """
     job_id = job_id or os.environ["LSB_JOBID"]
+    assert tab in ('hostgraph', 'jobgraph')
+    
     submit_time = get_job_submit_time(job_id)
     submit_timestamp = int(submit_time.timestamp())
     rtm_url = ( "http://lsf-rtm/cacti/plugins/grid/grid_bjobs.php"
                 "?action=viewjob"
-                "&tab=hostgraph"
+               f"&tab={tab}"
                 "&clusterid=1"
                 "&indexid=0"
                f"&jobid={job_id}"
@@ -220,10 +222,11 @@ def get_job_hostname(job_id):
     hostname = bjobs_output.split(':')[0].split('*')[-1].strip()
     return hostname
 
-def get_job_submit_time(job_id):
+def get_job_submit_time(job_id=None):
     """
     Return the job's submit_time as a datetime object.
     """
+    job_id = job_id or os.environ["LSB_JOBID"]
     bjobs_output = check_output(f'bjobs -X -noheader -o SUBMIT_TIME {job_id}', shell=True).strip().decode()
     # Example:
     # Sep  6 13:10:09 2017
@@ -250,4 +253,4 @@ def kill_job(job_id):
 if __name__ == "__main__":
     import os
     job_id = os.environ["LSB_JOBID"]
-    print(f"Job hostgraphs for this job ({job_id}) can be found at:\n" + get_hostgraph_url(job_id))
+    print(f"RTM graphs for this job ({job_id}) can be found at:\n" + construct_rtm_url(job_id))

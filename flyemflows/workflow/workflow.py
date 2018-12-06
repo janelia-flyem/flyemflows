@@ -19,8 +19,8 @@ from neuclease.util import Timer
 
 import confiddler.json as json
 from dvid_resource_manager.server import DEFAULT_CONFIG as DEFAULT_RESOURCE_MANAGER_CONFIG
-from ..util import kill_if_running, get_localhost_ip_address, extract_ip_from_link
-from ..util.lsf import get_hostgraph_url
+from ..util import kill_if_running, get_localhost_ip_address, extract_ip_from_link, construct_ganglia_link
+from ..util.lsf import construct_rtm_url, get_job_submit_time
 
 
 logger = logging.getLogger(__name__)
@@ -72,7 +72,9 @@ class Workflow(object):
                 "default": 1
             },
             "memory": {
-                "description": "How much memory to allot to each 'job' (typically an entire node's worth, assuming the job reserved all CPUs).\n"
+                "description": "How much memory to allot to each 'job' (typically an entire\n"
+                               "node's worth, assuming the job reserved all CPUs).\n"
+                               "This memory will be divided up amongst the workers in the job.\n"
                                "Specified as a string with a suffix for units, e.g. 4GB\n",
                 "type": "string",
                 "default": "128GB"
@@ -372,15 +374,20 @@ class Workflow(object):
         except KeyError:
             pass
         else:
-            driver_rtm_url = get_hostgraph_url(driver_jobid)
-            logger.info(f"Driver host is: {socket.gethostname()}")
+            driver_rtm_url = construct_rtm_url(driver_jobid)
+            driver_host = socket.gethostname()
+            logger.info(f"Driver host is: {driver_host}")
             logger.info(f"Driver RTM graphs: {driver_rtm_url}")
 
-            hostgraph_url_path = 'rtm-links.txt'
+            start_timestamp = get_job_submit_time()
+            ganglia_url = construct_ganglia_link(driver_host, start_timestamp)
+
+            hostgraph_url_path = 'graph-links.txt'
             with open(hostgraph_url_path, 'a') as f:
                 f.write(f"{socket.gethostname()} (driver)\n")
+                f.write(f"  {ganglia_url}\n")
                 f.write(f"  {driver_rtm_url}\n")
-
+            
 
     def _init_dask(self, wait_for_workers=True):
         # Consider using client.register_worker_callbacks() to configure
@@ -463,16 +470,39 @@ class Workflow(object):
                     time.sleep(0.1)
 
             if wait_for_workers and self.config["cluster-type"] == "lsf":
-                self._write_hostgraph_urls('rtm-links.txt')
+                self._write_graph_urls('graph-links.txt')
 
 
-    def _write_hostgraph_urls(self, hostgraph_url_path):
+    def _write_graph_urls(self, graph_url_path):
         """
-        Write a file containing links to the RTM
+        Write (or append to) the file containing links to the Ganglia and RTM
         hostgraphs for the workers in our cluster.
+        
+        We emit the following URLs:
+            - One Ganglia URL for the combined graphs of all workers
+            - One Ganglia URL for each worker
+            - One RTM URL for each job (grouped by host)
         """
         assert self.config["cluster-type"] == "lsf"
-        hostgraph_urls = self.run_on_each_worker(get_hostgraph_url, False, True)
+        job_submit_times = self.run_on_each_worker(get_job_submit_time, True, True)
+
+        host_min_submit_times = {}
+        for addr, timestamp in job_submit_times.items():
+            host = addr[len('tcp://'):].split(':')[0]
+            try:
+                min_timestamp = host_min_submit_times[host]
+                if timestamp < min_timestamp:
+                    host_min_submit_times[host] = timestamp
+            except KeyError:
+                host_min_submit_times[host] = timestamp
+
+        host_ganglia_links = { host: construct_ganglia_link(host, ts) for host,ts in host_min_submit_times.items() }
+
+        all_hosts = list(host_min_submit_times.keys())
+        min_timestamp = min(host_min_submit_times.values())
+        combined_ganglia_link = construct_ganglia_link(all_hosts, min_timestamp)
+        
+        hostgraph_urls = self.run_on_each_worker(construct_rtm_url, False, True)
 
         # Some workers share the same parent LSF job,
         # and hence have the same hostgraph URL.
@@ -483,11 +513,15 @@ class Workflow(object):
             host = addr[len('tcp://'):].split(':')[0]
             host_url_counts[host][url] += 1
         
-        with open(hostgraph_url_path, 'a') as f:
+        with open(graph_url_path, 'a') as f:
             f.write('-'*100 + '\n')
+            f.write("Combined Ganglia Graphs:\n")
+            f.write(f"  {combined_ganglia_link}\n")
+            
             for host, url_counts in host_url_counts.items():
                 total_workers = sum(url_counts.values())
                 f.write(f"{host} ({total_workers} workers)\n")
+                f.write(f"  {host_ganglia_links[host]}\n")
                 for url in url_counts.keys():
                     f.write(f"  {url}\n")
 
@@ -720,9 +754,9 @@ class Workflow(object):
         
         if any(self.worker_init_pids.values()):
             worker_statuses = self.run_on_each_worker(kill_init_proc, once_per_machine, True)
-            for k,v in filter(lambda k_v: k_v[1] is None, worker_statuses.items()):
+            for k,_v in filter(lambda k_v: k_v[1] is None, worker_statuses.items()):
                 logger.info(f"Worker {k}: initialization script was already shut down.")
-            for k,v in filter(lambda k_v: k_v[1] is False, worker_statuses.items()):
+            for k,_v in filter(lambda k_v: k_v[1] is False, worker_statuses.items()):
                 logger.info(f"Worker {k}: initialization script had to be forcefully killed.")
         else:
             logger.info("No worker init processes to kill")

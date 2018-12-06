@@ -1,12 +1,14 @@
+import os
 import re
-import subprocess
 import socket
+import datetime
 
 import psutil
 import scipy.ndimage
 import numpy as np
 
 from dvidutils import downsample_labels
+from neuclease.util import parse_timestamp
 
 def replace_default_entries(array, default_array, marker=-1):
     """
@@ -130,3 +132,29 @@ def find_processes(search_string):
         except psutil.AccessDenied:
             pass
     return procs
+
+
+JANELIA_GANGLIA = "cganglia.int.janelia.org/ganglia"
+def construct_ganglia_link(hosts, from_timestamp, to_timestamp=None, ganglia_server=JANELIA_GANGLIA):
+    if isinstance(hosts, str):
+        hosts = [hosts]
+    
+    if isinstance(from_timestamp, str):
+        from_timestamp = parse_timestamp(from_timestamp)
+
+    if isinstance(to_timestamp, str):
+        to_timestamp = parse_timestamp(to_timestamp)
+
+    def format_ts(ts):
+        if ts is None:
+            return ''
+        assert isinstance(ts, datetime.datetime)
+        year, month, day, hour, minute, *_ = ts.timetuple()
+        return f'{month:02}/{day:02}/{year}+{hour:02}:{minute:02}'
+
+    cs = format_ts(from_timestamp)
+    ce = format_ts(to_timestamp)
+    host_str = '|'.join(hosts)
+
+    url = f'http://{ganglia_server}/?r=custom&cs={cs}&ce={ce}&m=load_one&tab=ch&vn=&hide-hf=false&hreg[]={host_str}'
+    return url
