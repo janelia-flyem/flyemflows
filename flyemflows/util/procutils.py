@@ -79,18 +79,20 @@ def kill_if_running(pid, escalation_delay_seconds=10.0):
     """
     Kill the given process if it is still running.
     The process will be sent SIGINT, then SIGTERM if
-    necessary (after escalation_delay seconds)
+    necessary (after escalation_delay_seconds)
     and finally SIGKILL if it still hasn't died.
     
     This is similar to the behavior of the LSF 'bkill' command.
     
-    Returns: True if the process was terminated 'nicely', or
-             False it if it had to be killed with SIGKILL.
+    Returns:
+        None if the process wasn't running at all,
+        True if the process was terminated 'nicely' (via SIGINT or SIGTERM),
+        False it if it had to be killed with SIGKILL.
     """
     try:
         proc_cmd = ' '.join( psutil.Process(pid).cmdline() )
     except (psutil.NoSuchProcess, PermissionError, psutil.AccessDenied):
-        return True
+        return None
 
     _try_kill(pid, SIGINT)
     if not _is_still_running_after_delay(pid, escalation_delay_seconds):

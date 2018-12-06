@@ -24,6 +24,7 @@ DVID_CONFIG = f"""\
 httpAddress = ":{DVID_PORT}"
 rpcAddress = ":{DVID_PORT+1}"
 webClient = "{sys.prefix}/http/dvid-web-console"
+shutdownDelay = 0
 
 [logging]
 logfile = "{TEST_DATA_DIR}/dvid.log"

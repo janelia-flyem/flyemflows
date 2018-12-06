@@ -378,7 +378,8 @@ class Workflow(object):
 
             hostgraph_url_path = 'rtm-links.txt'
             with open(hostgraph_url_path, 'a') as f:
-                f.write(f"driver ({socket.gethostname()}): {driver_rtm_url}\n")
+                f.write(f"{socket.gethostname()} (driver)\n")
+                f.write(f"  {driver_rtm_url}\n")
 
 
     def _init_dask(self, wait_for_workers=True):
@@ -692,6 +693,15 @@ class Workflow(object):
         
         If they don't respond to SIGTERM, they'll be force-killed with SIGKILL after 10 seconds.
         """
+        launch_delay = self.config["worker-initialization"]["launch-delay"]
+        once_per_machine = self.config["worker-initialization"]["only-once-per-machine"]
+        
+        if launch_delay == -1:
+            # Nothing to do:
+            # We already waited for the the init scripts to complete.
+            return
+        
+        worker_init_pids = self.worker_init_pids
         def kill_init_proc():
             try:
                 worker_addr = get_worker().address
@@ -701,14 +711,19 @@ class Workflow(object):
                 worker_addr = 'tcp://127.0.0.1'
             
             try:
-                pid_to_kill = self.worker_init_pids[worker_addr]
+                pid_to_kill = worker_init_pids[worker_addr]
             except KeyError:
-                return
+                return None
             else:
-                kill_if_running(pid_to_kill, 10.0)
+                return kill_if_running(pid_to_kill, 10.0)
+                
         
         if any(self.worker_init_pids.values()):
-            self.run_on_each_worker(kill_init_proc)
+            worker_statuses = self.run_on_each_worker(kill_init_proc, once_per_machine, True)
+            for k,v in filter(lambda k_v: k_v[1] is None, worker_statuses.items()):
+                logger.info(f"Worker {k}: initialization script was already shut down.")
+            for k,v in filter(lambda k_v: k_v[1] is False, worker_statuses.items()):
+                logger.info(f"Worker {k}: initialization script had to be forcefully killed.")
         else:
             logger.info("No worker init processes to kill")
             
