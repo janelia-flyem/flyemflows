@@ -7,6 +7,7 @@ import logging
 import tempfile
 import warnings
 import subprocess
+from collections import defaultdict
 from os.path import basename, splitext
 
 import dask
@@ -461,12 +462,33 @@ class Workflow(object):
                     time.sleep(0.1)
 
             if wait_for_workers and self.config["cluster-type"] == "lsf":
-                hostgraph_url_path = 'rtm-links.txt'
-                hostgraph_urls = self.run_on_each_worker(get_hostgraph_url, False, True)
-                with open(hostgraph_url_path, 'a') as f:
-                    f.write('-'*100 + '\n')
-                    for addr, url in hostgraph_urls.items():
-                        f.write(f"{addr}: {url}\n")
+                self._write_hostgraph_urls('rtm-links.txt')
+
+
+    def _write_hostgraph_urls(self, hostgraph_url_path):
+        """
+        Write a file containing links to the RTM
+        hostgraphs for the workers in our cluster.
+        """
+        assert self.config["cluster-type"] == "lsf"
+        hostgraph_urls = self.run_on_each_worker(get_hostgraph_url, False, True)
+
+        # Some workers share the same parent LSF job,
+        # and hence have the same hostgraph URL.
+        # Don't show duplicate links, but do group the links by host
+        # and indicate how many workers are hosted on each node.
+        host_url_counts = defaultdict(lambda: defaultdict(lambda: 0))
+        for addr, url in hostgraph_urls.items():
+            host = addr[len('tcp://'):].split(':')[0]
+            host_url_counts[host][url] += 1
+        
+        with open(hostgraph_url_path, 'a') as f:
+            f.write('-'*100 + '\n')
+            for host, url_counts in host_url_counts.items():
+                total_workers = sum(url_counts.values())
+                f.write(f"{host} ({total_workers} workers)\n")
+                for url in url_counts.keys():
+                    f.write(f"  {url}\n")
 
 
     def _cleanup_dask(self):
