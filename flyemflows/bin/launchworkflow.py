@@ -147,6 +147,7 @@ def launch_workflow(template_dir, num_workers, kill_cluster=True, _custom_execut
     timestamp = f'{datetime.now():%Y%m%d.%H%M%S}'
     execution_dir = f'{template_dir}-{timestamp}'
     shutil.copytree(template_dir, execution_dir, symlinks=True)
+    os.chmod(f'{execution_dir}/workflow.yaml', 0o444) # read-only
 
     workflow_inst = _execute_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster, _custom_execute_fn)
     return execution_dir, workflow_inst
