@@ -235,6 +235,10 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
         return np.uint64(np.prod(physical[1] - physical[0]))
 
     boxes_bag = dask.bag.from_sequence( logical_and_physical_boxes, partition_size=partition_size )
+    
+    # Distribute data across the cluster NOW.
+    client.scatter(boxes_bag)
+
     total_volume = sum(map(brick_size, logical_and_physical_boxes))
     logger.info(f"Initializing RDD of {num_bricks} Bricks "
                 f"(over {boxes_bag.npartitions} partitions) with total volume {total_volume/1e9:.1f} Gvox")
