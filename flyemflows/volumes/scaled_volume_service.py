@@ -82,17 +82,12 @@ class ScaledVolumeService(VolumeServiceReader):
 
     @property
     def available_scales(self):
-        return self.original_volume_service.available_scales
+        return list(range(10)) # arbitrary limit
 
     def get_subvolume(self, box_zyx, scale=0):
         """
         Extract the subvolume, specified in new (scaled) coordinates from the
         original volume service, then scale result accordingly before returning it.
-        
-        TODO: It would be better to request the scale (from among the available-scales)
-              that is closest to the final adjusted_scale.
-              In the current implementation, it's just assumed that the requested scale exists,
-              and then we downsample/upsample according to self.scale_delta.
         """
         true_scale = scale + self.scale_delta
         
