@@ -42,7 +42,7 @@ class BrainMapsVolume:
             skip_checks: If True, verify that the volume_id and change_stack_id exist on the server.
                          Otherwise, skip those checks, to minimize overhead.
         """
-        self.project = project
+        self.project = str(project)
         self.dataset = dataset
         self.volume_id = volume_id
         self.change_stack_id = change_stack_id
@@ -174,7 +174,7 @@ class BrainMapsVolume:
     @property
     def bounding_box(self):
         """
-        The bounding box [start, stop] of the volume at scale 0.
+        The bounding box [start, stop] of the volume at scale 0, in zyx order.
         """
         return self.bounding_boxes[0] # Scale 0
 
@@ -182,7 +182,7 @@ class BrainMapsVolume:
     @property
     def bounding_boxes(self):
         """
-        A list of bounding boxes (one per scale)
+        A list of bounding boxes (one per scale), each in zyx order.
         """
         if self._bounding_boxes is None:
             self._bounding_boxes = list(map(self._extract_bounding_box, self.geometries))
