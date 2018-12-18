@@ -116,7 +116,8 @@ class Brick:
         if self._destroyed:
             raise RuntimeError("Attempting to compress data for a brick that has already been explicitly destroyed:\n"
                                f"{self}")
-        if self._volume is not None:
+
+        if self._volume is not None and self._volume.dtype == np.uint64:
             self._compressed_volume = CompressedNumpyArray(self._volume)
             self._volume = None
     
