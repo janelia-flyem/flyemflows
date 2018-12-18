@@ -81,7 +81,8 @@ class VolumeService(metaclass=ABCMeta):
         if ("transpose-axes" in volume_config) and (volume_config["transpose-axes"] != TransposedVolumeService.NO_TRANSPOSE):
             service = TransposedVolumeService(service, volume_config["transpose-axes"])
 
-        # Wrap with scaled service
+        # Even if rescale-level == 0, we still wrap in a scaled volumeservice because
+        # it enables more 'available-scales'
         from . import ScaledVolumeService
         if "rescale-level" in volume_config:
             service = ScaledVolumeService(service, volume_config["rescale-level"])
