@@ -449,6 +449,8 @@ class Workflow(object):
                     return {'driver': ncores}
                 def close(self):
                     pass
+                def scatter(self, data, *_):
+                    return data
             self.client = DebugClient()
         else:
             assert False, "Unknown cluster type"
