@@ -27,6 +27,7 @@ class CopyGrayscale(Workflow):
     CopyGrayscaleSchema = \
     {
         "type": "object",
+        "description": "Settings specific to the CopyGrayscale workflow",
         "default": {},
         "additionalProperties": False,
         "properties": {
