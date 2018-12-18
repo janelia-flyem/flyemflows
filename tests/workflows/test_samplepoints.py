@@ -1,4 +1,5 @@
 import os
+import copy
 import tempfile
 
 import h5py
@@ -7,6 +8,7 @@ import pandas as pd
 
 import pytest
 from ruamel.yaml import YAML
+from flyemflows.util import downsample
 from flyemflows.bin.launchworkflow import launch_workflow
 
 yaml = YAML()
@@ -79,6 +81,41 @@ def test_samplepoints(setup_samplepoints):
     
     labels = volume[(*sorted_coords.transpose(),)]
     assert (labels == output_df['label']).all()
+
+    # 'extra' columns should be preserved, even
+    # though they weren't used in the computation.
+    input_extra = points_df.sort_values(['z', 'y', 'x'])['extra'].values
+    output_extra = output_df.sort_values(['z', 'y', 'x'])['extra'].values
+    assert (output_extra == input_extra).all(), "Extra column was not correctly preserved"
+
+
+def test_samplepoints_rescale(setup_samplepoints):
+    template_dir, config, volume, points_df = setup_samplepoints
+    config = copy.copy(config)
+    config["input"]["rescale-level"] = 2
+    config["samplepoints"]["rescale-points-to-level"] = 2
+
+    with open(f"{template_dir}/workflow.yaml", 'w') as f:
+        yaml.dump(config, f)
+    
+    execution_dir, workflow = launch_workflow(template_dir, 1)
+    
+    final_config = workflow.config
+    output_df = pd.read_csv(f'{execution_dir}/{final_config["samplepoints"]["output-table"]}')
+
+    # Should appear in sorted order
+    points_df.sort_values(['z', 'y', 'x'], inplace=True)
+    sorted_coords = points_df[['z', 'y', 'x']].values
+    
+    output_df['Z'] = points_df['z'].values
+    output_df['Y'] = points_df['y'].values
+    output_df['X'] = points_df['x'].values
+
+    assert (sorted_coords == output_df[['z', 'y', 'x']].values).all()
+    
+    downsampled_vol = downsample(volume, 2**2, 'labels')
+    labels = downsampled_vol[(*(sorted_coords // 2**2).transpose(),)]
+    assert (labels == output_df['label'].values).all()
 
     # 'extra' columns should be preserved, even
     # though they weren't used in the computation.

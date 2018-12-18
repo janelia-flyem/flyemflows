@@ -43,6 +43,7 @@ class SamplePoints(Workflow):
     SamplePointsOptionsSchema = \
     {
         "type": "object",
+        "description": "Settings specific to the SamplePoints workflow",
         "default": {},
         "additionalProperties": False,
         "properties": {
@@ -118,7 +119,7 @@ class SamplePoints(Workflow):
 
         rescale = options["rescale-points-to-level"]
         if rescale != 0:
-            points //= 2**rescale
+            points //= (2**rescale)
 
         # All points must lie within the input volume        
         points_box = [points.min(axis=0), 1+points.max(axis=0)]
@@ -228,15 +229,33 @@ class SamplePoints(Workflow):
             sample_table = np.concatenate(brick_samples)
 
         with Timer("Sorting samples", logger):
+            # This will sort in terms of the SCALED z,y,x coordinates
             sample_table.sort()
 
-        output_col = options["output-column"]
         with Timer("Sorting table", logger):
-            coordinate_table_df.sort_values(['z', 'y', 'x'], inplace=True)
-
+            if rescale == 0:
+                coordinate_table_df.sort_values(['z', 'y', 'x'], inplace=True)
+            else:
+                # sample_table is sorted by RESCALED coordiante,
+                # so sort our table the same way
+                coordinate_table_df['rz'] = coordinate_table_df['z'] // (2**rescale)
+                coordinate_table_df['ry'] = coordinate_table_df['y'] // (2**rescale)
+                coordinate_table_df['rx'] = coordinate_table_df['x'] // (2**rescale)
+                coordinate_table_df.sort_values(['rz', 'ry', 'rx'], inplace=True)
+                del coordinate_table_df['rz']
+                del coordinate_table_df['ry']
+                del coordinate_table_df['rx']
+                
         # Now that samples and input rows are sorted identically,
         # append the results
-        coordinate_table_df[output_col] = sample_table['label']
+        output_col = options["output-column"]
+        coordinate_table_df[output_col] = sample_table['label'].copy()
+
+        if rescale != 0:
+            with Timer("Re-sorting table at scale 0", logger):
+                # For simplicity (API and testing), we guarantee that coordinates are sorted in the output.
+                # In the case of rescaled points, they need to be sorted once more (at scale 0 this time)
+                coordinate_table_df.sort_values(['z', 'y', 'x'], inplace=True)
 
         with Timer("Exporting samples", logger):
             coordinate_table_df.to_csv(options["output-table"], header=True, index=False)
