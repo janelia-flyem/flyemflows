@@ -5,7 +5,7 @@ import cloudpickle
 import numpy as np
 import dask.bag
 
-from neuclease.util import Grid, boxes_from_grid, clipped_boxes_from_grid, box_intersection, box_to_slicing, box_as_tuple, overwrite_subvol, extract_subvol
+from neuclease.util import Timer, Grid, boxes_from_grid, clipped_boxes_from_grid, box_intersection, box_to_slicing, box_as_tuple, overwrite_subvol, extract_subvol
 from ..util import CompressedNumpyArray
 
 logger = logging.getLogger(__name__)
@@ -234,14 +234,15 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
         _logical, physical = log_phys
         return np.uint64(np.prod(physical[1] - physical[0]))
 
+    # Distribute data across the cluster NOW, to force even distribution.
     boxes_bag = dask.bag.from_sequence( logical_and_physical_boxes, partition_size=partition_size )
-    
-    # Distribute data across the cluster NOW.
-    client.scatter(boxes_bag)
+    with Timer() as scatter_timer:
+        boxes_bag = client.scatter(boxes_bag).result()
 
     total_volume = sum(map(brick_size, logical_and_physical_boxes))
     logger.info(f"Initializing RDD of {num_bricks} Bricks "
-                f"(over {boxes_bag.npartitions} partitions) with total volume {total_volume/1e9:.1f} Gvox")
+                f"(over {boxes_bag.npartitions} partitions) with total volume {total_volume/1e9:.1f} Gvox "
+                f"(scatter took {scatter_timer.timedelta})")
 
     def make_bricks( logical_and_physical_box ):
         logical_box, physical_box = logical_and_physical_box
