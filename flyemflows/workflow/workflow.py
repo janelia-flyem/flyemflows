@@ -18,6 +18,7 @@ import neuclease
 from neuclease.util import Timer
 
 import confiddler.json as json
+from confiddler import convert_to_base_types
 from dvid_resource_manager.server import DEFAULT_CONFIG as DEFAULT_RESOURCE_MANAGER_CONFIG
 from ..util import kill_if_running, get_localhost_ip_address, extract_ip_from_link, construct_ganglia_link
 from ..util.lsf import construct_rtm_url, get_job_submit_time
@@ -417,7 +418,8 @@ class Workflow(object):
         # - faulthandler (later)
         # - excepthook?
         # - (okay, maybe it's just best to put that stuff in __init__.py, like in DSS)
-        new_config = dask.config.update(dask.config.config, self.config['dask-config'])
+        user_config = convert_to_base_types(self.config['dask-config'])
+        new_config = dask.config.update(dask.config.config, user_config)
         dask.config.set(new_config)
 
         if self.config["cluster-type"] == "lsf":
@@ -445,7 +447,8 @@ class Workflow(object):
                 os.environ['TMPDIR'] = local_dir # Forked processes will use this for tempfile.tempdir
 
             # Reconfigure
-            new_config = dask.config.update(dask.config.config, self.config['dask-config'])
+            user_config = convert_to_base_types(self.config['dask-config'])
+            new_config = dask.config.update(dask.config.config, user_config)
             dask.config.set(new_config)
 
             self.cluster = LSFCluster(ip='0.0.0.0')
