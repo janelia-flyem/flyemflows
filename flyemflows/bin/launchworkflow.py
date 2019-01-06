@@ -152,7 +152,9 @@ def launch_workflow(template_dir, num_workers, kill_cluster=True, _custom_execut
     shutil.copytree(template_dir, execution_dir, symlinks=True)
     os.chmod(f'{execution_dir}/workflow.yaml', 0o444) # read-only
 
-    with tee_streams(f'{execution_dir}/output.log'):
+    logpath = f'{execution_dir}/output.log'
+    with tee_streams(logpath):
+        sys.stderr.write(f"teeing output to {logpath}")
         workflow_inst = _execute_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster, _custom_execute_fn)
     return execution_dir, workflow_inst
 
