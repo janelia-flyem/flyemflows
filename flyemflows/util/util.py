@@ -217,18 +217,21 @@ def fileno(file_or_fd):
 def tee_streams(output_path, append=False):
     """
     Context manager.
-    All stdout and stderr will be tee'd to a a file on disk
-    (in addition to appearing on the original stdout/stderr streams).
+    All stdout and stderr will be tee'd to a a file on disk.
+    (in addition to appearing on the original stdout streams).
+    
+    Note: Stdout and stderr will be merged, in your file and in your console.
     """
     if append:
         append = '-a'
     else:
         append = ''
-        
-    tee = Popen(f'tee {append} {output_path}', shell=True, stdin=PIPE)
+    
     try:
-        with stdout_redirected(to=tee.stdin, stdout=sys.stderr), stdout_redirected(tee.stdin, stdout=sys.stdout):
-            yield
+        tee = Popen(f'tee {append} {output_path}', shell=True, stdin=PIPE)
+        with stdout_redirected(tee.stdin, stdout=sys.stdout): # pipe stdout to tee
+            with stdout_redirected(sys.stdout, stdout=sys.stderr): # merge stderr into stdout
+                yield
     finally:
         tee.stdin.close()
         try:
