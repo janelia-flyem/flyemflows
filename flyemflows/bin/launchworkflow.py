@@ -34,6 +34,7 @@ import confiddler.json as json
 from confiddler import dump_default_config, load_config
 
 from neuclease import configure_default_logging
+from flyemflows.util import tee_streams
 from flyemflows.workflow import AVAILABLE_WORKFLOWS
 
 logger = logging.getLogger(__name__)
@@ -149,7 +150,8 @@ def launch_workflow(template_dir, num_workers, kill_cluster=True, _custom_execut
     shutil.copytree(template_dir, execution_dir, symlinks=True)
     os.chmod(f'{execution_dir}/workflow.yaml', 0o444) # read-only
 
-    workflow_inst = _execute_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster, _custom_execute_fn)
+    with tee_streams(f'{execution_dir}/output.log'):
+        workflow_inst = _execute_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster, _custom_execute_fn)
     return execution_dir, workflow_inst
 
 

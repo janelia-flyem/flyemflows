@@ -1,4 +1,5 @@
 import os
+import sys
 import shutil
 import tempfile
 from pathlib import Path
@@ -84,6 +85,36 @@ def test_workflow_environment():
     assert os.environ == orig_environ
 
 
+def test_tee_output():
+    config = {
+        "workflow-name": "workflow",
+        "cluster-type": CLUSTER_TYPE,
+ 
+        "environment-variables": {
+            "FOO": "BAR"
+        }
+    }
+ 
+    template_dir = tempfile.mkdtemp(suffix="test-workflow-environment-template")
+    with open(f"{template_dir}/workflow.yaml", 'w') as f:
+        yaml.dump(config, f)
+    
+    stdout_msg = "This should appear in output.log\n"
+    stderr_msg = "This should also appear in output.log\n"
+
+    @checkrun
+    def execute(workflow_inst):
+        sys.stdout.write(stdout_msg)
+        sys.stderr.write(stderr_msg)
+    
+    execution_dir, _workflow = launch_workflow(template_dir, 1, _custom_execute_fn=execute)
+
+    with open(f'{execution_dir}/output.log', 'r') as f:
+        written = f.read()
+    
+    assert stdout_msg in written
+    assert stderr_msg in written
+
 def test_resource_manager_on_driver():
     """
     The config can specify a resource manager server address as "driver",
@@ -142,7 +173,7 @@ def setup_worker_initialization_template(request):
     
     config = {
         "workflow-name": "workflow",
-        "cluster-type": "local-cluster",
+        "cluster-type": CLUSTER_TYPE,
          
         "worker-initialization": {
             "script-path": "do-nothing.sh",
@@ -167,7 +198,7 @@ def test_worker_initialization(setup_worker_initialization_template):
     template_dir, _config, once_per_machine = setup_worker_initialization_template
     
     num_workers = 2
-    if once_per_machine:
+    if once_per_machine or CLUSTER_TYPE in ("synchronous", "processes"):
         expected_script_count = 1
     else:
         expected_script_count = num_workers
@@ -211,7 +242,7 @@ def test_worker_dvid_initialization():
      
     config = {
         "workflow-name": "workflow",
-        "cluster-type": "local-cluster",
+        "cluster-type": CLUSTER_TYPE,
          
         "worker-initialization": {
             "script-path": "launch-worker-dvid.sh",
@@ -245,7 +276,4 @@ if __name__ == "__main__":
         warnings.warn("Disregarding CLUSTER_TYPE when running via __main__")
 
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
-
-    # I can't run 'local-cluster' tests from within eclipse,
-    # hence the '-k not worker_initialization' option
-    pytest.main(['-s', '--tb=native', '-k', 'not worker_initialization', '--pyargs', 'tests.workflows.test_workflow'])
+    pytest.main(['-s', '--tb=native', '--pyargs', 'tests.workflows.test_workflow'])
