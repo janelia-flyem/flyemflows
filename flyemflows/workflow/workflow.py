@@ -130,17 +130,15 @@ class Workflow(object):
         }
     }
     
-    DaskConfigSchema = \
+    DistributedSchema = \
     {
-        "description": "Dask config values to override the defaults in ~/.config/dask/ or /etc/dask/.\n"
-                       "See https://docs.dask.org/en/latest/configuration.html for details.",
+        "description": "dask.distributed config section.",
         "type": "object",
         "additionalProperties": True,
         "default": {},
         "properties": {
-            "jobqueue": JobQueueSchema,
             "admin": {
-                "description": "dask 'admin' config section.",
+                "description": "dask.distributed 'admin' config section.",
                 "type": "object",
                 "additionalProperties": True,
                 "default": {},
@@ -151,6 +149,19 @@ class Workflow(object):
                     }
                 }
             }
+        }
+    }
+    
+    DaskConfigSchema = \
+    {
+        "description": "Dask config values to override the defaults in ~/.config/dask/ or /etc/dask/.\n"
+                       "See https://docs.dask.org/en/latest/configuration.html for details.",
+        "type": "object",
+        "additionalProperties": True,
+        "default": {},
+        "properties": {
+            "distributed": DistributedSchema,
+            "jobqueue": JobQueueSchema
         }
     }
 
@@ -322,7 +333,7 @@ class Workflow(object):
             with Timer("Running initialization steps"):
                 self._init_environment_variables()
                 resource_server_proc = self._start_resource_server()
-                self._init_driver()
+                self._write_driver_graph_urls()
                 
                 # See also: reinitialize_cluster()
                 self._init_dask()
@@ -380,7 +391,7 @@ class Workflow(object):
         os.environ.update(self._old_env)
 
 
-    def _init_driver(self):
+    def _write_driver_graph_urls(self):
         try:
             driver_jobid = os.environ['LSB_JOBID']
         except KeyError:
@@ -484,10 +495,10 @@ class Workflow(object):
                     time.sleep(0.1)
 
             if wait_for_workers and self.config["cluster-type"] == "lsf":
-                self._write_graph_urls('graph-links.txt')
+                self._write_worker_graph_urls('graph-links.txt')
 
 
-    def _write_graph_urls(self, graph_url_path):
+    def _write_worker_graph_urls(self, graph_url_path):
         """
         Write (or append to) the file containing links to the Ganglia and RTM
         hostgraphs for the workers in our cluster.
