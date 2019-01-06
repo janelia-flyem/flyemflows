@@ -101,19 +101,26 @@ def test_tee_output():
     
     stdout_msg = "This should appear in output.log\n"
     stderr_msg = "This should also appear in output.log\n"
+    traceback_msg = "Tracebacks should appear, too"
 
+    execution_dir = ''
     @checkrun
     def execute(workflow_inst):
+        nonlocal execution_dir
+        execution_dir = os.getcwd()
         sys.stdout.write(stdout_msg)
         sys.stderr.write(stderr_msg)
+        assert False, traceback_msg
     
-    execution_dir, _workflow = launch_workflow(template_dir, 1, _custom_execute_fn=execute)
+    with pytest.raises(AssertionError):
+        execution_dir, _workflow = launch_workflow(template_dir, 1, _custom_execute_fn=execute)
 
     with open(f'{execution_dir}/output.log', 'r') as f:
         written = f.read()
     
     assert stdout_msg in written
     assert stderr_msg in written
+    assert traceback_msg in written
 
 def test_resource_manager_on_driver():
     """

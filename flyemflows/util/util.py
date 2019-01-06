@@ -1,9 +1,10 @@
 import os
 import re
 import sys
+import ctypes
 import socket
 import datetime
-import ctypes
+import traceback
 from ctypes.util import find_library
 from contextlib import contextmanager
 from subprocess import Popen, PIPE, TimeoutExpired
@@ -220,24 +221,34 @@ def tee_streams(output_path, append=False):
     All stdout and stderr will be tee'd to a a file on disk.
     (in addition to appearing on the original stdout streams).
     
-    Note: Stdout and stderr will be merged, in your file and in your console.
+    Note: Stdout and stderr will be merged, in both the tee file and the console.
     """
     if append:
         append = '-a'
     else:
         append = ''
     
+    tee = Popen(f'tee {append} {output_path}', shell=True, stdin=PIPE,
+                bufsize=1, universal_newlines=True, # line buffering
+                preexec_fn=os.setpgrp)  # Spawn the tee process in its own process group,
+                                        # so it won't receive SIGINT.
+                                        # (Otherwise it might close its input stream too early if the user hits Ctrl+C.)
     try:
-        tee = Popen(f'tee {append} {output_path}', shell=True, stdin=PIPE)
-        with stdout_redirected(tee.stdin, stdout=sys.stdout): # pipe stdout to tee
-            with stdout_redirected(sys.stdout, stdout=sys.stderr): # merge stderr into stdout
-                yield
-    finally:
-        tee.stdin.close()
         try:
-            tee.wait(1.0)
-        except TimeoutExpired:
-            pass
+            with stdout_redirected(tee.stdin, stdout=sys.stdout): # pipe stdout to tee
+                with stdout_redirected(sys.stdout, stdout=sys.stderr): # merge stderr into stdout
+                    yield
+        finally:
+            tee.stdin.close()
+            try:
+                tee.wait(1.0)
+            except TimeoutExpired:
+                pass
+    except:
+        # If an exception was raised, append the traceback to the file
+        with open(output_path, 'a') as f:
+            traceback.print_exc(file=f)
+        raise
 
 
 JANELIA_GANGLIA = "cganglia.int.janelia.org/ganglia"
