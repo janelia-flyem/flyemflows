@@ -120,7 +120,7 @@ def find_processes(search_string):
     line invocation contains the given search string.
     
     Returns a list of psutil.Process objects of matching processes.
-    The list will be empty of no matches were found.
+    The list will be empty if no matches were found.
 
     Note: Certain root-level processes cannot be scanned by this function.
     """
@@ -128,7 +128,7 @@ def find_processes(search_string):
     for p in psutil.process_iter():
         try:
             if search_string in ' '.join(p.cmdline()):
-                procs.append(procs)
+                procs.append(p)
         except psutil.AccessDenied:
             pass
     return procs
