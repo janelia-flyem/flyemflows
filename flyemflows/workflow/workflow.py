@@ -138,7 +138,19 @@ class Workflow(object):
         "additionalProperties": True,
         "default": {},
         "properties": {
-            "jobqueue": JobQueueSchema
+            "jobqueue": JobQueueSchema,
+            "admin": {
+                "description": "dask 'admin' config section.",
+                "type": "object",
+                "additionalProperties": True,
+                "default": {},
+                "properties": {
+                    'log-format': {
+                        'type': 'string',
+                        'default': '[%(asctime)s] %(levelname)s %(message)s'
+                    }
+                }
+            }
         }
     }
 
