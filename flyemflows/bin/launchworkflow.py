@@ -1,3 +1,4 @@
+#!/bin/env python3
 """
 Entry point to launch a workflow for a given config, from a template directory.
 
@@ -87,6 +88,7 @@ def main():
 
     if not args.template_dir:
         print("Error: No config directory specified. Exiting.", file=sys.stderr)
+        parser.print_help(sys.stderr)
         sys.exit(1)
     
     if not os.path.exists(args.template_dir):
