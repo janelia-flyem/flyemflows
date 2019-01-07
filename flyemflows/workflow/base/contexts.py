@@ -383,10 +383,10 @@ class WorkflowClusterContext:
             dask.config.set(new_config)
 
             self.workflow.cluster = LSFCluster(ip='0.0.0.0')
-            self.workflow.cluster.scale(self.num_workers)
+            self.workflow.cluster.scale(self.workflow.num_workers)
         elif self.config["cluster-type"] == "local-cluster":
             self.workflow.cluster = LocalCluster(ip='0.0.0.0')
-            self.workflow.cluster.scale(self.num_workers)
+            self.workflow.cluster.scale(self.workflow.num_workers)
         elif self.config["cluster-type"] in ("synchronous", "processes"):
             cluster_type = self.config["cluster-type"]
 
@@ -429,10 +429,10 @@ class WorkflowClusterContext:
             self.workflow.client = Client(self.workflow.cluster, timeout='60s') # Note: Overrides config value: distributed.comm.timeouts.connect
 
             # Wait for the workers to spin up.
-            with Timer(f"Waiting for {self.num_workers} workers to launch", logger):
+            with Timer(f"Waiting for {self.workflow.num_workers} workers to launch", logger):
                 while ( self.wait_for_workers
                         and self.workflow.client.status == "running"
-                        and len(self.workflow.cluster.scheduler.workers) < self.num_workers ):
+                        and len(self.workflow.cluster.scheduler.workers) < self.workflow.num_workers ):
                     time.sleep(0.1)
 
             if self.wait_for_workers and self.config["cluster-type"] == "lsf":
