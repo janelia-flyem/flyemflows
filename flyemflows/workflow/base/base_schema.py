@@ -33,7 +33,9 @@ WorkerInitSchema = \
     "type": "object",
     "default": {},
     "additionalProperties": False,
-    "description": "The given script will be called once per worker node, before the workflow executes.",
+    "description": "The given script will be called once per worker node, before the workflow executes.\n"
+                   "If the process is long-running, it will be killed when the workflow completes via \n"
+                   "SIGINT or SIGTERM (if necessary) or SIGKILL (if really necessary).\n",
     "properties": {
         "script-path": {
             "type": "string",

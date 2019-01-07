@@ -1,17 +1,13 @@
 import os
-import sys
 import time
 import socket
 import getpass
 import logging
 import tempfile
-import warnings
-import subprocess
 from collections import defaultdict
-from os.path import basename, splitext
 
 import dask
-from distributed import Client, LocalCluster, get_worker
+from distributed import Client, LocalCluster
 from distributed.utils import parse_bytes
 
 import neuclease
@@ -19,11 +15,11 @@ from neuclease.util import Timer
 
 from confiddler import convert_to_base_types
 
-from ...util import kill_if_running, extract_ip_from_link, construct_ganglia_link
+from ...util import extract_ip_from_link, construct_ganglia_link
 from ...util.lsf import construct_rtm_url, get_job_submit_time
 
 from .base_schema import BaseSchema
-from .contexts import environment_context, LocalResourceManager
+from .contexts import environment_context, LocalResourceManager, WorkerDaemons
 
 logger = logging.getLogger(__name__)
 
@@ -94,24 +90,14 @@ class Workflow(object):
                 
                 # See also: reinitialize_cluster()
                 self._init_dask()
-                self._run_worker_initializations()
-
+                
                 try:
-                    self.execute()
+                    with WorkerDaemons(self):
+                        self.execute()
                 finally:
-                    sys.stderr.flush()
-                    
-                    self._kill_initialization_procs()
-
                     # See also: reinitialize_cluster()
                     if kill_cluster:
                         self._cleanup_dask()
-    
-                    # Only the workflow calls cleanup_faulthandler, once all workers have exited
-                    # (All workers share the same output file for faulthandler.)
-        
-                    # FIXME
-                    #cleanup_faulthandler()
 
 
     def total_cores(self):
@@ -365,118 +351,4 @@ class Workflow(object):
 
         return final_results
 
-
-    def _run_worker_initializations(self):
-        """
-        Run an initialization script (e.g. a bash script) on each worker node.
-        Returns:
-            (worker_init_pids, driver_init_pid), where worker_init_pids is a
-            dict of { hostname : PID } containing the PIDs of the init process
-            IDs running on the workers.
-        """
-        init_options = self.config["worker-initialization"]
-            
-        if not init_options["script-path"]:
-            self.worker_init_pids = {}
-            self.driver_init_pid = None
-            return
-
-        init_options["script-path"] = os.path.abspath(init_options["script-path"])
-        init_options["log-dir"] = os.path.abspath(init_options["log-dir"])
-        os.makedirs(init_options["log-dir"], exist_ok=True)
-
-        launch_delay = init_options["launch-delay"]
-        
-        def launch_init_script():
-            script_name = splitext(basename(init_options["script-path"]))[0]
-            log_dir = init_options["log-dir"]
-            hostname = socket.gethostname()
-            log_file = open(f'{log_dir}/{script_name}-{hostname}.log', 'w')
-
-            try:
-                script_args = [str(a) for a in init_options["script-args"]]
-                p = subprocess.Popen( [init_options["script-path"], *script_args],
-                                      stdout=log_file, stderr=subprocess.STDOUT )
-            except OSError as ex:
-                if ex.errno == 8: # Exec format error
-                    raise RuntimeError("OSError: [Errno 8] Exec format error\n"
-                                       "Make sure your script begins with a shebang line, e.g. !#/bin/bash")
-                raise
-
-            if launch_delay == -1:
-                p.wait()
-                if p.returncode == 126:
-                    raise RuntimeError("Permission Error: Worker initialization script is not executable: {}"
-                                       .format(init_options["script-path"]))
-                assert p.returncode == 0, \
-                    "Worker initialization script ({}) failed with exit code: {}"\
-                    .format(init_options["script-path"], p.returncode)
-                return None
-
-            return p.pid
-        
-        worker_init_pids = self.run_on_each_worker(launch_init_script,
-                                                   init_options["only-once-per-machine"],
-                                                   return_hostnames=False)
-
-        driver_init_pid = None
-        if init_options["also-run-on-driver"]:
-            if self.config["cluster-type"] != "lsf":
-                warnings.warn("Warning: You are using a local-cluster, yet your worker initialization specified 'also-run-on-driver'.")
-            driver_init_pid = launch_init_script()
-        
-        if launch_delay > 0:
-            logger.info(f"Pausing after launching worker initialization scripts ({launch_delay} seconds).")
-            time.sleep(launch_delay)
-
-        self.worker_init_pids = worker_init_pids
-        self.driver_init_pid = driver_init_pid
-
-
-    def _kill_initialization_procs(self):
-        """
-        Kill any initialization processes (as launched from _run_worker_initializations)
-        that might still running on the workers and/or the driver.
-        
-        If they don't respond to SIGTERM, they'll be force-killed with SIGKILL after 10 seconds.
-        """
-        launch_delay = self.config["worker-initialization"]["launch-delay"]
-        once_per_machine = self.config["worker-initialization"]["only-once-per-machine"]
-        
-        if launch_delay == -1:
-            # Nothing to do:
-            # We already waited for the the init scripts to complete.
-            return
-        
-        worker_init_pids = self.worker_init_pids
-        def kill_init_proc():
-            try:
-                worker_addr = get_worker().address
-            except ValueError:
-                # Special case for synchronous cluster.
-                # See run_on_each_worker
-                worker_addr = 'tcp://127.0.0.1'
-            
-            try:
-                pid_to_kill = worker_init_pids[worker_addr]
-            except KeyError:
-                return None
-            else:
-                return kill_if_running(pid_to_kill, 10.0)
-                
-        
-        if any(self.worker_init_pids.values()):
-            worker_statuses = self.run_on_each_worker(kill_init_proc, once_per_machine, True)
-            for k,_v in filter(lambda k_v: k_v[1] is None, worker_statuses.items()):
-                logger.info(f"Worker {k}: initialization script was already shut down.")
-            for k,_v in filter(lambda k_v: k_v[1] is False, worker_statuses.items()):
-                logger.info(f"Worker {k}: initialization script had to be forcefully killed.")
-        else:
-            logger.info("No worker init processes to kill")
-            
-
-        if self.driver_init_pid:
-            kill_if_running(self.driver_init_pid, 10.0)
-        else:
-            logger.info("No driver init process to kill")
 
