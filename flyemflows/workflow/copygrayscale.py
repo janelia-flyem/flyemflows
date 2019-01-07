@@ -106,7 +106,7 @@ class CopyGrayscale(Workflow):
         }
     }
 
-    Schema = copy.deepcopy(Workflow.BaseSchema)
+    Schema = copy.deepcopy(Workflow.schema())
     Schema["properties"].update({
         "input": GrayscaleVolumeSchema,
         "output": GrayscaleVolumeSchema,

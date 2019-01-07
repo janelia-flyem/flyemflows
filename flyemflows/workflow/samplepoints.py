@@ -74,7 +74,7 @@ class SamplePoints(Workflow):
         }
     }
 
-    Schema = copy.deepcopy(Workflow.BaseSchema)
+    Schema = copy.deepcopy(Workflow.schema())
     Schema["properties"].update({
         "input": SegmentationVolumeSchema,
         "samplepoints": SamplePointsOptionsSchema

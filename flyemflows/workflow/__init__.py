@@ -1,4 +1,4 @@
-from .workflow import Workflow
+from .base.workflow import Workflow
 from .samplepoints import SamplePoints
 from .copygrayscale import CopyGrayscale
 
