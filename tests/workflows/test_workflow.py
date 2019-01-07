@@ -122,6 +122,7 @@ def test_tee_output():
     assert stderr_msg in written
     assert traceback_msg in written
 
+
 def test_resource_manager_on_driver():
     """
     The config can specify a resource manager server address as "driver",
@@ -158,6 +159,7 @@ def test_resource_manager_on_driver():
     _execution_dir, _workflow = launch_workflow(template_dir, 1, _custom_execute_fn=execute)
     assert execute.didrun
     
+    # Server should not be running any more after workflow exits.
     with pytest.raises(TimeoutError):
         client2 = ResourceManagerClient('127.0.0.1', 4000)
         client2.read_config()

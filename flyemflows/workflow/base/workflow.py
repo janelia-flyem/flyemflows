@@ -17,21 +17,15 @@ from distributed.utils import parse_bytes
 import neuclease
 from neuclease.util import Timer
 
-import confiddler.json as json
 from confiddler import convert_to_base_types
 
-from ...util import kill_if_running, get_localhost_ip_address, extract_ip_from_link, construct_ganglia_link
+from ...util import kill_if_running, extract_ip_from_link, construct_ganglia_link
 from ...util.lsf import construct_rtm_url, get_job_submit_time
 
 from .base_schema import BaseSchema
-from .contexts import environment_context
+from .contexts import environment_context, LocalResourceManager
 
 logger = logging.getLogger(__name__)
-
-# driver_ip_addr = '127.0.0.1'
-driver_ip_addr = get_localhost_ip_address()
-
-USER = getpass.getuser()
 
 # defines workflows that work over DVID
 class Workflow(object):
@@ -94,8 +88,8 @@ class Workflow(object):
         """
         logger.info(f"Working dir: {os.getcwd()}")
         with Timer(f"Running {self.config['workflow-name']}", logger), \
-             environment_context(self.config["environment-variables"]):
-                resource_server_proc = self._start_resource_server()
+             environment_context(self.config["environment-variables"]), \
+             LocalResourceManager(self.config["resource-manager"]):
                 self._write_driver_graph_urls()
                 
                 # See also: reinitialize_cluster()
@@ -107,12 +101,11 @@ class Workflow(object):
                 finally:
                     sys.stderr.flush()
                     
-                    # See also: reinitialize_cluster()
                     self._kill_initialization_procs()
+
+                    # See also: reinitialize_cluster()
                     if kill_cluster:
                         self._cleanup_dask()
-    
-                    self._kill_resource_server(resource_server_proc)
     
                     # Only the workflow calls cleanup_faulthandler, once all workers have exited
                     # (All workers share the same output file for faulthandler.)
@@ -312,65 +305,6 @@ class Workflow(object):
         if self.cluster:
             self.cluster.close()
             self.cluster = None
-
-
-    def _start_resource_server(self):
-        """
-        Initialize the resource server config members and, if necessary,
-        start the resource server process on the driver node.
-        
-        If the resource server is started locally, the "resource-server"
-        setting is OVERWRITTEN in the config data with the driver IP.
-        
-        Returns:
-            The resource server Popen object (if started), or None
-        """
-        server = self.config["resource-manager"]["server"]
-        port = self.config["resource-manager"]["port"]
-
-        if server == "":
-            return None
-        
-        if port == 0:
-            msg = f"You specified a resource server ({server}), but no port"
-            raise RuntimeError(msg)
-        
-        if server != "driver":
-            if self.config["resource-manager"]["config"]:
-                msg = ("The resource manager config should only be specified when resource manager 'server' is set to 'driver'."
-                       "(If the resource manager server is already running on a different machine, configure it there.)")
-                raise RuntimeError(msg)
-            return None
-
-        if self.config["resource-manager"]["config"]:
-            tmpdir = f"/tmp/{USER}"
-            os.makedirs(tmpdir, exist_ok=True)
-            server_config_path = f'{tmpdir}/driver-resource-server-config.json'
-            with open(server_config_path, 'w') as f:
-                json.dump(self.config["resource-manager"]["config"], f)
-            config_arg = f'--config-file={server_config_path}'
-        else:
-            config_arg = ''
-        
-        # Overwrite workflow config data so workers see our IP address.
-        self.config["resource-manager"]["server"] = server = driver_ip_addr
-
-        logger.info(f"Starting resource manager on the driver ({driver_ip_addr}:{port}, a.k.a {socket.gethostname()}:{port})")
-        
-        python = sys.executable
-        cmd = f"{python} {sys.prefix}/bin/dvid_resource_manager {port} {config_arg}"
-        resource_server_process = subprocess.Popen(cmd, stderr=subprocess.STDOUT, shell=True)
-        return resource_server_process
-
-
-    def _kill_resource_server(self, resource_server_proc):
-        if resource_server_proc:
-            logger.info(f"Terminating resource manager (PID {resource_server_proc.pid})")
-            resource_server_proc.terminate()
-            try:
-                resource_server_proc.wait(10.0)
-            except subprocess.TimeoutExpired:
-                kill_if_running(resource_server_proc.pid, 10.0)
 
 
     def run_on_each_worker(self, func, once_per_machine=False, return_hostnames=True):
