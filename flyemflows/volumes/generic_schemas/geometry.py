@@ -3,6 +3,8 @@
 # - Geometry: Bounding box, access pattern, scale
 # - Volume: Combines both Service with a Geometry (and possibly other properties, such as a labelmap)
 
+from confiddler import flow_style
+
 BoundingBoxSchema = \
 {
     "description": "The bounding box [[x0,y0,z0],[x1,y1,z1]], \n"
@@ -16,7 +18,7 @@ BoundingBoxSchema = \
         "minItems": 3,
         "maxItems": 3
     },
-    "default": [[-1,-1,-1], [-1,-1,-1]]
+    "default": flow_style([[-1,-1,-1], [-1,-1,-1]])
 }
 
 GeometrySchema = \
@@ -37,7 +39,7 @@ GeometrySchema = \
             "items": { "type": "integer" },
             "minItems": 3,
             "maxItems": 3,
-            "default": [-1,-1,-1]
+            "default": flow_style([-1,-1,-1])
         },
 
         "block-width": {
