@@ -401,13 +401,20 @@ class WorkflowClusterContext:
                 ncores = multiprocessing.cpu_count()
             
             dask.config.set(scheduler=self.config["cluster-type"])
+            
+            class FakeFuture:
+                def __init__(self, result):
+                    self._result = result
+                
+                def result(self):
+                    return self._result
             class DebugClient:
                 def ncores(self):
                     return {'driver': ncores}
                 def close(self):
                     pass
                 def scatter(self, data, *_):
-                    return data
+                    return FakeFuture(data)
             self.workflow.client = DebugClient()
         else:
             assert False, "Unknown cluster type"
