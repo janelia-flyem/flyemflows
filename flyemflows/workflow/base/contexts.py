@@ -1,14 +1,17 @@
 """
-Utilities for the Workflow base class.
+Utilities for the Workflow base class implementation.
 
-The workflow needs to initialize and then tear
-down various tools upon launch and exit.
+The workflow needs to initialize and then tear-down
+various objects and processes upon launch and exit.
 
 Those initialization/tear-down processes are each encapuslated
-as a different context manager defined in this file.
+as a different context manager, defined in this file.
 
-These are not meant to be used by callers other than
-the Workflow base class itself.
+Note:
+    These are considered to be part of the Workflow base class implementation.
+    They not meant to be used by callers other than the Workflow base class itself.
+    It's just cleaner to implement this functionality as a set of context managers,
+    rather than including it in the Workflow class definition.
 """
 import os
 import sys
@@ -17,15 +20,23 @@ import socket
 import getpass
 import logging
 import warnings
+import tempfile
 import subprocess
-from os.path import splitext, basename
+from collections import defaultdict
 from contextlib import contextmanager
+from os.path import splitext, basename
 
-from distributed import get_worker
+import dask
+from distributed import Client, LocalCluster, get_worker
+from distributed.utils import parse_bytes
 
+from neuclease.util import Timer
 import confiddler.json as json
+from confiddler import convert_to_base_types
 
-from ...util import get_localhost_ip_address, kill_if_running
+from ...util import get_localhost_ip_address, kill_if_running, extract_ip_from_link, construct_ganglia_link
+from ...util.lsf import construct_rtm_url, get_job_submit_time
+
 
 logger = logging.getLogger(__name__)
 USER = getpass.getuser()
@@ -269,4 +280,234 @@ class WorkerDaemons:
             logger.info("No driver init process to kill")
 
         sys.stderr.flush()
+
+
+class WorkflowClusterContext:
+    """
+    Context manager.
+    
+    Launches the cluster for a workflow, based on the workflow config.
+    Logs cluster links, etc.
+    
+    Side effects:
+        - Sets workflow.cluster and workflow.client
+        - Edits workflow.config
+    
+    Args:
+        workflow_instance:
+            A instance of a Workflow subclass
+        
+        wait_for_workers:
+            If True, do not enter the context until all workers have started.
+        
+        defer_cleanup:
+            If True, as a special debugging feature, the cluster will not be closed upon context exit.
+            The caller is responsible for cleaning up the cluster when you are ready to destroy the
+            cluster, e.g. by calling cleanup(), below.
+    """
+    def __init__(self, workflow_instance, wait_for_workers=True, defer_cleanup=False):
+        self.workflow = workflow_instance
+        self.config = self.workflow.config
+        self.wait_for_workers = wait_for_workers
+        self.defer_cleanup = defer_cleanup
+    
+
+    def __enter__(self):
+        self._init_dask()
+    
+
+    def __exit__(self, *args):
+        if not self.defer_cleanup:
+            self.cleanup()
+
+
+    def cleanup(self):
+        """
+        Close the workflow's client and cluster.
+        """
+        if self.workflow.client:
+            self.workflow.client.close()
+            self.workflow.client = None
+        if self.workflow.cluster:
+            self.workflow.cluster.close()
+            self.workflow.cluster = None
+    
+    def _init_dask(self):
+        """
+        Starts a dask cluster according to the workflow configuration.
+        Sets the workflow.cluster and workflow.client members.
+        Also writes useful URLs to graph-links.txt.
+        
+        If the 'cluster-type' is 'synchronous', then the cluster will be
+        a special stub class (DebugCluster), which provides dummy
+        implementations of a few functions from the DistributedCluster API.
+        (Mostly just for convenient unit testing.)
+        """
+        # Consider using client.register_worker_callbacks() to configure
+        # - faulthandler (later)
+        # - excepthook?
+        # - (okay, maybe it's just best to put that stuff in __init__.py, like in DSS)
+        self._write_driver_graph_urls()
+
+        user_config = convert_to_base_types(self.config['dask-config'])
+        new_config = dask.config.update(dask.config.config, user_config)
+        dask.config.set(new_config)
+
+        if self.config["cluster-type"] == "lsf":
+            from dask_jobqueue import LSFCluster #@UnresolvedImport
+
+            ncpus = self.config["dask-config"]["jobqueue"]["lsf"]["ncpus"]
+            if ncpus == -1:
+                ncpus = self.config["dask-config"]["jobqueue"]["lsf"]["cores"]
+                self.config["dask-config"]["jobqueue"]["lsf"]["ncpus"] = ncpus
+
+            mem = self.config["dask-config"]["jobqueue"]["lsf"]["mem"]
+            if not mem:
+                memory = self.config["dask-config"]["jobqueue"]["lsf"]["memory"]
+                mem = parse_bytes(memory)
+                self.config["dask-config"]["jobqueue"]["lsf"]["mem"] = mem
+
+            local_dir = self.config["dask-config"]["jobqueue"]["lsf"]["local-directory"]
+            if not local_dir:
+                user = getpass.getuser()
+                local_dir = f"/scratch/{user}"
+                self.config["dask-config"]["jobqueue"]["lsf"]["local-directory"] = local_dir
+                
+                # Set tmp dir, too.
+                tempfile.tempdir = local_dir
+                os.environ['TMPDIR'] = local_dir # Forked processes will use this for tempfile.tempdir
+
+            # Reconfigure
+            user_config = convert_to_base_types(self.config['dask-config'])
+            new_config = dask.config.update(dask.config.config, user_config)
+            dask.config.set(new_config)
+
+            self.workflow.cluster = LSFCluster(ip='0.0.0.0')
+            self.workflow.cluster.scale(self.num_workers)
+        elif self.config["cluster-type"] == "local-cluster":
+            self.workflow.cluster = LocalCluster(ip='0.0.0.0')
+            self.workflow.cluster.scale(self.num_workers)
+        elif self.config["cluster-type"] in ("synchronous", "processes"):
+            cluster_type = self.config["cluster-type"]
+
+            # synchronous/processes mode is for testing and debugging only
+            assert self.config['dask-config'].get('scheduler', cluster_type) == cluster_type, \
+                "Inconsistency between the dask-config and the scheduler you chose."
+
+            if cluster_type == "synchronous":
+                ncores = 1
+            else:
+                import multiprocessing
+                ncores = multiprocessing.cpu_count()
+            
+            dask.config.set(scheduler=self.config["cluster-type"])
+            class DebugClient:
+                def ncores(self):
+                    return {'driver': ncores}
+                def close(self):
+                    pass
+                def scatter(self, data, *_):
+                    return data
+            self.workflow.client = DebugClient()
+        else:
+            assert False, "Unknown cluster type"
+
+        if self.workflow.cluster:
+            dashboard = self.workflow.cluster.dashboard_link
+            logger.info(f"Dashboard running on {dashboard}")
+            dashboard_ip = extract_ip_from_link(dashboard)
+            dashboard = dashboard.replace(dashboard_ip, socket.gethostname())
+            logger.info(f"              a.k.a. {dashboard}")
+            
+            self.workflow.client = Client(self.workflow.cluster, timeout='60s') # Note: Overrides config value: distributed.comm.timeouts.connect
+
+            # Wait for the workers to spin up.
+            with Timer(f"Waiting for {self.num_workers} workers to launch", logger):
+                while ( self.wait_for_workers
+                        and self.workflow.client.status == "running"
+                        and len(self.workflow.cluster.scheduler.workers) < self.num_workers ):
+                    time.sleep(0.1)
+
+            if self.wait_for_workers and self.config["cluster-type"] == "lsf":
+                self._write_worker_graph_urls('graph-links.txt')
+
+
+    def _write_driver_graph_urls(self):
+        """
+        If we are running on an LSF cluster node,
+        write RTM and Ganglia links for the driver
+        (i.e. the current machine) to graph-links.txt.
+        """
+        try:
+            driver_jobid = os.environ['LSB_JOBID']
+        except KeyError:
+            pass
+        else:
+            driver_rtm_url = construct_rtm_url(driver_jobid)
+            driver_host = socket.gethostname()
+            logger.info(f"Driver host is: {driver_host}")
+            logger.info(f"Driver RTM graphs: {driver_rtm_url}")
+
+            start_timestamp = get_job_submit_time()
+            ganglia_url = construct_ganglia_link(driver_host, start_timestamp)
+
+            hostgraph_url_path = 'graph-links.txt'
+            with open(hostgraph_url_path, 'a') as f:
+                f.write(f"{socket.gethostname()} (driver)\n")
+                f.write(f"  {ganglia_url}\n")
+                f.write(f"  {driver_rtm_url}\n")
+            
+
+    def _write_worker_graph_urls(self, graph_url_path):
+        """
+        Write (or append to) the file containing links to the Ganglia and RTM
+        hostgraphs for the workers in our cluster.
+        
+        We emit the following URLs:
+            - One Ganglia URL for the combined graphs of all workers
+            - One Ganglia URL for each worker
+            - One RTM URL for each job (grouped by host)
+        """
+        assert self.config["cluster-type"] == "lsf"
+        job_submit_times = self.workflow.run_on_each_worker(get_job_submit_time, True, True)
+
+        host_min_submit_times = {}
+        for addr, timestamp in job_submit_times.items():
+            host = addr[len('tcp://'):].split(':')[0]
+            try:
+                min_timestamp = host_min_submit_times[host]
+                if timestamp < min_timestamp:
+                    host_min_submit_times[host] = timestamp
+            except KeyError:
+                host_min_submit_times[host] = timestamp
+
+        host_ganglia_links = { host: construct_ganglia_link(host, ts) for host,ts in host_min_submit_times.items() }
+
+        all_hosts = list(host_min_submit_times.keys())
+        min_timestamp = min(host_min_submit_times.values())
+        combined_ganglia_link = construct_ganglia_link(all_hosts, min_timestamp)
+        
+        hostgraph_urls = self.workflow.run_on_each_worker(construct_rtm_url, False, True)
+
+        # Some workers share the same parent LSF job,
+        # and hence have the same hostgraph URL.
+        # Don't show duplicate links, but do group the links by host
+        # and indicate how many workers are hosted on each node.
+        host_url_counts = defaultdict(lambda: defaultdict(lambda: 0))
+        for addr, url in hostgraph_urls.items():
+            host = addr[len('tcp://'):].split(':')[0]
+            host_url_counts[host][url] += 1
+        
+        with open(graph_url_path, 'a') as f:
+            f.write('-'*100 + '\n')
+            f.write("Combined Ganglia Graphs:\n")
+            f.write(f"  {combined_ganglia_link}\n")
+            
+            for host, url_counts in host_url_counts.items():
+                total_workers = sum(url_counts.values())
+                f.write(f"{host} ({total_workers} workers)\n")
+                f.write(f"  {host_ganglia_links[host]}\n")
+                for url in url_counts.keys():
+                    f.write(f"  {url}\n")
+
 
