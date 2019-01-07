@@ -32,7 +32,7 @@ import argparse
 from datetime import datetime
 
 import confiddler.json as json
-from confiddler import dump_default_config, load_config
+from confiddler import load_config, dump_config, dump_default_config
 
 from neuclease import configure_default_logging
 from flyemflows.util import tee_streams
@@ -57,6 +57,9 @@ def main():
                         help="Dump default config values for the given workflow (as yaml)")
     parser.add_argument('--dump-default-verbose-yaml', '-v',
                         help="Dump default config values for the given workflow (as yaml), commented with field descriptions.")
+    parser.add_argument('--dump-complete-config', '-c', action='store_true',
+                        help="Load the config from the given template dir, inject default values for missing settings, "
+                             "and dump the resulting complete config.  (Do not execute the workflow.)")
 
     # Launch parameters
     parser.add_argument('--num-workers', '-n', type=int, default=1,
@@ -90,7 +93,7 @@ def main():
         print("Error: No config directory specified. Exiting.", file=sys.stderr)
         parser.print_help(sys.stderr)
         sys.exit(1)
-    
+
     if not os.path.exists(args.template_dir):
         print(f"Error: template directory does not exist: {args.template_dir}", file=sys.stderr)
         sys.exit(1)
@@ -98,6 +101,11 @@ def main():
     if not os.path.isdir(args.template_dir):
         print(f"Error: Given template directory path is a file, not a directory: {args.template_dir}", file=sys.stderr)
         sys.exit(1)
+
+    if args.dump_complete_config:
+        workflow_cls, config_data = _load_config(args.template_dir)
+        dump_config(config_data, sys.stdout)
+        sys.exit(0)
     
     # Execute the workflow
     _exc_dir, workflow = launch_workflow(args.template_dir, args.num_workers, not args.pause_before_exit)
@@ -134,18 +142,8 @@ def launch_workflow(template_dir, num_workers, kill_cluster=True, _custom_execut
     Returns:
         (execution_dir, workflow_inst)
     """
-    config_path = f'{template_dir}/workflow.yaml'
-    if not os.path.exists(config_path):
-        raise RuntimeError(f"Error: workflow.yaml not found in {template_dir}")
-
-    # Determine workflow type and load config
-    _cfg = load_config(config_path, {})
-    if "workflow-name" not in _cfg:
-        raise RuntimeError(f"Workflow config at {config_path} does not specify a workflow-name.")
+    workflow_cls, config_data = _load_config(template_dir)
     
-    workflow_cls = get_workflow_cls(_cfg['workflow-name'])
-    config_data = load_config(config_path, workflow_cls.schema())
-
     # Create execution dir (copy of template dir) and make it the CWD
     timestamp = f'{datetime.now():%Y%m%d.%H%M%S}'
     execution_dir = f'{template_dir}-{timestamp}'
@@ -158,6 +156,22 @@ def launch_workflow(template_dir, num_workers, kill_cluster=True, _custom_execut
         workflow_inst = _execute_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster, _custom_execute_fn)
         return execution_dir, workflow_inst
 
+
+def _load_config(template_dir):
+    config_path = f'{template_dir}/workflow.yaml'
+    
+    if not os.path.exists(config_path):
+        raise RuntimeError(f"Error: workflow.yaml not found in {template_dir}")
+
+    # Determine workflow type and load config
+    _cfg = load_config(config_path, {})
+    if "workflow-name" not in _cfg:
+        raise RuntimeError(f"Workflow config at {config_path} does not specify a workflow-name.")
+    
+    workflow_cls = get_workflow_cls(_cfg['workflow-name'])
+    config_data = load_config(config_path, workflow_cls.schema())
+    return workflow_cls, config_data
+    
 
 def _execute_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster=True, _custom_execute_fn=None):
     # This function is separate just for convenient testing.
