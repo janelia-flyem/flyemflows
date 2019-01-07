@@ -24,6 +24,7 @@ from ...util import kill_if_running, get_localhost_ip_address, extract_ip_from_l
 from ...util.lsf import construct_rtm_url, get_job_submit_time
 
 from .base_schema import BaseSchema
+from .contexts import environment_context
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +93,8 @@ class Workflow(object):
         (with some startup/shutdown steps before/after).
         """
         logger.info(f"Working dir: {os.getcwd()}")
-        with Timer(f"Running {self.config['workflow-name']}", logger):
-            with Timer("Running initialization steps"):
-                self._init_environment_variables()
+        with Timer(f"Running {self.config['workflow-name']}", logger), \
+             environment_context(self.config["environment-variables"]):
                 resource_server_proc = self._start_resource_server()
                 self._write_driver_graph_urls()
                 
@@ -102,24 +102,23 @@ class Workflow(object):
                 self._init_dask()
                 self._run_worker_initializations()
 
-            try:
-                self.execute()
-            finally:
-                sys.stderr.flush()
-                
-                # See also: reinitialize_cluster()
-                self._kill_initialization_procs()
-                if kill_cluster:
-                    self._cleanup_dask()
-
-                self._kill_resource_server(resource_server_proc)    
-                self._restore_original_environment_variables()
-
-                # Only the workflow calls cleanup_faulthandler, once all workers have exited
-                # (All workers share the same output file for faulthandler.)
+                try:
+                    self.execute()
+                finally:
+                    sys.stderr.flush()
+                    
+                    # See also: reinitialize_cluster()
+                    self._kill_initialization_procs()
+                    if kill_cluster:
+                        self._cleanup_dask()
     
-                # FIXME
-                #cleanup_faulthandler()
+                    self._kill_resource_server(resource_server_proc)
+    
+                    # Only the workflow calls cleanup_faulthandler, once all workers have exited
+                    # (All workers share the same output file for faulthandler.)
+        
+                    # FIXME
+                    #cleanup_faulthandler()
 
 
     def total_cores(self):
@@ -142,16 +141,6 @@ class Workflow(object):
         logger.info("Initializing new cluster")
         self._init_dask()
         self._run_worker_initializations()
-
-
-    def _init_environment_variables(self):
-        self._old_env = os.environ.copy()
-        os.environ.update(self.config["environment-variables"])
-
-
-    def _restore_original_environment_variables(self):
-        os.environ.clear()
-        os.environ.update(self._old_env)
 
 
     def _write_driver_graph_urls(self):
