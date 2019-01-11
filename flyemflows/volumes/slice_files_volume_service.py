@@ -57,14 +57,13 @@ class SliceFilesVolumeServiceReader(VolumeServiceReader):
 
     class NoSlicesFoundError(RuntimeError): pass
 
-    def __init__(self, volume_config, config_dir):
+    def __init__(self, volume_config):
         validate(volume_config, SliceFilesVolumeSchema)
 
         # Convert path to absolute if necessary (and write back to the config)
         slice_fmt = volume_config["slice-files"]["slice-path-format"]
         assert not slice_fmt.startswith('gs://'), "FIXME: Support gbuckets"
-        if not slice_fmt.startswith('/'):
-            slice_fmt = os.path.normpath( os.path.join(config_dir, slice_fmt) )
+        slice_fmt = os.path.abspath(slice_fmt)
 
         # Determine complete bounding box
         default_bounding_box_zyx, dtype = determine_stack_attributes(slice_fmt)
@@ -136,15 +135,13 @@ class SliceFilesVolumeServiceReader(VolumeServiceReader):
 
 class SliceFilesVolumeServiceWriter(VolumeServiceWriter):
 
-    def __init__(self, volume_config, config_dir):
+    def __init__(self, volume_config):
         validate(volume_config, SliceFilesVolumeSchema)
 
         # Convert path to absolute if necessary (and write back to the config)
         slice_fmt = volume_config["slice-files"]["slice-path-format"]
         assert not slice_fmt.startswith('gs://'), "FIXME: Support gbuckets"
-        if not slice_fmt.startswith('/'):
-            slice_fmt = os.path.normpath( os.path.join(config_dir, slice_fmt) )
-
+        slice_fmt = os.path.abspath(slice_fmt)
         slice_dir = os.path.dirname(slice_fmt)
         os.makedirs(slice_dir, exist_ok=True)
 
