@@ -40,7 +40,7 @@ class CopyGrayscale(Workflow):
             },
     
             "max-pyramid-scale": {
-                "description": "The maximum scale to copy from input to output.",
+                "description": "The maximum scale to copy (or compute) from input to output.",
                 "type": "integer",
                 "minimum": 0,
                 "maximum": 10,
@@ -159,9 +159,14 @@ class CopyGrayscale(Workflow):
         assert ((output_bb_zyx == input_bb_zyx) | (output_bb_zyx == -1)).all(), \
             "Output bounding box must match the input bounding box exactly. (No translation permitted)."
 
-        if options["pyramid-source"] != "copy":
+        if options["pyramid-source"] == "copy":
+            assert not (set(range(options["max-pyramid-scale"])) - set(self.output_service.available_scales)), \
+                ("Can't use 'copy' for pyramid-source.  Not all scales are available in the input.\n"
+                f"Available scales are: {self.output_service.available_scales}")
+        else:
             assert options["min-pyramid-scale"] == 0, \
                 "If computing downsample data, you must start with a minimum scale of 0."
+
         
 
     def _prepare_output(self):

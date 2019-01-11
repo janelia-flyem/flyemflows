@@ -1,5 +1,4 @@
 import numpy as np
-import scipy.ndimage
 from skimage.util.shape import view_as_blocks
 
 from neuclease.util import box_to_slicing
