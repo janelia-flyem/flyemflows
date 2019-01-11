@@ -23,6 +23,8 @@ class DecimateMeshes(Workflow):
     Download pre-existing meshes from a dvid tarsupervoxels instance, and decimate them.
     
     Basically a clusterized wrapper around neuclease.bin.decimate_existing_mesh
+    
+    TODO: Save mesh stats to a csv file.
     """
     DvidTarsupervoxelsInstanceSchema = \
     {
@@ -156,6 +158,7 @@ class DecimateMeshes(Workflow):
                                                input_config["tarsupervoxels-instance"],
                                                body_id )
                 except HTTPError:
+                    # FIXME: Better to log the exception strings to a file
                     return body_id
 
             decimate_existing_mesh( input_config["server"],
