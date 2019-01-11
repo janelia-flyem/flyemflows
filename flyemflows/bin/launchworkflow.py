@@ -153,7 +153,7 @@ def launch_workflow(template_dir, num_workers, kill_cluster=True, _custom_execut
     logpath = f'{execution_dir}/output.log'
     with tee_streams(logpath):
         logger.info(f"Teeing output to {logpath}")
-        workflow_inst = _execute_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster, _custom_execute_fn)
+        workflow_inst = _run_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster, _custom_execute_fn)
         return execution_dir, workflow_inst
 
 
@@ -173,8 +173,7 @@ def _load_config(template_dir):
     return workflow_cls, config_data
     
 
-def _execute_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster=True, _custom_execute_fn=None):
-    # This function is separate just for convenient testing.
+def _run_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster=True, _custom_execute_fn=None):
     orig_dir = os.getcwd()
     try:
         os.chdir(execution_dir)
