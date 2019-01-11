@@ -5,6 +5,10 @@ import glob
 import numpy as np
 from PIL import Image
 
+# Avoid PIL.Image.DecompressionBombError
+# https://github.com/mpetroff/pannellum/issues/596
+Image.MAX_IMAGE_PIXELS = None
+
 from confiddler import validate
 from neuclease.util import box_to_slicing
 
