@@ -1,3 +1,4 @@
+import os
 import logging
 from functools import partial
 
@@ -243,6 +244,16 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
     logger.info(f"Initializing RDD of {num_bricks} Bricks "
                 f"(over {boxes_bag.npartitions} partitions) with total volume {total_volume/1e9:.1f} Gvox "
                 f"(scatter took {scatter_timer.timedelta})")
+
+    if os.environ.get("DEBUG_FLOW", "0") != "0":
+        def worker_address(part):
+            from distributed import get_worker
+            return [(get_worker().address, len(part))]
+
+        logger.info("Workers and assigned partition lengths:")
+        workers_and_lens = boxes_bag.map_partitions(worker_address).compute()
+        for worker, length in sorted(workers_and_lens):
+            logger.info(f"{worker}: {length}")
 
     def make_bricks( logical_and_physical_box ):
         logical_box, physical_box = logical_and_physical_box
