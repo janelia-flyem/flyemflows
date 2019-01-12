@@ -268,6 +268,9 @@ class CopyGrayscale(Workflow):
     def _process_slab(self, scale, slab_fullres_box_zyx, slab_index, num_slabs, upscale_slab_wall):
         slab_voxels = np.prod(slab_fullres_box_zyx[1] - slab_fullres_box_zyx[0]) // (2**scale)**3
         voxels_per_thread = slab_voxels // self.total_cores()
+        partition_voxels = voxels_per_thread // 2
+        logging.info(f"Slab {slab_index}: Aiming for partitions of {partition_voxels} voxels")
+        
         output_service = self.output_service
 
         options = self.config["copygrayscale"]
@@ -275,7 +278,7 @@ class CopyGrayscale(Workflow):
         
         if pyramid_source == "copy" or scale == 0:
             # Copy from input source
-            bricked_slab_wall = BrickWall.from_volume_service(self.input_service, scale, slab_fullres_box_zyx, self.client, voxels_per_thread // 2)
+            bricked_slab_wall = BrickWall.from_volume_service(self.input_service, scale, slab_fullres_box_zyx, self.client, partition_voxels)
             bricked_slab_wall.persist_and_execute(f"Slab {slab_index}: Downloading scale {scale}", logger)
         else:
             # Downsample from previous scale
