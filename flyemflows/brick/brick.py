@@ -38,7 +38,7 @@ class Brick:
      
         Note: Both boxes (logical and physical) are always stored in GLOBAL coordinates.
     """
-    def __init__(self, logical_box, physical_box, volume=None, *, lazy_creation_fn=None, custom_hash=None):
+    def __init__(self, logical_box, physical_box, volume=None, *, lazy_creation_fn=None):
         """
         Args:
             logical_box:
@@ -52,8 +52,6 @@ class Brick:
             lazy_creation_fn:
                 Instead of providing a volume at construction, you may provide a function to create the volume,
                 which will be called upon the first access to Brick.volume
-            custom_hash:
-                Optionally specify a hash value for this brick, which will be returned by __hash__()
         """
         assert (volume is None) ^ (lazy_creation_fn is None), \
             "Must supply either volume or lazy_creation_fn (not both)"
@@ -67,9 +65,6 @@ class Brick:
         # Used for pickling.
         self._compressed_volume = None
         self._destroyed = False
-        
-        # Optional custom hashing
-        self._hash = custom_hash
         
         self._create_volume_fn = None
         if lazy_creation_fn is not None:
