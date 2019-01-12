@@ -108,17 +108,27 @@ def main():
         sys.exit(0)
     
     # Execute the workflow
-    _exc_dir, workflow = launch_workflow(args.template_dir, args.num_workers, not args.pause_before_exit)
-    if args.pause_before_exit:
-        logger.info("Workflow complete, but pausing now due to --pause-before-exit.  Hit Ctrl+C to exit.")
-        try:
-            while True:
-                time.sleep(1.0)
-        except KeyboardInterrupt:
-            pass
+    workflow = None
+    try:
+        _exc_dir, workflow = launch_workflow(args.template_dir, args.num_workers, not args.pause_before_exit)
+    except:
+        if args.pause_before_exit:
+            import traceback
+            traceback.print_exc()
+        else:
+            raise
+    finally:
+        if args.pause_before_exit:
+            logger.info("Workflow complete, but pausing now due to --pause-before-exit.  Hit Ctrl+C to exit.")
+            try:
+                while True:
+                    time.sleep(1.0)
+            except KeyboardInterrupt:
+                pass
 
     # Workflow must not be deleted until we're ready to exit.
-    del workflow
+    if workflow:
+        del workflow
 
 
 def launch_workflow(template_dir, num_workers, kill_cluster=True, _custom_execute_fn=None):
