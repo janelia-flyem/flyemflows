@@ -359,7 +359,7 @@ class CopyGrayscale(Workflow):
         def destripe_brick(brick):
             assert brick.volume.shape[0] == 1
             adjusted_slice = destripe(brick.volume[0], seams)
-            return Brick(brick.logical_box, brick.physical_box, adjusted_slice[None])
+            return Brick(brick.logical_box, brick.physical_box, adjusted_slice[None], location_id=brick.location_id)
         
         adjusted_bricks = z_slice_slab.bricks.map(destripe_brick)
         adjusted_wall = BrickWall( bricked_slab_wall.bounding_box,

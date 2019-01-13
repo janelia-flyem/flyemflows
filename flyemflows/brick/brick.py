@@ -38,7 +38,7 @@ class Brick:
      
         Note: Both boxes (logical and physical) are always stored in GLOBAL coordinates.
     """
-    def __init__(self, logical_box, physical_box, volume=None, *, lazy_creation_fn=None):
+    def __init__(self, logical_box, physical_box, volume=None, *, location_id=None, lazy_creation_fn=None):
         """
         Args:
             logical_box:
@@ -46,6 +46,14 @@ class Brick:
             physical_box:
                 The region in space that those voxels inhabit.
                 By definition, `volume.shape == (physical_box[1] - physical_box[0])`
+            location_id:
+                An hashable ID for this brick's location.
+                Bricks with the same logical_box must have the identical location_id.
+                Can be the same as logical_box, but for certain operations,
+                better hashing can be achieved using IDs with certain properties.
+                The most important property is that the IDs in a set of bricks are
+                not all offset by powers of two.
+                If not provided, defaults to logical_box[0]
             volume:
                 An array of voxels, i.e. the actual data for the Brick.
                 May be None if lazy_creation_fn is provided.
@@ -57,6 +65,10 @@ class Brick:
             "Must supply either volume or lazy_creation_fn (not both)"
         self.logical_box = np.asarray(logical_box)
         self.physical_box = np.asarray(physical_box)
+        self.location_id = location_id
+
+        if self.location_id is None:
+            self.location_id = tuple(logical_box[0])
 
         self._volume = volume
         if self._volume is not None:
@@ -230,8 +242,16 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
         _logical, physical = log_phys
         return np.uint64(np.prod(physical[1] - physical[0]))
 
+    num_partitions = int(np.ceil(len(logical_and_physical_boxes) / partition_size))
+    if 2**np.log2(num_partitions) == num_partitions:
+        logger.info("Changing num_partitions to avoid power of two")
+        if num_partitions < len(logical_and_physical_boxes):
+            num_partitions += 1
+        else:
+            num_partitions -= 1
+
     # Distribute data across the cluster NOW, to force even distribution.
-    boxes_bag = dask.bag.from_sequence( logical_and_physical_boxes, partition_size=partition_size )
+    boxes_bag = dask.bag.from_sequence( logical_and_physical_boxes, npartitions=num_partitions )
     with Timer() as scatter_timer:
         boxes_bag = client.scatter(boxes_bag).result()
 
@@ -252,11 +272,12 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
 
     def make_bricks( logical_and_physical_box ):
         logical_box, physical_box = logical_and_physical_box
+        location_id = tuple(logical_box[0] // grid.block_shape)
         if lazy:
-            return Brick(logical_box, physical_box, lazy_creation_fn=volume_accessor_func)
+            return Brick(logical_box, physical_box, location_id=location_id, lazy_creation_fn=volume_accessor_func)
         else:
             volume = volume_accessor_func(physical_box)
-            return Brick(logical_box, physical_box, volume)
+            return Brick(logical_box, physical_box, volume, location_id=location_id)
     
     bricks = boxes_bag.map( make_bricks )
     return bricks, num_bricks
@@ -273,7 +294,7 @@ def clip_to_logical( brick ):
     
     intersection_within_physical = intersection - brick.physical_box[0]
     new_vol = brick.volume[ box_to_slicing(*intersection_within_physical) ]
-    return Brick( brick.logical_box, intersection, new_vol )
+    return Brick( brick.logical_box, intersection, new_vol, location_id=brick.location_id )
 
 
 def pad_brick_data_from_volume_source( padding_grid, volume_accessor_func, brick ):
@@ -363,7 +384,7 @@ def pad_brick_data_from_volume_source( padding_grid, volume_accessor_func, brick
         halo_box_within_padded = halo_box - padded_box[0]
         overwrite_subvol(padded_volume, halo_box_within_padded, halo_volume)
 
-    return Brick( brick.logical_box, padded_box, padded_volume )
+    return Brick( brick.logical_box, padded_box, padded_volume, location_id=brick.location_id )
 
 
 def apply_label_mapping(bricks, mapping_pairs):
@@ -420,7 +441,7 @@ def realign_bricks_to_new_grid(new_grid, original_bricks):
     brick_fragments = original_bricks.map( partial(split_brick, new_grid) ).flatten()
 
     # Group fragments according to their new homes
-    grouped_brick_fragments = brick_fragments.groupby(lambda brick: box_as_tuple(brick.logical_box))
+    grouped_brick_fragments = brick_fragments.groupby(lambda brick: brick.location_id)
     
     # Re-assemble fragments into the new grid structure.
     realigned_bricks = grouped_brick_fragments.map(lambda k_v: k_v[1]).map(assemble_brick_fragments)
@@ -467,7 +488,9 @@ def split_brick(new_grid, original_brick):
         # Subtract out halo to get logical_box
         new_logical_box = destination_box - (-new_grid.halo_shape, new_grid.halo_shape)
 
-        fragment_brick = Brick(new_logical_box, split_box, fragment_vol)
+        new_location_id = tuple(new_logical_box[0] // new_grid.block_shape)
+        
+        fragment_brick = Brick(new_logical_box, split_box, fragment_vol, location_id=new_location_id)
         fragment_brick.compress()
 
         fragments.append( fragment_brick )
@@ -502,7 +525,8 @@ def assemble_brick_fragments( fragments ):
     assert (logical_boxes == logical_boxes[0]).all(), \
         "Cannot assemble brick fragments from different logical boxes. "\
         "They belong to different bricks!"
-    final_logical_box = logical_boxes[0]
+    final_logical_box = fragments[0].logical_box
+    final_location_id = fragments[0].location_id
 
     # The final physical box is the min/max of all fragment physical extents.
     physical_boxes = np.array([frag.physical_box for frag in fragments])
@@ -529,6 +553,6 @@ def assemble_brick_fragments( fragments ):
         # Destroy original to save RAM
         frag.destroy()
 
-    brick = Brick( final_logical_box, final_physical_box, final_volume )
+    brick = Brick( final_logical_box, final_physical_box, final_volume, location_id=final_location_id )
     brick.compress()
     return brick

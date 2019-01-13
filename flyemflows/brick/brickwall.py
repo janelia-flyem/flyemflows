@@ -208,15 +208,16 @@ class BrickWall:
         
         Also, translates the bounding box and grid.
         """
+        new_bounding_box = self.bounding_box + offset_zyx
+        new_grid = Grid( self.grid.block_shape, self.grid.offset + offset_zyx )
+
         def translate_brick(brick):
             return Brick( brick.logical_box + offset_zyx,
                           brick.physical_box + offset_zyx,
-                          brick.volume )
-
+                          brick.volume,
+                          location_id=tuple(brick.logical_box[0] // new_grid.block_shape) )
         translated_bricks = self.bricks.map( translate_brick )
         
-        new_bounding_box = self.bounding_box + offset_zyx
-        new_grid = Grid( self.grid.block_shape, self.grid.offset + offset_zyx )
         return BrickWall( new_bounding_box, new_grid, translated_bricks, self.num_bricks )
 
     
