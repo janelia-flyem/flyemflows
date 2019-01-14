@@ -56,7 +56,8 @@ def test_workflow_environment():
         "cluster-type": CLUSTER_TYPE,
  
         "environment-variables": {
-            "FOO": "BAR"
+            "FOO": "BAR",
+            "FOO2": "BAR2"
         }
     }
  
@@ -77,12 +78,13 @@ def test_workflow_environment():
         # worker env
         assert all(workflow_inst.run_on_each_worker(_check).values())
  
-    orig_environ = os.environ.copy()
+    os.environ['FOO'] = 'ORIGINAL_FOO'
     _execution_dir, _workflow = launch_workflow(template_dir, 1, _custom_execute_fn=execute)
     assert execute.didrun
      
     # Environment is restored after execution is finished.
-    assert os.environ == orig_environ
+    assert os.environ['FOO'] == 'ORIGINAL_FOO'
+    assert 'FOO2' not in os.environ
 
 
 def test_tee_output():

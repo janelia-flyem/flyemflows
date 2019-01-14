@@ -31,12 +31,15 @@ import logging
 import argparse
 from datetime import datetime
 
+import dask.config
+
 import confiddler.json as json
-from confiddler import load_config, dump_config, dump_default_config
+from confiddler import load_config, dump_config, dump_default_config, validate
 
 from neuclease import configure_default_logging
 from flyemflows.util import tee_streams
 from flyemflows.workflow import AVAILABLE_WORKFLOWS
+from flyemflows.workflow.base.dask_schema import DaskConfigSchema
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +106,7 @@ def main():
         sys.exit(1)
 
     if args.dump_complete_config:
-        workflow_cls, config_data = _load_config(args.template_dir)
+        workflow_cls, config_data = _load_workflow_config(args.template_dir)
         dump_config(config_data, sys.stdout)
         sys.exit(0)
     
@@ -152,22 +155,25 @@ def launch_workflow(template_dir, num_workers, kill_cluster=True, _custom_execut
     Returns:
         (execution_dir, workflow_inst)
     """
-    workflow_cls, config_data = _load_config(template_dir)
+    workflow_cls, config_data = _load_workflow_config(template_dir)
     
     # Create execution dir (copy of template dir) and make it the CWD
     timestamp = f'{datetime.now():%Y%m%d.%H%M%S}'
     execution_dir = f'{template_dir}-{timestamp}'
     shutil.copytree(template_dir, execution_dir, symlinks=True)
     os.chmod(f'{execution_dir}/workflow.yaml', 0o444) # read-only
-
+    
     logpath = f'{execution_dir}/output.log'
     with tee_streams(logpath):
         logger.info(f"Teeing output to {logpath}")
+
+        _load_and_overwrite_dask_config(execution_dir)
+        
         workflow_inst = _run_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster, _custom_execute_fn)
         return execution_dir, workflow_inst
 
 
-def _load_config(template_dir):
+def _load_workflow_config(template_dir):
     config_path = f'{template_dir}/workflow.yaml'
     
     if not os.path.exists(config_path):
@@ -182,6 +188,23 @@ def _load_config(template_dir):
     config_data = load_config(config_path, workflow_cls.schema())
     return workflow_cls, config_data
     
+
+def _load_and_overwrite_dask_config(execution_dir):
+    # Load dask config, inject defaults for (selected) missing entries, and overwrite in-place.
+    dask_config_path = os.path.abspath(f'{execution_dir}/dask-config.yaml')
+    if os.path.exists(dask_config_path):
+        dask_config = load_config(dask_config_path, DaskConfigSchema)
+    else:
+        dask_config = {}
+        validate(dask_config, DaskConfigSchema, inject_defaults=True)
+    
+    dump_config(dask_config, dask_config_path)
+
+    # This environment variable is recognized by dask itself
+    os.environ["DASK_CONFIG"] = dask_config_path
+    dask.config.paths.append(dask_config_path)
+    dask.config.refresh()
+
 
 def _run_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster=True, _custom_execute_fn=None):
     orig_dir = os.getcwd()

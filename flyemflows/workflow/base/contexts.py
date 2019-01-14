@@ -20,7 +20,6 @@ import socket
 import getpass
 import logging
 import warnings
-import tempfile
 import subprocess
 from collections import defaultdict
 from contextlib import contextmanager
@@ -28,15 +27,13 @@ from os.path import splitext, basename
 
 import dask
 from distributed import Client, LocalCluster, get_worker
-from distributed.utils import parse_bytes
 
 from neuclease.util import Timer
 import confiddler.json as json
-from confiddler import convert_to_base_types
 
 from ...util import get_localhost_ip_address, kill_if_running, extract_ip_from_link, construct_ganglia_link
 from ...util.lsf import construct_rtm_url, get_job_submit_time
-
+from ...util.dask_util import update_lsf_config_with_defaults
 
 logger = logging.getLogger(__name__)
 USER = getpass.getuser()
@@ -349,39 +346,9 @@ class WorkflowClusterContext:
         # - (okay, maybe it's just best to put that stuff in __init__.py, like in DSS)
         self._write_driver_graph_urls()
 
-        user_config = convert_to_base_types(self.config['dask-config'])
-        new_config = dask.config.update(dask.config.config, user_config)
-        dask.config.set(new_config)
-
         if self.config["cluster-type"] == "lsf":
             from dask_jobqueue import LSFCluster #@UnresolvedImport
-
-            ncpus = self.config["dask-config"]["jobqueue"]["lsf"]["ncpus"]
-            if ncpus == -1:
-                ncpus = self.config["dask-config"]["jobqueue"]["lsf"]["cores"]
-                self.config["dask-config"]["jobqueue"]["lsf"]["ncpus"] = ncpus
-
-            mem = self.config["dask-config"]["jobqueue"]["lsf"]["mem"]
-            if not mem:
-                memory = self.config["dask-config"]["jobqueue"]["lsf"]["memory"]
-                mem = parse_bytes(memory)
-                self.config["dask-config"]["jobqueue"]["lsf"]["mem"] = mem
-
-            local_dir = self.config["dask-config"]["jobqueue"]["lsf"]["local-directory"]
-            if not local_dir:
-                user = getpass.getuser()
-                local_dir = f"/scratch/{user}"
-                self.config["dask-config"]["jobqueue"]["lsf"]["local-directory"] = local_dir
-                
-                # Set tmp dir, too.
-                tempfile.tempdir = local_dir
-                os.environ['TMPDIR'] = local_dir # Forked processes will use this for tempfile.tempdir
-
-            # Reconfigure
-            user_config = convert_to_base_types(self.config['dask-config'])
-            new_config = dask.config.update(dask.config.config, user_config)
-            dask.config.set(new_config)
-
+            update_lsf_config_with_defaults()
             self.workflow.cluster = LSFCluster(ip='0.0.0.0')
             self.workflow.cluster.scale(self.workflow.num_workers)
         elif self.config["cluster-type"] == "local-cluster":
@@ -391,7 +358,7 @@ class WorkflowClusterContext:
             cluster_type = self.config["cluster-type"]
 
             # synchronous/processes mode is for testing and debugging only
-            assert self.config['dask-config'].get('scheduler', cluster_type) == cluster_type, \
+            assert dask.config.get('scheduler', cluster_type) == cluster_type, \
                 "Inconsistency between the dask-config and the scheduler you chose."
 
             if cluster_type == "synchronous":

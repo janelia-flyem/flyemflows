@@ -1,5 +1,4 @@
 from dvid_resource_manager.server import DEFAULT_CONFIG as DEFAULT_RESOURCE_MANAGER_CONFIG
-from .dask_schema import DaskConfigSchema
 
 ResourceManagerSchema = \
 {
@@ -110,7 +109,6 @@ BaseSchema = \
             "enum": ["lsf", "local-cluster", "synchronous", "processes"]
             # No default
         },
-        "dask-config": DaskConfigSchema,
         "resource-manager": ResourceManagerSchema,
         "worker-initialization": WorkerInitSchema,
         "environment-variables": EnvironmentVariablesSchema
