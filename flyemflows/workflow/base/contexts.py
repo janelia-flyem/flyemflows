@@ -452,6 +452,7 @@ class WorkflowClusterContext:
         else:
             driver_rtm_url = construct_rtm_url(driver_jobid)
             driver_host = socket.gethostname()
+            logger.info(f"Driver LSB_JOBID is: {driver_jobid}")
             logger.info(f"Driver host is: {driver_host}")
             logger.info(f"Driver RTM graphs: {driver_rtm_url}")
 
