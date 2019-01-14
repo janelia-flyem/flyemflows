@@ -1,4 +1,5 @@
 import socket
+import logging
 import numpy as np
 from requests import HTTPError
 
@@ -10,6 +11,8 @@ from neuclease.dvid import fetch_instance_info, fetch_raw, post_raw, fetch_label
 
 from ..util import auto_retry, replace_default_entries
 from . import GeometrySchema, VolumeServiceReader, VolumeServiceWriter, NewAxisOrderSchema, RescaleLevelSchema, LabelMapSchema
+
+logger = logging.getLogger(__name__)
 
 DvidServiceSchema = \
 {
@@ -313,6 +316,12 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
                     return fetch_raw(self._server, self._uuid, instance_name, box_zyx, throttle)
 
         except Exception as ex:
+            # In certain cluster scenarios, the 'raise ... from ex' traceback doesn't get fully transmitted to the driver.
+            import traceback, io
+            sio = io.StringIO()
+            traceback.print_exc(file=sio)
+            logger.log(logging.ERROR, sio.getvalue() )
+
             host = socket.gethostname()
             msg = f"Host {host}: Failed to fetch subvolume: box_zyx = {box_zyx.tolist()}"
             raise RuntimeError(msg) from ex
@@ -360,6 +369,12 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
                               throttle=throttle, mutate=not self.disable_indexing )
 
         except Exception as ex:
+            # In certain cluster scenarios, the 'raise ... from ex' traceback doesn't get fully transmitted to the driver.
+            import traceback, io
+            sio = io.StringIO()
+            traceback.print_exc(file=sio)
+            logger.log(logging.ERROR, sio.getvalue() )
+
             host = socket.gethostname()
             msg = f"Host {host}: Failed to write subvolume: offset_zyx = {offset_zyx.tolist()}, shape = {subvolume.shape}"
             raise RuntimeError(msg) from ex
