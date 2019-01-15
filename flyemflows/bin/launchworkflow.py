@@ -155,6 +155,7 @@ def launch_workflow(template_dir, num_workers, kill_cluster=True, _custom_execut
     Returns:
         (execution_dir, workflow_inst)
     """
+    template_dir = template_dir.rstrip('/')
     workflow_cls, config_data = _load_workflow_config(template_dir)
     
     # Create execution dir (copy of template dir) and make it the CWD
