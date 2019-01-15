@@ -169,10 +169,11 @@ def test_copygrayscale_from_hdf5_to_dvid_multiscale(setup_hdf5_grayscale_input):
     # and choose a bounding box that is aligned with the bricks even at scale 2
     # (just for easier testing).
     config["input"]["geometry"]["bounding-box"] = [[0,0,0],[128,256,128]]
+    config["copygrayscale"]["min-pyramid-scale"] = 1
     config["copygrayscale"]["max-pyramid-scale"] = 2
     config["copygrayscale"]["pyramid-source"] = "compute-as-labels" # This test is easier to write if we use this downsampling method
  
-    box_zyx, scale_0_vol = _run( setup_hdf5_grayscale_input )
+    box_zyx, scale_0_vol = _run( setup_hdf5_grayscale_input, check_scale_0=False )
  
     scale_1_vol = downsample_labels(scale_0_vol, 2, True)
     scale_2_vol = downsample_labels(scale_1_vol, 2, True)

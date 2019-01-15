@@ -163,9 +163,6 @@ class CopyGrayscale(Workflow):
             assert not (set(range(options["max-pyramid-scale"])) - set(self.output_service.available_scales)), \
                 ("Can't use 'copy' for pyramid-source.  Not all scales are available in the input.\n"
                 f"Available scales are: {self.output_service.available_scales}")
-        else:
-            assert options["min-pyramid-scale"] == 0, \
-                "If computing downsample data, you must start with a minimum scale of 0."
 
         
 
@@ -252,9 +249,9 @@ class CopyGrayscale(Workflow):
             with Timer() as slab_timer:
                 logger.info(f"Slab {slab_index}: STARTING. {slab_fullres_box_zyx[:,::-1].tolist()}")
                 slab_wall = None
-                for scale in range(min_scale, max_scale+1):
+                for scale in range(0, max_scale+1):
                     with Timer() as scale_timer:
-                        slab_wall = self._process_slab(scale, slab_fullres_box_zyx, slab_index, len(slab_boxes), slab_wall)
+                        slab_wall = self._process_slab(scale, slab_fullres_box_zyx, slab_index, len(slab_boxes), slab_wall, min_scale)
                     logger.info(f"Slab {slab_index}: Scale {scale} took {scale_timer.timedelta}")
 
             logger.info(f"Slab {slab_index}: DONE. ({slab_timer.timedelta})", extra={'status': f"DONE with slab {slab_index}"})
@@ -265,16 +262,19 @@ class CopyGrayscale(Workflow):
         logger.info(f"DONE exporting {len(slab_boxes)} slabs")
 
 
-    def _process_slab(self, scale, slab_fullres_box_zyx, slab_index, num_slabs, upscale_slab_wall):
+    def _process_slab(self, scale, slab_fullres_box_zyx, slab_index, num_slabs, upscale_slab_wall, min_scale):
+        options = self.config["copygrayscale"]
+        pyramid_source = options["pyramid-source"]
+        output_service = self.output_service
+
+        if scale < min_scale and pyramid_source == "copy":
+            logger.info(f"Slab {slab_index}: Skipping scale {scale}")
+            return
+        
         slab_voxels = np.prod(slab_fullres_box_zyx[1] - slab_fullres_box_zyx[0]) // (2**scale)**3
         voxels_per_thread = slab_voxels // self.total_cores()
         partition_voxels = voxels_per_thread // 2
         logging.info(f"Slab {slab_index}: Aiming for partitions of {partition_voxels} voxels")
-        
-        output_service = self.output_service
-
-        options = self.config["copygrayscale"]
-        pyramid_source = options["pyramid-source"]
         
         if pyramid_source == "copy" or scale == 0:
             # Copy from input source
@@ -314,9 +314,11 @@ class CopyGrayscale(Workflow):
         # Discard original bricks
         del bricked_slab_wall
 
+        if scale < min_scale:
+            logger.info(f"Slab {slab_index}: Not writing scale {scale}")
+            return padded_slab_wall
+
         logger.info(f"Slab {slab_index}: Writing scale {scale}", extra={"status": f"Writing {slab_index}/{num_slabs}"})
-        
-        output_service = self.output_service
         def _write(brick):
             write_brick(output_service, scale, brick)
         padded_slab_wall.bricks.map(_write).compute()
