@@ -70,6 +70,11 @@ class DecimateMeshes(Workflow):
                     }
                 ]
             },
+            "skip-existing": {
+                "description": "If true, skip any meshes that are already present in the output directory.",
+                "type": "boolean",
+                "default": False,
+            },
             "format": {
                 "description": "Format to save the meshes in",
                 "type": "string",
@@ -90,7 +95,7 @@ class DecimateMeshes(Workflow):
             "output-directory": {
                 "description": "Location to write decimated meshes to",
                 "type": "string",
-                "default": "output-meshes"
+                "default": "meshes"
             }
         }
     }
@@ -148,8 +153,11 @@ class DecimateMeshes(Workflow):
         # Choose more partitions than cores, so that early finishers have the opportunity to steal work.
         bodies_bag = dask.bag.from_sequence(bodies, npartitions=self.total_cores() * 4)
         
+        skip_existing = options['skip-existing']
         def process_body(body_id):
             output_path = f'{output_dir}/{body_id}.{options["format"]}'
+            if skip_existing and os.path.exists(output_path):
+                return (body_id, 0, 'skipped')
             
             with resource_mgr_client.access_context( input_config["server"], True, 1, 0 ):
                 try:
@@ -159,27 +167,30 @@ class DecimateMeshes(Workflow):
                                                body_id )
                 except HTTPError:
                     # FIXME: Better to log the exception strings to a file
-                    return body_id
+                    return (body_id, 0, 'error-fetch')
 
             try:
-                decimate_existing_mesh( input_config["server"],
-                                        input_config["uuid"],
-                                        input_config["tarsupervoxels-instance"],
-                                        body_id,
-                                        options["decimation-fraction"],
-                                        options["format"],
-                                        output_path,
-                                        tar_bytes=tar_bytes )
+                vertex_count = decimate_existing_mesh( input_config["server"],
+                                                       input_config["uuid"],
+                                                       input_config["tarsupervoxels-instance"],
+                                                       body_id,
+                                                       options["decimation-fraction"],
+                                                       options["format"],
+                                                       output_path,
+                                                       tar_bytes=tar_bytes )
             except:
-                return body_id
+                return (body_id, 0, 'error-generate')
+
+            return (body_id, vertex_count, 'success')
 
         with Timer(f"Decimating {len(bodies)} meshes", logger):
-            problem_bodies = bodies_bag.map(process_body).compute()
+            stats = bodies_bag.map(process_body).compute()
         
-        problem_bodies = list(filter(None, problem_bodies))
         
-        if problem_bodies:
-            logger.error(f"Some bodies ({len(problem_bodies)}) could not be retrieved from DVID:\n{problem_bodies}")
-        
-        logger.info("DONE.")
+        stats_df = pd.DataFrame(stats, columns=['body', 'vertices', 'result'])
+        stats_df.to_csv('mesh-stats.csv', index=False, header=True)
 
+        failed_df = stats_df.query('result != "success"')
+        if len(failed_df) > 0:
+            logger.warning(f"{len(failed_df)} meshes could not be generated. See mesh-stats.csv")
+            logger.warning(f"Results:\n{stats_df['result'].value_counts()}")
