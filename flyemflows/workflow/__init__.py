@@ -3,6 +3,7 @@ from .samplepoints import SamplePoints
 from .copygrayscale import CopyGrayscale
 from .decimatemeshes import DecimateMeshes
 from .sparsemeshes import SparseMeshes
+from .stitchedmeshes import StitchedMeshes
 
 AVAILABLE_WORKFLOWS = {
     'workflow': Workflow, # Base class, used for unit testing only

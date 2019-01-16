@@ -10,12 +10,13 @@ import dask.bag as db
 
 from dvid_resource_manager.client import ResourceManagerClient
 
-from neuclease.util import read_csv_col, read_csv_header, Timer
+from neuclease.util import Timer
 from neuclease.dvid import fetch_sparsevol_coarse, fetch_sparsevol
 
 from vol2mesh import Mesh
 
 from ..volumes import VolumeService, DvidVolumeService, DvidSegmentationVolumeSchema
+from .util import BodyListSchema, load_body_list
 from . import Workflow
 
 logger = logging.getLogger(__name__)
@@ -48,22 +49,7 @@ class SparseMeshes(Workflow):
                 "type": "number",
                 "default": 1e9 # 1 GB max
             },
-            "bodies": {
-                "description": "List of body IDs (or supervoxel IDs) to process, or a path to a CSV file with the list.",
-                "oneOf": [
-                    {
-                        "description": "A list of body IDs (or supervoxel IDs) to generate meshes for.",
-                        "type": "array",
-                        "default": []
-                    },
-                    {
-                        "description": "A CSV file containing a single column of body IDs (or supervoxel IDs) to generate meshes for.",
-                        "type": "string",
-                        "default": ""
-                    }
-                ],
-                "default": []
-            },
+            "bodies": BodyListSchema,
             "smoothing-iterations": {
                 "description": "How many iterations of smoothing to apply before decimation",
                 "type": "integer",
@@ -141,7 +127,7 @@ class SparseMeshes(Workflow):
 
         is_supervoxels = self.input_service.base_service.supervoxels
 
-        bodies = self._load_bodies(is_supervoxels)
+        bodies = load_body_list(options["bodies"], is_supervoxels)
         logger.info(f"Input is {len(bodies)} bodies")
 
         os.makedirs(options["output-directory"], exist_ok=True)
@@ -237,29 +223,3 @@ class SparseMeshes(Workflow):
         logger.info(f"Scales chosen:\n{scales_histogram}")
         
 
-    def _load_bodies(self, is_supervoxels):
-        options = self.config["sparsemeshes"]
-        bodies = options["bodies"]
-        
-        if isinstance(bodies, list):
-            return bodies
-
-        bodies_csv = bodies
-        del bodies
-
-        assert os.path.exists(bodies_csv), \
-            f"CSV file does not exist: {bodies_csv}"
-            
-        if is_supervoxels:
-            col = 'sv'
-        else:
-            col = 'body'
-        
-        if col in read_csv_header(bodies_csv):
-            bodies = pd.read_csv(bodies_csv)[col].drop_duplicates()
-        else:
-            # Just read the first column, no matter what it's named
-            logger.warning(f"No column named {col}, so reading first column instead")
-            bodies = read_csv_col(bodies_csv, 0, np.uint64).drop_duplicates()
-
-        return bodies
