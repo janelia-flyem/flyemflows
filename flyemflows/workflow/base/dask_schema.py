@@ -43,10 +43,10 @@ LsfJobSchema = \
                            "Typically should be the same as the dask 'memory' setting,\n"
                            "which is the default if not specified here.\n"
                            "(This setting has no direct effect on dask behavior;\n"
-                           "it is solely for fine-tuning resource reservations in the LSF scheduler.)\n",
-            "type": "string",
-            "default": ""
-            
+                           "it is solely for fine-tuning resource reservations in the LSF scheduler.)\n"
+                           "Note: Must be specifed in bytes (as an integer, not string)",
+            "type": "integer",
+            "default": 0
         },
         "log-directory": {
             "description": "Where LSF worker logs (from stdout) will be stored.",
