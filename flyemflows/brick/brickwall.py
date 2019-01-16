@@ -1,7 +1,5 @@
 import numpy as np
-import scipy.ndimage
 
-from dvidutils import downsample_labels
 from neuclease.util import Grid, SparseBlockMask
 
 from ..util import persist_and_execute, downsample
