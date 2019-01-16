@@ -243,12 +243,6 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
         return np.uint64(np.prod(physical[1] - physical[0]))
 
     num_partitions = int(np.ceil(len(logical_and_physical_boxes) / partition_size))
-    if 2**np.log2(num_partitions) == num_partitions:
-        logger.info("Changing num_partitions to avoid power of two")
-        if num_partitions < len(logical_and_physical_boxes):
-            num_partitions += 1
-        else:
-            num_partitions -= 1
 
     # Distribute data across the cluster NOW, to force even distribution.
     boxes_bag = dask.bag.from_sequence( logical_and_physical_boxes, npartitions=num_partitions )
