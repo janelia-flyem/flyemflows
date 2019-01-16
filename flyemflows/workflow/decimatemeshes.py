@@ -161,14 +161,17 @@ class DecimateMeshes(Workflow):
                     # FIXME: Better to log the exception strings to a file
                     return body_id
 
-            decimate_existing_mesh( input_config["server"],
-                                    input_config["uuid"],
-                                    input_config["tarsupervoxels-instance"],
-                                    body_id,
-                                    options["decimation-fraction"],
-                                    options["format"],
-                                    output_path,
-                                    tar_bytes=tar_bytes )
+            try:
+                decimate_existing_mesh( input_config["server"],
+                                        input_config["uuid"],
+                                        input_config["tarsupervoxels-instance"],
+                                        body_id,
+                                        options["decimation-fraction"],
+                                        options["format"],
+                                        output_path,
+                                        tar_bytes=tar_bytes )
+            except:
+                return body_id
 
         with Timer(f"Decimating {len(bodies)} meshes", logger):
             problem_bodies = bodies_bag.map(process_body).compute()
