@@ -88,6 +88,7 @@ def setup_dvid_segmentation_input(setup_dvid_repo):
           format: obj
           output-directory: meshes
           skip-existing: false
+          error-mode: warn
     """)
  
     with open(f"{template_dir}/workflow.yaml", 'w') as f:

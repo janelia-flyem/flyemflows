@@ -1,5 +1,6 @@
 import os
 import copy
+import getpass
 import logging
 
 import numpy as np
@@ -13,6 +14,7 @@ from distributed import as_completed
 from dvid_resource_manager.client import ResourceManagerClient
 
 from neuclease.util import Grid
+from neuclease.dvid import default_node_service
 
 from vol2mesh import Mesh, concatenate_meshes
 
@@ -94,6 +96,12 @@ class StitchedMeshes(Workflow):
                 "type": "boolean",
                 "default": False,
             },
+            "error-mode": {
+                "description": "How to handle errors.  Either warn about them and move on, or raise immediately (useful for debugging).",
+                "type": "string",
+                "enum": ["warn", "raise"],
+                "default": "warn"
+            }
             # batch size
             # normals?
             # rescale?
@@ -149,10 +157,7 @@ class StitchedMeshes(Workflow):
         logger.info(f"Input is {len(bodies)} bodies")
         os.makedirs(options["output-directory"], exist_ok=True)
         
-        
         server, uuid, instance = dvid_config["server"], dvid_config["uuid"], dvid_config["segmentation-name"]
-        
-        ns = DVIDNodeService(server, uuid)
         
         def make_bricks(coord_and_block):
             coord_zyx, block_vol = coord_and_block
@@ -186,34 +191,32 @@ class StitchedMeshes(Workflow):
             try:
                 return r.result()
             except Exception as ex:
+                if options["error-mode"] == "raise":
+                    raise
                 body = int(r.key)
                 return (body, 0, 'error', str(ex))
 
+        USER = getpass.getuser()
         results = []
         try:
             for i, body in enumerate(bodies):
-                try:
+                logger.info(f"Mesh #{i}: Body {body}: Starting")
+                def fetch_sparsevol():
                     with mgr_client.access_context(server, True, 1, 0):
-                        logger.info(f"Mesh #{i}: Body {body}: Reading sparsevol")
-                        coords, blocks = ns.get_sparselabelmask(body, instance, options["scale"], is_supervoxels)
-                        box_zyx = np.array([  coords.min(axis=0),
-                                            1+coords.max(axis=0) ])
-                except Exception as ex:
-                    logger.warning(f"Body {body}: Failed to fetch sparsevol: {ex}")
-                    results.append( (body, 0, 'error', str(ex)) )
-                    continue
-                    
-                bricks = db.from_sequence(zip(coords, blocks)).map(make_bricks)
+                        ns = default_node_service(server, uuid, 'flyemflows-stitchedmeshes', USER)
+                        coords_zyx, blocks = ns.get_sparselabelmask(body, instance, options["scale"], is_supervoxels)
+                        return list(coords_zyx.copy()), list(blocks.copy())
+
+                coords, blocks = delayed(fetch_sparsevol, nout=2)()
+                coords, blocks = db.from_delayed(coords), db.from_delayed(blocks)
+                bricks = db.zip(coords, blocks).map(make_bricks).repartition(128) # Fixme: This repartition is expensive??
                 bricks = self.client.scatter(bricks).result()
                 
-                wall = BrickWall(box_zyx, (64,64,64), bricks, num_bricks=len(blocks))
-                del blocks
-                
                 mesh_grid = Grid((64,64,64), halo=options["block-halo"])
+                wall = BrickWall(None, (64,64,64), bricks)
                 wall = wall.realign_to_new_grid(mesh_grid)
                 
                 brick_meshes = wall.bricks.map(create_brick_mesh)
-                
                 consolidated_brick_meshes = brick_meshes.repartition(1)
                 combined_mesh = delayed(create_combined_mesh)(consolidated_brick_meshes)
     
