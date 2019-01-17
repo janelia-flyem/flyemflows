@@ -10,7 +10,8 @@ AVAILABLE_WORKFLOWS = {
     'samplepoints': SamplePoints,
     'copygrayscale': CopyGrayscale,
     'decimatemeshes': DecimateMeshes,
-    'sparsemeshes': SparseMeshes
+    'sparsemeshes': SparseMeshes,
+    'stitchedmeshes': StitchedMeshes
 }
 
 assert all([k == k.lower() for k in AVAILABLE_WORKFLOWS.keys()]), \
