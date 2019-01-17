@@ -207,10 +207,11 @@ class StitchedMeshes(Workflow):
                         coords_zyx, blocks = ns.get_sparselabelmask(body, instance, options["scale"], is_supervoxels)
                         return list(coords_zyx.copy()), list(blocks.copy())
 
+                # This leaves all blocks and bricks in a single partition,
+                # but we're about to do a shuffle anyway when the bricks are realigned.
                 coords, blocks = delayed(fetch_sparsevol, nout=2)()
                 coords, blocks = db.from_delayed(coords), db.from_delayed(blocks)
-                bricks = db.zip(coords, blocks).map(make_bricks).repartition(128) # Fixme: This repartition is expensive??
-                bricks = self.client.scatter(bricks).result()
+                bricks = db.zip(coords, blocks).map(make_bricks)
                 
                 mesh_grid = Grid((64,64,64), halo=options["block-halo"])
                 wall = BrickWall(None, (64,64,64), bricks)
