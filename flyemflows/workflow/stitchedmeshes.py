@@ -8,15 +8,17 @@ import pandas as pd
 import dask.bag as db
 from dask import delayed
 
+from distributed import as_completed
+
 from dvid_resource_manager.client import ResourceManagerClient
 
-from neuclease.util import Timer, Grid
+from neuclease.util import Grid
 
 from vol2mesh import Mesh, concatenate_meshes
 
 from libdvid import DVIDNodeService
 
-from ..util import persist_and_execute
+from ..util import as_completed_synchronous
 from ..brick import Brick, BrickWall
 from ..volumes import VolumeService, DvidVolumeService, DvidSegmentationVolumeSchema
 
@@ -33,6 +35,12 @@ class StitchedMeshes(Workflow):
         "additionalProperties": False,
         "properties": {
             "bodies": BodyListSchema,
+            "concurrent-bodies": {
+                "description": "How many bodies to keep in the pipeline at once.\n"
+                               "Set to 0 to use the default, which is the number of cores in your cluster.",
+                "type": "integer",
+                "default": 0
+            },
             "scale": {
                 "description": "Scale at which to fetch sparsevols.",
                 "type": "integer",
@@ -106,7 +114,15 @@ class StitchedMeshes(Workflow):
     def schema(cls):
         return StitchedMeshes.Schema
 
+    def _sanitize_config(self):
+        options = self.config["stitchedmeshes"]
+        if options["concurrent-bodies"] == 0:
+            logger.info(f"Setting concurrent-bodies to {self.total_cores()}")
+            options["concurrent-bodies"] = self.total_cores()
+
     def _init_service(self):
+        self._sanitize_config()
+        
         options = self.config["stitchedmeshes"]
         input_config = self.config["input"]
         mgr_options = self.config["resource-manager"]
@@ -154,39 +170,77 @@ class StitchedMeshes(Workflow):
             mesh.simplify(options["decimation-fraction"], in_memory=True)
             return mesh
 
-        def write_mesh(mesh):
-            output_dir = options["output-directory"]
-            fmt = options["format"]
-            output_path = f'{output_dir}/{body}.{fmt}'
-            mesh.serialize(output_path)
+        in_flight = 0
 
-        for i, body in enumerate(bodies):
-            with mgr_client.access_context(server, True, 1, 0):
-                logger.info(f"Mesh #{i}: Body {body}: Reading sparsevol")
-                coords, blocks = ns.get_sparselabelmask(body, instance, options["scale"], is_supervoxels)
-                box_zyx = np.array([  coords.min(axis=0),
-                                    1+coords.max(axis=0) ])
+        # Support synchronous testing with a fake 'as_completed' object
+        if hasattr(self.client, 'DEBUG'):
+            result_futures = as_completed_synchronous()
+        else:
+            result_futures = as_completed()
+
+        def pop_result():
+            nonlocal in_flight
+            r = next(result_futures)
+            in_flight -= 1
+
+            try:
+                return r.result()
+            except Exception as ex:
+                body = int(r.key)
+                return (body, 0, 'error', str(ex))
+
+        results = []
+        try:
+            for i, body in enumerate(bodies):
+                try:
+                    with mgr_client.access_context(server, True, 1, 0):
+                        logger.info(f"Mesh #{i}: Body {body}: Reading sparsevol")
+                        coords, blocks = ns.get_sparselabelmask(body, instance, options["scale"], is_supervoxels)
+                        box_zyx = np.array([  coords.min(axis=0),
+                                            1+coords.max(axis=0) ])
+                except Exception as ex:
+                    results.append( (body, 0, 'error', ex) )
+                    continue
+                    
+                bricks = db.from_sequence(zip(coords, blocks)).map(make_bricks)
+                bricks = self.client.scatter(bricks).result()
                 
-            bricks = db.from_sequence(zip(coords, blocks)).map(make_bricks)
-            bricks = self.client.scatter(bricks).result()
-            persist_and_execute(bricks, f"Mesh #{i}: Body {body}: Creating Brickwall ({len(blocks)} blocks)", logger)
+                wall = BrickWall(box_zyx, (64,64,64), bricks, num_bricks=len(blocks))
+                del blocks
+                
+                mesh_grid = Grid((64,64,64), halo=options["block-halo"])
+                wall = wall.realign_to_new_grid(mesh_grid)
+                
+                brick_meshes = wall.bricks.map(create_brick_mesh)
+                
+                consolidated_brick_meshes = brick_meshes.repartition(1)
+                combined_mesh = delayed(create_combined_mesh)(consolidated_brick_meshes)
+    
+                def write_mesh(mesh):
+                    output_dir = options["output-directory"]
+                    fmt = options["format"]
+                    output_path = f'{output_dir}/{body}.{fmt}'
+                    mesh.serialize(output_path)
+                    return (body, len(mesh.vertices_zyx), 'success', '')
+        
+                # We hide the body ID in the task name, so that we can record it in pop_result
+                task = delayed(write_mesh)(combined_mesh, dask_key_name=f'{body}')
+                result_futures.add( self.client.compute(task) )
+                in_flight += 1
+                
+                assert in_flight <= options["concurrent-bodies"]
+                while in_flight == options["concurrent-bodies"]:
+                    results.append( pop_result() )
+    
+            # Flush the last batch of tasks
+            while in_flight > 0:
+                results.append( pop_result() )
+        finally:
+            stats_df = pd.DataFrame(results, columns=['body', 'vertices', 'result', 'msg'])
+            stats_df.to_csv('mesh-stats.csv', index=False, header=True)
             
-            wall = BrickWall(box_zyx, (64,64,64), bricks, num_bricks=len(blocks))
-            del blocks
-            
-            mesh_grid = Grid((64,64,64), halo=options["block-halo"])
-            wall = wall.realign_to_new_grid(mesh_grid)
-            wall.persist_and_execute(f"Mesh #{i}: Body {body}: Realigning with halos", logger)
-            
-            brick_meshes = wall.bricks.map(create_brick_mesh)
-            persist_and_execute(brick_meshes, f"Mesh #{i}: Body {body}: Creating brick meshes", logger)
-            
-            consolidated_brick_meshes = brick_meshes.repartition(1)
-            combined_mesh = delayed(create_combined_mesh)(consolidated_brick_meshes)
-
-            with Timer(f"Mesh #{i}: Body {body}: Writing mesh", logger):
-                delayed(write_mesh)(combined_mesh).compute()
-            
-
+            failed_df = stats_df.query("result != 'success'")
+            if len(failed_df) > 0:
+                logger.warning(f"Failed to create meshes for {len(failed_df)} bodies.  See mesh-stats.csv")
 
 

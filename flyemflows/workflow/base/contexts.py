@@ -370,18 +370,37 @@ class WorkflowClusterContext:
             dask.config.set(scheduler=self.config["cluster-type"])
             
             class FakeFuture:
-                def __init__(self, result):
+                def __init__(self, result, key='fake', error=None):
                     self._result = result
+                    self.key = key
+                    self._error = error
                 
                 def result(self):
+                    if self._error:
+                        raise self._error
                     return self._result
+                
+
             class DebugClient:
+                DEBUG = True
+                
                 def ncores(self):
                     return {'driver': ncores}
+                
                 def close(self):
                     pass
+                
                 def scatter(self, data, *_):
                     return FakeFuture(data)
+                
+                def compute(self, task):
+                    try:
+                        result = task.compute()
+                    except Exception as ex:
+                        return FakeFuture(None, task.key, ex)
+                    else:
+                        return FakeFuture(result, task.key)
+            
             self.workflow.client = DebugClient()
         else:
             assert False, "Unknown cluster type"

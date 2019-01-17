@@ -41,20 +41,24 @@ def setup_dvid_segmentation_input(setup_dvid_repo):
     input_segmentation_name = 'segmentation-input'
 
     create_labelmap_instance(dvid_address, repo_uuid, input_segmentation_name, max_scale=3)
-     
-    label_vol = create_test_object().astype(np.uint64)
-    label_vol *= 100
-    
-    corners = np.array(list(ndrange((0,0,0), label_vol.shape, (64,64,64))))
-    
-    # Drop it away from (0,0,0) to make sure the workflow handles arbitrary locations
-    corners += 256
-    
-    blockwise_vol = view_as_blocks(label_vol, (64,64,64))
-    blocks = blockwise_vol.reshape(-1,64,64,64)
-    
-    # post to dvid
-    post_labelarray_blocks(dvid_address, repo_uuid, input_segmentation_name, corners, blocks, downres=True, noindexing=False)
+
+    def place_test_object(label, corner):
+        label_vol = create_test_object().astype(np.uint64)
+        label_vol *= label
+        
+        corners = np.array(list(ndrange((0,0,0), label_vol.shape, (64,64,64))))
+        
+        # Drop it away from (0,0,0) to make sure the workflow handles arbitrary locations
+        corners += corner
+        
+        blockwise_vol = view_as_blocks(label_vol, (64,64,64))
+        blocks = blockwise_vol.reshape(-1,64,64,64)
+        
+        # post to dvid
+        post_labelarray_blocks(dvid_address, repo_uuid, input_segmentation_name, corners, blocks, downres=True, noindexing=False)
+
+    for label, corner in zip([100,200,300], [(256,256,256), (512,512,512), (1024,1024,1024)]):
+        place_test_object(label, corner)
      
     template_dir = tempfile.mkdtemp(suffix="stitchedmeshes-template")
  
@@ -74,8 +78,8 @@ def setup_dvid_segmentation_input(setup_dvid_repo):
             available-scales: [0,1,2,3]
  
         stitchedmeshes:
-          bodies: [100]
-          #bodies: [100, 200] # 200 doesn't exist, will fail (see below)
+          bodies: [100,200,250,300] # 250 doesn't exist -- error should be noted but shouldn't kill the job
+          concurrent-bodies: 2
           scale: 0
           block-halo: 1
           stitch: True
@@ -103,21 +107,23 @@ def test_stitchedmeshes(setup_dvid_segmentation_input):
     #final_config = workflow.config
 
     assert os.path.exists(f"{execution_dir}/meshes/100.obj")
+    assert os.path.exists(f"{execution_dir}/meshes/200.obj")
+    assert os.path.exists(f"{execution_dir}/meshes/300.obj")
     
-    # Here's where our test mesh ended up:
-    print(f"{execution_dir}/meshes/100.obj")
+    # Here's where our test meshes ended up:
+    #print(f"{execution_dir}/meshes/100.obj")
+    #print(f"{execution_dir}/meshes/200.obj")
+    #print(f"{execution_dir}/meshes/300.obj")
+    #print(f'{execution_dir}/mesh-stats.csv')
     
-#     df = pd.read_csv(f'{execution_dir}/mesh-stats.csv')
-#     assert len(df) == 2
-#     assert df.loc[0, 'body'] == 100
-#     assert df.loc[0, 'scale'] == 1
-#     assert df.loc[0, 'result'] == 'success'
-#     
-    # The second body didn't exist, so it fails (but doesn't kill the workflow)
-#     assert df.loc[1, 'body'] == 200
-#     assert df.loc[1, 'scale'] == 0
-#     assert df.loc[1, 'result'] == 'error-sparsevol-coarse'
+    df = pd.read_csv(f'{execution_dir}/mesh-stats.csv')
+    assert len(df) == 4
+    df.set_index('body', inplace=True)
 
+    assert df.loc[100, 'result'] == 'success'
+    assert df.loc[200, 'result'] == 'success'
+    assert df.loc[250, 'result'] == 'error'  # intentional error
+    assert df.loc[300, 'result'] == 'success'
 
 if __name__ == "__main__":
     if 'CLUSTER_TYPE' in os.environ:
