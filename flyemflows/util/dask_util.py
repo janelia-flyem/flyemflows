@@ -49,10 +49,11 @@ def update_lsf_config_with_defaults():
     # Forked processes will use this for tempfile.tempdir
     os.environ['TMPDIR'] = local_dir
 
+
 def persist_and_execute(bag, description, logger=None, optimize_graph=True):
     """
-    Persist and execute the given RDD or iterable.
-    The persisted RDD is returned (in the case of an iterable, it may not be the original)
+    Persist and execute the given dask.Bag.
+    The persisted Bag is returned.
     """
     assert isinstance(bag, Bag)
     if logger:
@@ -72,3 +73,23 @@ def persist_and_execute(bag, description, logger=None, optimize_graph=True):
         logger.info(f"{description} (N={count}, P={parts}, P_hist={histogram}) took {timer.timedelta}")
     
     return bag
+
+class as_completed_synchronous:
+    """
+    For testing.
+    A quick-n-dirty fake implementation of distributed.as_completed
+    for use with the synchronous scheduler
+    """
+    def __init__(self):
+        self.futures = []
+    
+    def add(self, f):
+        self.futures.append(f)
+    
+    def __next__(self):
+        if self.futures:
+            return self.futures.pop(0)
+        else:
+            raise StopIteration()
+
+
