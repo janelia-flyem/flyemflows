@@ -170,6 +170,11 @@ def launch_workflow(template_dir, num_workers, kill_cluster=True, _custom_execut
 
         _load_and_overwrite_dask_config(execution_dir)
         
+        # On NFS, sometimes it takes a while for it to flush the file cache to disk,
+        # which means your terminal doesn't see the new directory for a minute or two.
+        # That's slightly annoying, so let's call sync right away to force the flush.
+        os.system('sync')
+        
         workflow_inst = _run_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster, _custom_execute_fn)
         return execution_dir, workflow_inst
 
