@@ -199,7 +199,8 @@ class StitchedMeshes(Workflow):
                         box_zyx = np.array([  coords.min(axis=0),
                                             1+coords.max(axis=0) ])
                 except Exception as ex:
-                    results.append( (body, 0, 'error', ex) )
+                    logger.warning(f"Body {body}: Failed to fetch sparsevol: {ex}")
+                    results.append( (body, 0, 'error', str(ex)) )
                     continue
                     
                 bricks = db.from_sequence(zip(coords, blocks)).map(make_bricks)
@@ -230,11 +231,17 @@ class StitchedMeshes(Workflow):
                 
                 assert in_flight <= options["concurrent-bodies"]
                 while in_flight == options["concurrent-bodies"]:
-                    results.append( pop_result() )
+                    body, vertices, result, msg = pop_result()
+                    if result == "error":
+                        logger.warning(f"Body {body}: Failed to generate mesh: {msg}")
+                    results.append( (body, vertices, result, msg) )
     
             # Flush the last batch of tasks
             while in_flight > 0:
-                results.append( pop_result() )
+                body, vertices, result, msg = pop_result()
+                if result == "error":
+                    logger.warning(f"Body {body}: Failed to generate mesh: {msg}")
+                results.append( (body, vertices, result, msg) )
         finally:
             stats_df = pd.DataFrame(results, columns=['body', 'vertices', 'result', 'msg'])
             stats_df.to_csv('mesh-stats.csv', index=False, header=True)
