@@ -17,7 +17,7 @@ class BrickWall:
 
     def __init__(self, bounding_box, grid, bricks, num_bricks=None):
         """
-        bounding_box: (start, stop)
+        bounding_box: (start, stop) If you don't plan to use it later, you can set this to None.
         grid: Grid
         bricks: RDD of Bricks
         """
@@ -206,7 +206,10 @@ class BrickWall:
         
         Also, translates the bounding box and grid.
         """
-        new_bounding_box = self.bounding_box + offset_zyx
+        new_bounding_box = None
+        if self.bounding_box is not None:
+            new_bounding_box = self.bounding_box + offset_zyx
+
         new_grid = Grid( self.grid.block_shape, self.grid.offset + offset_zyx )
 
         def translate_brick(brick):
@@ -241,7 +244,9 @@ class BrickWall:
             
             return Brick(downsampled_logical_box, downsampled_physical_box, downsampled_volume)
 
-        new_bounding_box = self.bounding_box // factor
+        new_bounding_box = None
+        if self.bounding_box is not None:
+            new_bounding_box = self.bounding_box // factor
         new_grid = Grid( self.grid.block_shape // factor, self.grid.offset // factor )
         new_bricks = self.bricks.map( downsample_brick )
         
