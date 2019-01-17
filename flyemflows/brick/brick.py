@@ -6,7 +6,7 @@ import cloudpickle
 import numpy as np
 import dask.bag
 
-from neuclease.util import Timer, Grid, boxes_from_grid, clipped_boxes_from_grid, box_intersection, box_to_slicing, box_as_tuple, overwrite_subvol, extract_subvol
+from neuclease.util import Timer, Grid, boxes_from_grid, clipped_boxes_from_grid, box_intersection, box_to_slicing, overwrite_subvol, extract_subvol
 from ..util import CompressedNumpyArray
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,7 @@ class Brick:
      
         Note: Both boxes (logical and physical) are always stored in GLOBAL coordinates.
     """
-    def __init__(self, logical_box, physical_box, volume=None, *, location_id=None, lazy_creation_fn=None):
+    def __init__(self, logical_box, physical_box, volume=None, *, location_id=None, lazy_creation_fn=None, use_compression=False):
         """
         Args:
             logical_box:
@@ -75,6 +75,7 @@ class Brick:
             assert ((self.physical_box[1] - self.physical_box[0]) == self._volume.shape).all()
         
         # Used for pickling.
+        self.use_compression = use_compression
         self._compressed_volume = None
         self._destroyed = False
         
@@ -147,11 +148,14 @@ class Brick:
         if self._destroyed:
             raise RuntimeError("Attempting to pickle a brick that has already been explicitly destroyed:\n"
                                f"{self}")
-        if self._volume is not None:
+        
+        if self.use_compression and self._volume is not None:
             self._compressed_volume = CompressedNumpyArray(self._volume)
-
-        d = self.__dict__.copy()
-        d['_volume'] = None
+            d = self.__dict__.copy()
+            d['_volume'] = None
+        else:
+            d = self.__dict__.copy()
+            
         return d
 
     def destroy(self):
@@ -484,7 +488,7 @@ def split_brick(new_grid, original_brick):
 
         new_location_id = tuple(new_logical_box[0] // new_grid.block_shape)
         
-        fragment_brick = Brick(new_logical_box, split_box, fragment_vol, location_id=new_location_id)
+        fragment_brick = Brick(new_logical_box, split_box, fragment_vol, location_id=new_location_id, use_compression=original_brick.use_compression)
         fragment_brick.compress()
 
         fragments.append( fragment_brick )
@@ -547,6 +551,8 @@ def assemble_brick_fragments( fragments ):
         # Destroy original to save RAM
         frag.destroy()
 
-    brick = Brick( final_logical_box, final_physical_box, final_volume, location_id=final_location_id )
-    brick.compress()
+    use_compression = fragments[0].use_compression
+    brick = Brick( final_logical_box, final_physical_box, final_volume, location_id=final_location_id, use_compression=use_compression )
+    if use_compression:
+        brick.compress()
     return brick
