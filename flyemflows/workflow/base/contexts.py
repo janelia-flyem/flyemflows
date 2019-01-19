@@ -99,7 +99,8 @@ def email_on_exit(email_config, workflow_name, execution_dir):
                 body += f"Job name: {jobname}\n"
     
             if email_config["include-log"]:
-                body += "\nLOG:\n\n"
+                os.system("sync")
+                body += "\nLOG (possibly truncated):\n\n"
                 with open(f'{execution_dir}/output.log', 'r') as log:
                     body += log.read()
     
