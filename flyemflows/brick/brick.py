@@ -534,11 +534,18 @@ def assemble_brick_fragments( fragments ):
     final_physical_box = np.asarray( ( np.min( physical_boxes[:,0,:], axis=0 ),
                                        np.max( physical_boxes[:,1,:], axis=0 ) ) )
 
-    interior_box = box_intersection(final_physical_box, final_logical_box)
-    if (interior_box[1] - interior_box[0] < 1).any():
-        # All fragments lie completely within the halo
-        return None
+    intersects_interior = False
+    for frag_pbox in physical_boxes:
+        interior_box = box_intersection(frag_pbox, final_logical_box)
+        if (interior_box[1] - interior_box[0] > 0).all():
+            intersects_interior = True
 
+    if not intersects_interior:
+        # All fragments lie completely within the halo;
+        # none intersect with the interior logical_box,
+        # so we don't bother keeping this brick.
+        return None
+    
     final_volume_shape = final_physical_box[1] - final_physical_box[0]
     dtype = fragments[0].volume.dtype
 
