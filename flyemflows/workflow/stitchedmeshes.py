@@ -78,6 +78,12 @@ class StitchedMeshes(Workflow):
                 "maximum": 1.0, # 1.0 == disable
                 "default": 0.1                
             },
+            "extra-rescale": {
+                "description": "The mesh coordinates are automatically scaled back to 'scale 0' resolution, even if you are computing them from higher-scale segmentation.\n"
+                               "But if you would like to apply additional rescaling, specify that here.  All vertex coordinates will be multiplied by this number.",
+                "type": "number",
+                "default": 1.0
+            },
             "format": {
                 "description": "Format to save the meshes in",
                 "type": "string",
@@ -102,11 +108,6 @@ class StitchedMeshes(Workflow):
                 "enum": ["warn", "raise"],
                 "default": "warn"
             }
-            # batch size
-            # normals?
-            # rescale?
-            # include empty?
-            
         }
     }
 
@@ -164,8 +165,12 @@ class StitchedMeshes(Workflow):
             logical_box = np.array((coord_zyx, coord_zyx + block_vol.shape))
             return Brick(logical_box, logical_box, block_vol, location_id=(logical_box // 64))
         
+        rescale = (2**options["scale"]) * options["extra-rescale"]
         def create_brick_mesh(brick):
-            return Mesh.from_binary_vol(brick.volume, brick.physical_box)
+            mesh = Mesh.from_binary_vol(brick.volume, brick.physical_box)
+            if rescale != 1.0:
+                mesh.vertices_zyx *= rescale
+            return mesh
 
         def create_combined_mesh(meshes):
             mesh = concatenate_meshes(meshes, False)
