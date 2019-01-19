@@ -555,9 +555,6 @@ def assemble_brick_fragments( fragments ):
         internal_box = frag.physical_box - final_physical_box[0]
         overwrite_subvol(final_volume, internal_box, frag.volume)
 
-        # Destroy original to save RAM
-        frag.destroy()
-
     use_compression = fragments[0].use_compression
     brick = Brick( final_logical_box, final_physical_box, final_volume, location_id=final_location_id, use_compression=use_compression )
     if use_compression:
