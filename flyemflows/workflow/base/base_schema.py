@@ -1,5 +1,47 @@
 from dvid_resource_manager.server import DEFAULT_CONFIG as DEFAULT_RESOURCE_MANAGER_CONFIG
 
+
+EnvironmentVariablesSchema = \
+{
+    "type": "object",
+    "default": {},
+    "additionalProperties": { "type": "string" },
+    "description": "Extra environment variables to set on the driver and workers.\n"
+                   "Some are provided by default, but you may add any others you like.\n",
+    "properties": {
+        "OMP_NUM_THREADS": {
+            "description": "Some pandas and numpy functions will use OpenMP (via MKL or OpenBLAS),\n"
+                           "which causes each process to use many threads.\n"
+                           "That's bad, since you can end up with N^2 threads on a machine with N cores.\n"
+                           "Unless you know what you're doing, it's best to force OpenMP to use only 1 core per process.\n",
+            "type": "string",
+            "default": "1"
+        }
+    }
+}
+
+
+ExitEmailSchema = {
+    "type": "object",
+    "default": {},
+    "additionalProperties": { "type": "string" },
+    "description": "Extra environment variables to set on the driver and workers.\n"
+                   "Some are provided by default, but you may add any others you like.\n",
+    "properties": {
+        "addresses": {
+            "description": "A list of email addresses to send the exit email to when the job completes.\n"
+                           "The special keyword JANELIA_USER can be used as a standin for user@janelia.hhmi.org\n",
+            "type": "array",
+            "default": ['JANELIA_USER']
+        },
+        "include-log": {
+            "description": "Whether or not to include the full client log in the email body.",
+            "type": "boolean",
+            "default": True
+        }
+    }
+}
+
 ResourceManagerSchema = \
 {
     "type": "object",
@@ -70,25 +112,6 @@ WorkerInitSchema = \
     }
 }
 
-EnvironmentVariablesSchema = \
-{
-    "type": "object",
-    "default": {},
-    "additionalProperties": { "type": "string" },
-    "description": "Extra environment variables to set on the driver and workers.\n"
-                   "Some are provided by default, but you may add any others you like.\n",
-    "properties": {
-        "OMP_NUM_THREADS": {
-            "description": "Some pandas and numpy functions will use OpenMP (via MKL or OpenBLAS),\n"
-                           "which causes each process to use many threads.\n"
-                           "That's bad, since you can end up with N^2 threads on a machine with N cores.\n"
-                           "Unless you know what you're doing, it's best to force OpenMP to use only 1 core per process.\n",
-            "type": "string",
-            "default": "1"
-        }
-    }
-}
-
 BaseSchema = \
 {
     "type": "object",
@@ -111,6 +134,7 @@ BaseSchema = \
         },
         "resource-manager": ResourceManagerSchema,
         "worker-initialization": WorkerInitSchema,
-        "environment-variables": EnvironmentVariablesSchema
+        "environment-variables": EnvironmentVariablesSchema,
+        "exit-email": ExitEmailSchema
     }
 }
