@@ -555,6 +555,11 @@ def assemble_brick_fragments( fragments ):
         internal_box = frag.physical_box - final_physical_box[0]
         overwrite_subvol(final_volume, internal_box, frag.volume)
 
+        ## It's tempting to destroy the fragment to save RAM,
+        ## but the fragment might be needed by more than one final brick.
+        ## (Also, it might be needed twice if a Worker gets restarted.)
+        # frag.destroy()
+
     use_compression = fragments[0].use_compression
     brick = Brick( final_logical_box, final_physical_box, final_volume, location_id=final_location_id, use_compression=use_compression )
     if use_compression:
