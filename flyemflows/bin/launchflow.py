@@ -7,7 +7,7 @@ Example usage:
   After you specify your configuration options in my-samplepoints-job/workflow.yaml,
   this command will launch the workflow with 8 workers:
   
-    $ launchworkflow -n 8 my-samplepoints-config-dir
+    $ launchflow -n 8 my-samplepoints-config-dir
 
 Tip:
 
@@ -15,7 +15,7 @@ Tip:
   try the --dump-default-verbose-yaml option (-v), which will dump out
   a commented default configuration file.
 
-    $ launchworkflow -v samplepoints | less
+    $ launchflow -v samplepoints | less
 
   Note: The default config is very verbose.
         If you are satisified with the default setting
@@ -113,7 +113,7 @@ def main():
     # Execute the workflow
     workflow = None
     try:
-        _exc_dir, workflow = launch_workflow(args.template_dir, args.num_workers, not args.pause_before_exit)
+        _exc_dir, workflow = launch_flow(args.template_dir, args.num_workers, not args.pause_before_exit)
     except:
         if args.pause_before_exit:
             import traceback
@@ -134,7 +134,7 @@ def main():
         del workflow
 
 
-def launch_workflow(template_dir, num_workers, kill_cluster=True, _custom_execute_fn=None):
+def launch_flow(template_dir, num_workers, kill_cluster=True, _custom_execute_fn=None):
     """
     Args:
         template_dir:

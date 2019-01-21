@@ -11,7 +11,7 @@ from dvid_resource_manager.client import ResourceManagerClient, TimeoutError
 
 import flyemflows
 from flyemflows.util import find_processes
-from flyemflows.bin.launchworkflow import launch_workflow
+from flyemflows.bin.launchflow import launch_flow
 
 yaml = YAML()
 yaml.default_flow_style = False
@@ -79,7 +79,7 @@ def test_workflow_environment():
         assert all(workflow_inst.run_on_each_worker(_check).values())
  
     os.environ['FOO'] = 'ORIGINAL_FOO'
-    _execution_dir, _workflow = launch_workflow(template_dir, 1, _custom_execute_fn=execute)
+    _execution_dir, _workflow = launch_flow(template_dir, 1, _custom_execute_fn=execute)
     assert execute.didrun
      
     # Environment is restored after execution is finished.
@@ -115,7 +115,7 @@ def test_tee_output():
         assert False, traceback_msg
     
     with pytest.raises(AssertionError):
-        execution_dir, _workflow = launch_workflow(template_dir, 1, _custom_execute_fn=execute)
+        execution_dir, _workflow = launch_flow(template_dir, 1, _custom_execute_fn=execute)
 
     with open(f'{execution_dir}/output.log', 'r') as f:
         written = f.read()
@@ -158,7 +158,7 @@ def test_resource_manager_on_driver():
         assert mgr_config == config["resource-manager"]["config"], \
             "Resource manager config does not match the one in the workflow config"
  
-    _execution_dir, _workflow = launch_workflow(template_dir, 1, _custom_execute_fn=execute)
+    _execution_dir, _workflow = launch_flow(template_dir, 1, _custom_execute_fn=execute)
     assert execute.didrun
     
     # Server should not be running any more after workflow exits.
@@ -222,7 +222,7 @@ def test_worker_initialization(setup_worker_initialization_template):
         assert script_count <= expected_script_count, f"Worker script started too many times. Check logs in:\n{script_dir}"
         assert script_count == expected_script_count, f"Worker script not started on all workers. Check logs in:\n{script_dir}"
  
-    _execution_dir, workflow_inst = launch_workflow(template_dir, num_workers, _custom_execute_fn=execute)
+    _execution_dir, workflow_inst = launch_flow(template_dir, num_workers, _custom_execute_fn=execute)
     script_dir = Path(workflow_inst.config['worker-initialization']['script-path']).parent
     script_count = len(find_processes('_TEST_SCRIPT_FAKE_ARG_'))
 
@@ -274,7 +274,7 @@ def test_worker_dvid_initialization():
         script_dir = Path(workflow_inst.config['worker-initialization']['script-path']).parent
         assert is_worker_dvid_running(), f"Worker DVID is not running. Check logs in:\n{script_dir}"
  
-    _execution_dir, workflow_inst = launch_workflow(template_dir, 1, _custom_execute_fn=execute)
+    _execution_dir, workflow_inst = launch_flow(template_dir, 1, _custom_execute_fn=execute)
     script_dir = Path(workflow_inst.config['worker-initialization']['script-path']).parent
     assert not is_worker_dvid_running(), \
         ("Worker DVID remained running after the workflow exited."\

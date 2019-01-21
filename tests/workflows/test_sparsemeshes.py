@@ -13,7 +13,7 @@ from neuclease.dvid import create_labelmap_instance, post_labelarray_blocks
 
 import pytest
 from ruamel.yaml import YAML
-from flyemflows.bin.launchworkflow import launch_workflow
+from flyemflows.bin.launchflow import launch_flow
 
 TESTVOL_SHAPE = (256,256,256)
 
@@ -96,7 +96,7 @@ def setup_dvid_segmentation_input(setup_dvid_repo):
 def test_sparsemeshes(setup_dvid_segmentation_input):
     template_dir, _config, _dvid_address, _repo_uuid = setup_dvid_segmentation_input
     
-    execution_dir, _workflow = launch_workflow(template_dir, 1)
+    execution_dir, _workflow = launch_flow(template_dir, 1)
     #final_config = workflow.config
 
     assert os.path.exists(f"{execution_dir}/meshes/100.obj")

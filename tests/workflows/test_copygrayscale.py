@@ -12,7 +12,7 @@ from neuclease.dvid import create_voxel_instance, post_raw, fetch_raw
 
 import pytest
 from ruamel.yaml import YAML
-from flyemflows.bin.launchworkflow import launch_workflow
+from flyemflows.bin.launchflow import launch_flow
 
 TESTVOL_SHAPE = (256,256,256)
 
@@ -138,7 +138,7 @@ def _run(setup, check_scale_0=True):
     with open(f"{template_dir}/workflow.yaml", 'w') as f:
         yaml.dump(config, f)
     
-    _execution_dir, workflow = launch_workflow(template_dir, 1)
+    _execution_dir, workflow = launch_flow(template_dir, 1)
     final_config = workflow.config
 
     box_xyz = np.array( final_config['input']['geometry']['bounding-box'] )

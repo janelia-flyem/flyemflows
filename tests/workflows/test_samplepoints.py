@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 from ruamel.yaml import YAML
 from flyemflows.util import downsample
-from flyemflows.bin.launchworkflow import launch_workflow
+from flyemflows.bin.launchflow import launch_flow
 
 yaml = YAML()
 yaml.default_flow_style = False
@@ -70,7 +70,7 @@ def setup_samplepoints():
 def test_samplepoints(setup_samplepoints):
     template_dir, _config, volume, points_df = setup_samplepoints
     
-    execution_dir, workflow = launch_workflow(template_dir, 1)
+    execution_dir, workflow = launch_flow(template_dir, 1)
     
     final_config = workflow.config
     output_df = pd.read_csv(f'{execution_dir}/{final_config["samplepoints"]["output-table"]}')
@@ -98,7 +98,7 @@ def test_samplepoints_rescale(setup_samplepoints):
     with open(f"{template_dir}/workflow.yaml", 'w') as f:
         yaml.dump(config, f)
     
-    execution_dir, workflow = launch_workflow(template_dir, 1)
+    execution_dir, workflow = launch_flow(template_dir, 1)
     
     final_config = workflow.config
     output_df = pd.read_csv(f'{execution_dir}/{final_config["samplepoints"]["output-table"]}')
