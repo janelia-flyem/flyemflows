@@ -56,6 +56,7 @@ requirements:
     - httplib2
     - oauth2client
     - snappy
+    - python-snappy
 
 test:
   requires:
