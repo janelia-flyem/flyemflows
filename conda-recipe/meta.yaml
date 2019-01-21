@@ -1,23 +1,18 @@
+{% set data = load_setup_py_data() %}
+
 package:
   name: flyemflows 
-
-  # If we're using a non-tagged revision, append '.postN' to the version
-  {% if GIT_DESCRIBE_NUMBER|int != 0 %}
-  version: {{GIT_DESCRIBE_TAG}}.post{{GIT_DESCRIBE_NUMBER}}
-  {% else %}
-  version: {{GIT_DESCRIBE_TAG}}
-  {% endif %}
+  version: {{ data['version'] }}
 
 source:
   path: ../
 
 build:
-  number: 0
-  string: py{{CONDA_PY}}_{{PKG_BUILDNUM}}_g{{GIT_FULL_HASH[:7]}}
-
   noarch: python  
   script: python setup.py install --single-version-externally-managed --record=record.txt
-  #entry_points:
+  entry_points:
+    - launchflow = flyemflows.bin.launchflow:main
+    
 
 requirements:
   build:

@@ -15,3 +15,7 @@ faulthandler.enable()
 # DVIDSparkServices had a lot of sophisticated configuration in its __init__ file.
 # Some (or most) of it should be copied here.
 
+
+from ._version import get_versions
+__version__ = get_versions()['version']
+del get_versions
