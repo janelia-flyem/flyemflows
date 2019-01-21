@@ -1,5 +1,5 @@
 import unittest
-from DVIDSparkServices.auto_retry import auto_retry
+from flyemflows.util import auto_retry
 
 class TestAutoRetry(unittest.TestCase):
 
