@@ -28,6 +28,12 @@ ExitEmailSchema = {
     "description": "Extra environment variables to set on the driver and workers.\n"
                    "Some are provided by default, but you may add any others you like.\n",
     "properties": {
+        "send": {
+            "description": "If True, an email will be sent to the list specified in 'addresses'.",
+            "type": "boolean",
+            "default": False # Disabled by default because it doesn't work on all machines
+                             # (it works on Janelia cluster nodes, though.)
+        },
         "addresses": {
             "description": "A list of email addresses to send the exit email to when the job completes.\n"
                            "The special keyword JANELIA_USER can be used as a standin for user@janelia.hhmi.org\n",

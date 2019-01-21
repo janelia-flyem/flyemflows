@@ -74,8 +74,13 @@ def email_on_exit(email_config, workflow_name, execution_dir):
     Doesn't work unless sendmail works without password
     (i.e. won't work on your laptop, will work on a Janelia cluster node).
     """
+    if not email_config["send"]:
+        yield
+        return
     
     if not email_config["addresses"]:
+        logger.warning("Your config enabled the exit-email feature, but "
+                       "no email addresses were listed. Nothing will be sent.")
         yield
         return
     
@@ -109,9 +114,14 @@ def email_on_exit(email_config, workflow_name, execution_dir):
             msg['From'] = f'flyemflows <{user}@{host}>'
             msg['To'] = ','.join(addresses)
     
-            s = smtplib.SMTP('mail.hhmi.org')
-            s.sendmail(msg['From'], addresses, msg.as_string())
-            s.quit()
+            try:
+                s = smtplib.SMTP('mail.hhmi.org')
+                s.sendmail(msg['From'], addresses, msg.as_string())
+                s.quit()
+            except:
+                msg = ("Failed to send completion email.  Perhaps your machine "
+                "is not configured to send login-less email, which is required for this feature.")
+                logger.error(msg)
 
         try:
             yield
