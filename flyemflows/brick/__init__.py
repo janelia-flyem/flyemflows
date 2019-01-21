@@ -1,2 +1,2 @@
-from .brick import Brick
+from .brick import *
 from .brickwall import BrickWall

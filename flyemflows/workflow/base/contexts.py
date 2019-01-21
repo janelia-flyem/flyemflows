@@ -36,7 +36,7 @@ import confiddler.json as json
 
 from ...util import get_localhost_ip_address, kill_if_running, extract_ip_from_link, construct_ganglia_link
 from ...util.lsf import construct_rtm_url, get_job_submit_time
-from ...util.dask_util import update_lsf_config_with_defaults
+from ...util.dask_util import update_lsf_config_with_defaults, DebugClient
 
 logger = logging.getLogger(__name__)
 USER = getpass.getuser()
@@ -431,47 +431,8 @@ class WorkflowClusterContext:
             assert dask.config.get('scheduler', cluster_type) == cluster_type, \
                 "Inconsistency between the dask-config and the scheduler you chose."
 
-            if cluster_type == "synchronous":
-                ncores = 1
-            else:
-                import multiprocessing
-                ncores = multiprocessing.cpu_count()
-            
             dask.config.set(scheduler=self.config["cluster-type"])
-            
-            class FakeFuture:
-                def __init__(self, result, key='fake', error=None):
-                    self._result = result
-                    self.key = key
-                    self._error = error
-                
-                def result(self):
-                    if self._error:
-                        raise self._error
-                    return self._result
-                
-
-            class DebugClient:
-                DEBUG = True
-                
-                def ncores(self):
-                    return {'driver': ncores}
-                
-                def close(self):
-                    pass
-                
-                def scatter(self, data, *_):
-                    return FakeFuture(data)
-                
-                def compute(self, task):
-                    try:
-                        result = task.compute()
-                    except Exception as ex:
-                        return FakeFuture(None, task.key, ex)
-                    else:
-                        return FakeFuture(result, task.key)
-            
-            self.workflow.client = DebugClient()
+            self.workflow.client = DebugClient(cluster_type)
         else:
             assert False, "Unknown cluster type"
 

@@ -1,6 +1,7 @@
 import os
 import getpass
 import tempfile
+import multiprocessing
 from collections import defaultdict
 
 import dask
@@ -92,4 +93,50 @@ class as_completed_synchronous:
         else:
             raise StopIteration()
 
+
+class DebugClient:
+    """
+    Provides a small subset of the distributed.Client API, but behaves synchronously.
+    Useful for convenient synchronous testing of code that is designed for the distributed cluster.
+    """
+    DEBUG = True
+
+    def __init__(self, cluster_type='synchronous'):
+        if cluster_type == "synchronous":
+            self._ncores = 1
+        else:
+            self._ncores = multiprocessing.cpu_count()
+    
+    def ncores(self):
+        return {'driver': self._ncores}
+    
+    def close(self):
+        pass
+    
+    def scatter(self, data, *_):
+        return FakeFuture(data)
+    
+    def compute(self, task):
+        try:
+            result = task.compute()
+        except Exception as ex:
+            return FakeFuture(None, task.key, ex)
+        else:
+            return FakeFuture(result, task.key)
+
+
+class FakeFuture:
+    """
+    Future-like object, returned by DebugClient.compute() and DebugClient.scatter()
+    """
+    def __init__(self, result, key='fake', error=None):
+        self._result = result
+        self.key = key
+        self._error = error
+    
+    def result(self):
+        if self._error:
+            raise self._error
+        return self._result
+    
 

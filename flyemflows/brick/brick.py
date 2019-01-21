@@ -231,16 +231,18 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
 
     num_bricks = len(logical_and_physical_boxes)
 
-    if partition_size is not None:
-        partition_size = max(1, partition_size)
+    if partition_size is None:
+        partition_size = 1
 
-        # If we're working with a tiny volume (e.g. testing),
-        # make sure we at least parallelize across all cores.
-        total_cores = sum( client.ncores().values() )
-        if (num_bricks // partition_size) < total_cores:
-            partition_size = num_bricks // total_cores
+    partition_size = max(1, partition_size)
 
-        partition_size = max(1, partition_size)
+    # If we're working with a tiny volume (e.g. testing),
+    # make sure we at least parallelize across all cores.
+    total_cores = sum( client.ncores().values() )
+    if (num_bricks // partition_size) < total_cores:
+        partition_size = num_bricks // total_cores
+
+    partition_size = max(1, partition_size)
 
     def brick_size(log_phys):
         _logical, physical = log_phys
