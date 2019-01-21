@@ -31,6 +31,9 @@ requirements:
     - scipy
     - scikit-image
 
+    # FlyEM mesh library
+    - vol2mesh
+
     - dask
     - dask-jobqueue
 
