@@ -5,7 +5,7 @@ from .decimatemeshes import DecimateMeshes
 from .sparsemeshes import SparseMeshes
 from .stitchedmeshes import StitchedMeshes
 
-AVAILABLE_WORKFLOWS = {
+BUILTIN_WORKFLOWS = {
     'workflow': Workflow, # Base class, used for unit testing only
     'samplepoints': SamplePoints,
     'copygrayscale': CopyGrayscale,
@@ -14,6 +14,6 @@ AVAILABLE_WORKFLOWS = {
     'stitchedmeshes': StitchedMeshes
 }
 
-assert all([k == k.lower() for k in AVAILABLE_WORKFLOWS.keys()]), \
-    "Keys of AVAILABLE_WORKFLOWS must be lowercase"
+assert all([k == k.lower() for k in BUILTIN_WORKFLOWS.keys()]), \
+    "Keys of BUILTIN_WORKFLOWS must be lowercase"
 

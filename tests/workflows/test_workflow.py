@@ -2,6 +2,7 @@ import os
 import sys
 import shutil
 import tempfile
+import functools
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from ruamel.yaml import YAML
 from dvid_resource_manager.client import ResourceManagerClient, TimeoutError
 
 import flyemflows
+from flyemflows.workflow import Workflow
 from flyemflows.util import find_processes
 from flyemflows.bin.launchflow import launch_flow
 
@@ -37,11 +39,41 @@ def checkrun(f):
         myfunc()
         assert (myfunc.didrun == True)
     """
+    @functools.wraps(f)
     def wrapper(*args, **kwargs):
         wrapper.didrun = True
         return f(*args, **kwargs)
     wrapper.didrun = False
     return wrapper
+
+
+class CustomWorkflow(Workflow):
+    @classmethod
+    def schema(cls):
+        return Workflow.schema()
+
+    @checkrun
+    def execute(self):
+        pass
+
+
+def test_workflow_class_discovery():
+    """
+    Developers can define their own workflow classes in external python packages,
+    in which case the workflow-name must be specified as a fully-qualified class name.
+    """
+    config = {
+        "workflow-name": "tests.workflows.test_workflow.CustomWorkflow",
+        "cluster-type": CLUSTER_TYPE
+    }
+ 
+    template_dir = tempfile.mkdtemp(suffix="test-workflow-discovery-template")
+    with open(f"{template_dir}/workflow.yaml", 'w') as f:
+        yaml.dump(config, f)
+ 
+    _execution_dir, workflow = launch_flow(template_dir, 1)
+    assert isinstance(workflow, CustomWorkflow)
+    assert workflow.execute.didrun
 
 
 def test_workflow_environment():

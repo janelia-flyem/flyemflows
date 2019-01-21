@@ -29,6 +29,7 @@ import time
 import shutil
 import logging
 import argparse
+import importlib
 from datetime import datetime
 
 import dask.config
@@ -38,7 +39,7 @@ from confiddler import load_config, dump_config, dump_default_config, validate
 
 from neuclease import configure_default_logging
 from flyemflows.util import tee_streams
-from flyemflows.workflow import AVAILABLE_WORKFLOWS
+from flyemflows.workflow import Workflow, BUILTIN_WORKFLOWS
 from flyemflows.workflow.base.dask_schema import DaskConfigSchema
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,7 @@ def main():
 
     # Workflow info
     parser.add_argument('--list-workflows', '-w', action="store_true",
-                        help="List all available workflows and exit.")
+                        help="List all built-in workflows and exit.")
 
     # Schema/config info
     parser.add_argument('--dump-schema', '-s',
@@ -75,7 +76,7 @@ def main():
     args = parser.parse_args()
 
     if args.list_workflows:
-        print( json.dumps( list(AVAILABLE_WORKFLOWS.keys() ), indent=4) )
+        print( json.dumps( list(BUILTIN_WORKFLOWS.keys() ), indent=4) )
 
     if args.dump_schema:
         workflow_cls = get_workflow_cls(args.dump_schema, True)
@@ -228,16 +229,31 @@ def _run_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cl
 
     return workflow_inst
 
+
 def get_workflow_cls(name, exit_on_error=False):
+    # Is this a fully-qualified custom workflow name?
+    if '.' in name:
+        *parts, class_name = name.split('.')
+        module_name = '.'.join(parts)
+        module = importlib.import_module(module_name)
+        cls = getattr(module, class_name)
+        if not issubclass(cls, Workflow):
+            msg = f"Class is not a subclass of the Workflow base class: {cls}"
+            if exit_on_error:
+                print(msg, file=sys.stderr)
+                sys.exit(1)
+            raise RuntimeError(msg)
+        return cls
+
+    # Is this a built-in workflow name?
     try:
-        return AVAILABLE_WORKFLOWS[name.lower()]
+        return BUILTIN_WORKFLOWS[name.lower()]
     except KeyError:
         msg = f"Unknown workflow: {name}"
         if exit_on_error:
             print(msg, file=sys.stderr)
             sys.exit(1)
-        else:
-            raise RuntimeError(msg)
+        raise RuntimeError(msg)
 
 
 if __name__ == "__main__":
