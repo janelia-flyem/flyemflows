@@ -36,6 +36,7 @@ requirements:
 
     # Misc. serialization tools
     - lz4
+    - python-lz4
     - cloudpickle
     - tblib
 
