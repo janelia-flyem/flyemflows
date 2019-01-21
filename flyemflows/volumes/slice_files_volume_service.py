@@ -4,6 +4,7 @@ import glob
 
 import numpy as np
 from PIL import Image
+from obsolete.DVIDSparkServices.json_util import inject_defaults
 
 # Avoid PIL.Image.DecompressionBombError
 # https://github.com/mpetroff/pannellum/issues/596
@@ -62,7 +63,7 @@ class SliceFilesVolumeServiceReader(VolumeServiceReader):
     class NoSlicesFoundError(RuntimeError): pass
 
     def __init__(self, volume_config):
-        validate(volume_config, SliceFilesVolumeSchema)
+        validate(volume_config, SliceFilesVolumeSchema, inject_defaults=True)
 
         # Convert path to absolute if necessary (and write back to the config)
         slice_fmt = volume_config["slice-files"]["slice-path-format"]
@@ -140,7 +141,7 @@ class SliceFilesVolumeServiceReader(VolumeServiceReader):
 class SliceFilesVolumeServiceWriter(VolumeServiceWriter):
 
     def __init__(self, volume_config):
-        validate(volume_config, SliceFilesVolumeSchema)
+        validate(volume_config, SliceFilesVolumeSchema, inject_defaults=True)
 
         # Convert path to absolute if necessary (and write back to the config)
         slice_fmt = volume_config["slice-files"]["slice-path-format"]
