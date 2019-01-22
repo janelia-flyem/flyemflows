@@ -277,8 +277,8 @@ def test_worker_dvid_initialization():
     template_dir = tempfile.mkdtemp(suffix="test-worker-dvid")
  
     # Copy worker script/config into the template
-    shutil.copy(f'{repo_dir}/scripts/worker-dvid/worker-dvid-config.toml',
-                f'{template_dir}/worker-dvid-config.toml')
+    shutil.copy(f'{repo_dir}/scripts/worker-dvid/dvid.toml',
+                f'{template_dir}/dvid.toml')
  
     shutil.copy(f'{repo_dir}/scripts/worker-dvid/launch-worker-dvid.sh',
                 f'{template_dir}/launch-worker-dvid.sh')

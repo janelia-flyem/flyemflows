@@ -1,8 +1,8 @@
 #!/bin/bash
 
-DVID_TOML=worker-dvid-config.toml
+DVID_TOML=dvid.toml
 
-LAUNCH_DIR="worker-dvid-logs/$(uname -n)"
+LAUNCH_DIR="dvid-logs/$(uname -n)"
 mkdir -p ${LAUNCH_DIR}
 cp "${DVID_TOML}" ${LAUNCH_DIR}
 
