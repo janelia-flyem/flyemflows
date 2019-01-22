@@ -82,7 +82,7 @@ class Workflow(object):
         # The execute() function is run within these nested contexts.
         # See contexts.py
         workflow_name = self.config['workflow-name']
-        with Timer(f"Running {workflow_name}", logger), \
+        with Timer(f"Running {workflow_name} with {self.num_workers} workers", logger), \
              email_on_exit(self.config["exit-email"], workflow_name,  os.getcwd()), \
              LocalResourceManager(self.config["resource-manager"]), \
              WorkflowClusterContext(self, True, not kill_cluster), \
