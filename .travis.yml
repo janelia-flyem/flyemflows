@@ -32,7 +32,7 @@ install:
   - conda config --add channels conda-forge
   - conda config --add channels flyem-forge
   - conda update -q conda
-  - conda install -y conda-build pytest
+  - conda install -y conda-build pytest dvid
   - conda info -a
 
 script:
