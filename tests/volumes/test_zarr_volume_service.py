@@ -10,7 +10,7 @@ from flyemflows.volumes import ZarrVolumeService
 
 @pytest.fixture(scope="module")
 def volume_setup():
-    path = "/tmp/test_zarr_service_testvol.h5"
+    path = "/tmp/test_zarr_service_testvol.zarr"
     dataset = "/some/volume"
     
     config = {
@@ -47,7 +47,7 @@ def test_read(volume_setup):
 
 def test_write(volume_setup):
     config, volume = volume_setup
-    config["zarr"]["path"] = "/tmp/test_zarr_service_testvol_WRITE.h5"
+    config["zarr"]["path"] = "/tmp/test_zarr_service_testvol_WRITE.zarr"
     if os.path.exists(config["zarr"]["path"]):
         os.unlink(config["zarr"]["path"])
 
