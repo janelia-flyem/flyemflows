@@ -116,12 +116,17 @@ class Workflow(object):
             { 'ip:port' : result } OR
             { 'hostname:port' : result }
         """
+        try:
+            funcname = func.__name__
+        except AttributeError:
+            funcname = 'unknown function'
+
         if self.config["cluster-type"] in ("synchronous", "processes"):
             if return_hostnames:
                 results = {f'tcp://{socket.gethostname()}': func()}
             else:
                 results = {'tcp://127.0.0.1': func()}
-            logger.info(f"Ran {func.__name__} on the driver only")
+            logger.info(f"Ran {funcname} on the driver only")
             return results
         
         all_worker_hostnames = self.client.run(socket.gethostname)
@@ -138,8 +143,7 @@ class Workflow(object):
                     worker_hostnames[address] = name
         
         workers = list(worker_hostnames.keys())
-        
-        with Timer(f"Running {func.__name__} on {len(workers)} workers", logger):
+        with Timer(f"Running {funcname} on {len(workers)} workers", logger):
             results = self.client.run(func, workers=workers)
         
         if not return_hostnames:
