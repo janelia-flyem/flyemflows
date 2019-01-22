@@ -45,11 +45,14 @@ USER = getpass.getuser()
 driver_ip_addr = get_localhost_ip_address()
 
 @contextmanager
-def environment_context(update_dict):
+def environment_context(update_dict, workflow=None):
     """
     Context manager.
     Update the environment variables specified in the given dict
     when the context is entered, and restore the old environment when the context exits.
+    
+    If workflow is given, the environment all of the workflow's cluster's workers
+    will be updated, too, but their environment won't be cleaned up.
     
     Note:
         You can modify these or other environment variables while the context is active,
@@ -59,6 +62,10 @@ def environment_context(update_dict):
     old_env = os.environ.copy()
     try:
         os.environ.update(update_dict)
+        if workflow is not None:
+            def update_env():
+                os.environ.update(update_dict)
+            workflow.run_on_each_worker(update_env)
         yield
     finally:
         os.environ.clear()

@@ -84,9 +84,9 @@ class Workflow(object):
         workflow_name = self.config['workflow-name']
         with Timer(f"Running {workflow_name}", logger), \
              email_on_exit(self.config["exit-email"], workflow_name,  os.getcwd()), \
-             environment_context(self.config["environment-variables"]), \
              LocalResourceManager(self.config["resource-manager"]), \
              WorkflowClusterContext(self, True, not kill_cluster), \
+             environment_context(self.config["environment-variables"], self), \
              WorkerDaemons(self):
                 self.execute()
 
