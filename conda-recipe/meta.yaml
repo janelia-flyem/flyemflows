@@ -51,6 +51,7 @@ requirements:
 
     # misc. image formats
     - pillow
+    - vigra
     - h5py
     - zarr >=2.2
     - z5py
