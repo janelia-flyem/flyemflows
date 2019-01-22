@@ -7,7 +7,7 @@ from ..util import auto_retry, replace_default_entries
 from . import VolumeServiceReader, GeometrySchema
 from .brainmaps_volume import BrainMapsVolume
 
-BrainMapsSegmentationServiceSchema = \
+BrainMapsServiceSchema = \
 {
     "description": "Parameters to use Google BrainMaps as a source of voxel data",
     "type": "object",
@@ -48,7 +48,7 @@ BrainMapsVolumeSchema = \
     "default": {},
 #    "additionalProperties": False,
     "properties": {
-        "brainmaps": BrainMapsSegmentationServiceSchema,
+        "brainmaps": BrainMapsServiceSchema,
         "geometry": GeometrySchema
     }
 }

@@ -1,6 +1,6 @@
 from .. import ( Hdf5ServiceSchema,
-                 DvidGrayscaleServiceSchema, SliceFilesServiceSchema, N5ServiceSchema, 
-                 DvidSegmentationServiceSchema, BrainMapsSegmentationServiceSchema, 
+                 DvidGrayscaleServiceSchema, SliceFilesServiceSchema, N5ServiceSchema,
+                 DvidSegmentationServiceSchema, BrainMapsServiceSchema,
                  NewAxisOrderSchema, RescaleLevelSchema, LabelMapSchema )
 
 from .geometry import GeometrySchema
@@ -25,6 +25,7 @@ GrayscaleVolumeSchema = \
     "type": "object",
     "default": {},
     "oneOf": [
+        { "properties": { "brainmaps": BrainMapsServiceSchema } },
         { "properties": { "hdf5": Hdf5ServiceSchema } },
         { "properties": { "dvid": DvidGrayscaleServiceSchema } },
         { "properties": { "slice-files": SliceFilesServiceSchema } },
@@ -51,7 +52,7 @@ SegmentationVolumeSchema = \
     "oneOf": [
         { "properties": { "hdf5": Hdf5ServiceSchema }, "required": ["hdf5"] },
         { "properties": { "dvid": DvidSegmentationServiceSchema }, "required": ["dvid"] },
-        { "properties": { "brainmaps": BrainMapsSegmentationServiceSchema }, "required": ["brainmaps"] }
+        { "properties": { "brainmaps": BrainMapsServiceSchema }, "required": ["brainmaps"] }
     ],
     "properties": {
         "geometry": GeometrySchema,
