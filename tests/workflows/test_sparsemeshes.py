@@ -38,7 +38,7 @@ def create_test_object():
 @pytest.fixture
 def setup_dvid_segmentation_input(setup_dvid_repo):
     dvid_address, repo_uuid = setup_dvid_repo
-    input_segmentation_name = 'segmentation-input'
+    input_segmentation_name = 'segmentation-sparsemeshes-input'
 
     create_labelmap_instance(dvid_address, repo_uuid, input_segmentation_name, max_scale=3)
      
