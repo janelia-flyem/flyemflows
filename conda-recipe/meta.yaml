@@ -60,17 +60,17 @@ requirements:
     - oauth2client
     - snappy
     - python-snappy
-
-test:
-  # These are required by the tests, but we don't actually
-  # run the tests from the conda-recipe (for now).
-  #requires:
-  #  - pytest
-  #  - numpy-allocation-tracking
-  #  - dvid
-
-  imports:
-    - flyemflows
+##
+## For now, we don't run the tests during the recipe build.
+##
+#test:
+#  requires:
+#    - pytest
+#    - numpy-allocation-tracking
+#    - dvid
+#
+#  imports:
+#    - flyemflows
 
 about:
   home: http://github.com/janelia-flyem/flyemflows
