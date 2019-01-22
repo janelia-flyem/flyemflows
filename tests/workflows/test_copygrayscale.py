@@ -33,7 +33,7 @@ def setup_dvid_grayscale_input(setup_dvid_repo):
     volume = np.random.randint(255, size=TESTVOL_SHAPE, dtype=np.uint8)
     post_raw(dvid_address, repo_uuid, input_grayscale_name, (0,0,0), volume)
      
-    template_dir = tempfile.mkdtemp(suffix="copygrayscale-template")
+    template_dir = tempfile.mkdtemp(suffix="copygrayscale-from-dvid-template")
  
     config_text = textwrap.dedent(f"""\
         workflow-name: copygrayscale
@@ -76,7 +76,7 @@ def setup_dvid_grayscale_input(setup_dvid_repo):
 @pytest.fixture
 def setup_hdf5_grayscale_input(setup_dvid_repo):
     dvid_address, repo_uuid = setup_dvid_repo
-    template_dir = tempfile.mkdtemp(suffix="copygrayscale-template")
+    template_dir = tempfile.mkdtemp(suffix="copygrayscale-from-hdf5-template")
     
     # Create volume, write to HDF5
     volume = np.random.randint(10, size=TESTVOL_SHAPE, dtype=np.uint8)

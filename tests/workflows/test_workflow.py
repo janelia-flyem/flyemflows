@@ -129,7 +129,7 @@ def test_tee_output():
         }
     }
  
-    template_dir = tempfile.mkdtemp(suffix="test-workflow-environment-template")
+    template_dir = tempfile.mkdtemp(suffix="test-tee-output-template")
     with open(f"{template_dir}/workflow.yaml", 'w') as f:
         yaml.dump(config, f)
     
@@ -179,7 +179,7 @@ def test_resource_manager_on_driver():
         }
     }
  
-    template_dir = tempfile.mkdtemp(suffix="test-workflow-environment-template")
+    template_dir = tempfile.mkdtemp(suffix="test-resource-manager-on-driver-template")
     with open(f"{template_dir}/workflow.yaml", 'w') as f:
         yaml.dump(config, f)
  
