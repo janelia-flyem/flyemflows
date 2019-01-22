@@ -43,6 +43,7 @@ class VolumeService(metaclass=ABCMeta):
         from .dvid_volume_service import DvidVolumeService
         from .brainmaps_volume_service import BrainMapsVolumeServiceReader
         from .n5_volume_service import N5VolumeServiceReader
+        from .zarr_volume_service import ZarrVolumeService
         from .slice_files_volume_service import SliceFilesVolumeServiceReader
 
         if config_dir is None:
@@ -63,6 +64,8 @@ class VolumeService(metaclass=ABCMeta):
             service = BrainMapsVolumeServiceReader( volume_config, resource_manager_client )
         elif "n5" in volume_config:
             service = N5VolumeServiceReader( volume_config )
+        elif "zarr" in volume_config:
+            service = ZarrVolumeService( volume_config )
         elif "slice-files" in volume_config:
             service = SliceFilesVolumeServiceReader( volume_config )
         else:

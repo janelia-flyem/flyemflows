@@ -1,4 +1,4 @@
-from .. import ( Hdf5ServiceSchema,
+from .. import ( Hdf5ServiceSchema, ZarrServiceSchema,
                  DvidGrayscaleServiceSchema, SliceFilesServiceSchema, N5ServiceSchema,
                  DvidSegmentationServiceSchema, BrainMapsServiceSchema,
                  NewAxisOrderSchema, RescaleLevelSchema, LabelMapSchema )
@@ -29,7 +29,8 @@ GrayscaleVolumeSchema = \
         { "properties": { "hdf5": Hdf5ServiceSchema } },
         { "properties": { "dvid": DvidGrayscaleServiceSchema } },
         { "properties": { "slice-files": SliceFilesServiceSchema } },
-        { "properties": { "n5": N5ServiceSchema } }
+        { "properties": { "n5": N5ServiceSchema } },
+        { "properties": { "zarr": ZarrServiceSchema } }
     ],
     "properties": {
         "geometry": GeometrySchema,
