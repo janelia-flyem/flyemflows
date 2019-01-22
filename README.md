@@ -1,4 +1,4 @@
-[![Travis CI Status](https://travis-ci.org/stuarteberg/flyemflows.svg?branch=master)](https://travis-ci.org/stuarteberg/flyemflows)
+[![Travis CI Status](https://travis-ci.com/stuarteberg/flyemflows.svg?branch=master)](https://travis-ci.com/stuarteberg/flyemflows)
 
 flyemflows
 ==========
