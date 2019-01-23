@@ -7,7 +7,7 @@ from confiddler import validate
 from dvid_resource_manager.client import ResourceManagerClient
 
 from neuclease.util import boxes_from_grid, box_to_slicing
-from neuclease.dvid import fetch_instance_info, fetch_raw, post_raw, fetch_labelarray_voxels, post_labelarray_blocks
+from neuclease.dvid import fetch_instance_info, fetch_volume_box, fetch_raw, post_raw, fetch_labelarray_voxels, post_labelarray_blocks
 
 from ..util import auto_retry, replace_default_entries
 from . import GeometrySchema, VolumeServiceReader, VolumeServiceWriter, NewAxisOrderSchema, RescaleLevelSchema, LabelMapSchema
@@ -205,8 +205,14 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         ## bounding-box
         ##
         bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
-        assert -1 not in bounding_box_zyx.flat[:], \
-            "volume_config must specify explicit values for bounding-box"
+        try:
+            stored_extents = fetch_volume_box(self._server, self.uuid, self._instance_name)
+        except HTTPError:
+            assert -1 not in bounding_box_zyx.flat[:], \
+                f"Instance '{self._instance_name}' does not yet exist on the server, "\
+                "so your volume_config must specify explicit values for bounding-box"
+        else:
+            replace_default_entries(bounding_box_zyx, stored_extents)
 
         ##
         ## message-block-shape
