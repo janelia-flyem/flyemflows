@@ -4,10 +4,12 @@ from .copygrayscale import CopyGrayscale
 from .decimatemeshes import DecimateMeshes
 from .sparsemeshes import SparseMeshes
 from .stitchedmeshes import StitchedMeshes
+from .findadjacencies import FindAdjacencies
 
 BUILTIN_WORKFLOWS = {
     'workflow': Workflow, # Base class, used for unit testing only
     'samplepoints': SamplePoints,
+    'findadjacencies': FindAdjacencies,
     'copygrayscale': CopyGrayscale,
     'decimatemeshes': DecimateMeshes,
     'sparsemeshes': SparseMeshes,

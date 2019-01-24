@@ -32,6 +32,9 @@ requirements:
     # FlyEM mesh library
     - vol2mesh
 
+    # Simple python-only RAG data structure.
+    - ilastikrag
+
     - dask
     - dask-jobqueue
 
