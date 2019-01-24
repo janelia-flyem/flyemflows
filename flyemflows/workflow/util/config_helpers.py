@@ -9,7 +9,7 @@ from neuclease.util import read_csv_header, read_csv_col
 logger = logging.getLogger(__name__)
 
 BodyListSchema = {
-    "description": "List of body IDs (or supervoxel IDs) to process, or a path to a CSV file with the list.",
+    "description": "List of body IDs (or supervoxel IDs) to process, or a path to a CSV file with the list.\n",
     "oneOf": [
         {
             "description": "A list of body IDs (or supervoxel IDs) to generate meshes for.",
