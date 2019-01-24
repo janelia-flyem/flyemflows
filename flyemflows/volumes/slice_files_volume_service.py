@@ -4,7 +4,6 @@ import glob
 
 import numpy as np
 from PIL import Image
-from obsolete.DVIDSparkServices.json_util import inject_defaults
 
 # Avoid PIL.Image.DecompressionBombError
 # https://github.com/mpetroff/pannellum/issues/596
