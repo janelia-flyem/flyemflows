@@ -3,7 +3,7 @@ from abc import ABCMeta, abstractmethod, abstractproperty
 
 class VolumeService(metaclass=ABCMeta):
 
-    SUPPORTED_SERVICES = ['hdf5', 'dvid', 'brainmaps', 'n5', 'slice-files']
+    SUPPORTED_SERVICES = ['hdf5', 'dvid', 'brainmaps', 'n5', 'slice-files', 'zarr']
 
     @abstractproperty
     def dtype(self):
