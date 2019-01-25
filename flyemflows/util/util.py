@@ -1,10 +1,15 @@
 import os
 import re
 import sys
+import time
 import ctypes
 import socket
+import smtplib
+import getpass
+import logging
 import datetime
 import traceback
+from email.mime.text import MIMEText
 from ctypes.util import find_library
 from contextlib import contextmanager
 from subprocess import Popen, PIPE, TimeoutExpired
@@ -14,7 +19,9 @@ import scipy.ndimage
 import numpy as np
 
 from dvidutils import downsample_labels
-from neuclease.util import parse_timestamp
+from neuclease.util import Timer, parse_timestamp
+
+logger = logging.getLogger(__name__)
 
 try:
     libc = ctypes.cdll.msvcrt # Windows
@@ -275,3 +282,90 @@ def construct_ganglia_link(hosts, from_timestamp, to_timestamp=None, ganglia_ser
 
     url = f'http://{ganglia_server}/?r=custom&cs={cs}&ce={ce}&m=load_one&tab=ch&vn=&hide-hf=false&hreg[]={host_str}'
     return url
+
+
+@contextmanager
+def email_on_exit(email_config, workflow_name, execution_dir, logpath):
+    """
+    Context manager.
+    
+    Sends an email when the context exits with success/fail status in the subject line.
+    Doesn't work unless sendmail() works without a password
+    (i.e. probably won't work on your laptop, will work on a Janelia cluster node).
+    
+    Args:
+        email_config:
+            See flyemflows.workflow.base.base_schemas.ExitEmailSchema
+        
+        workflow_name:
+            Name of the workflow class to be reported in the email.
+        
+        execution_dir:
+            Location of the workflow config/data files to be reported in the email.
+        
+        logpath:
+            Location of the logfile whose contents will be included in
+            the email if email_config["include-log"] is True.
+        
+    """
+    if not email_config["send"]:
+        yield
+        return
+    
+    if not email_config["addresses"]:
+        logger.warning("Your config enabled the exit-email feature, but "
+                       "no email addresses were listed. Nothing will be sent.")
+        yield
+        return
+    
+    user = getpass.getuser()
+    host = socket.gethostname()
+    jobname = os.environ.get("LSB_JOBNAME", None)
+
+    addresses = []
+    for address in email_config["addresses"]:
+        if address == "JANELIA_USER":
+            address = f'{user}@janelia.hhmi.org'
+        addresses.append(address)
+
+    with Timer() as timer:
+        def send_email(headline, result):
+            body = (headline +
+                    f"Duration: {timer.timedelta}\n"
+                    f"Execution directory: {execution_dir}\n")
+            
+            if jobname:
+                body += f"Job name: {jobname}\n"
+    
+            if email_config["include-log"]:
+                # Sync in the hope that the log will flush to disk
+                # Note: Currently raised exceptions haven't been printed yet, so they aren't yet in the log file.
+                os.system("sync")
+                time.sleep(2.0)
+                body += "\nLOG (possibly truncated):\n\n"
+                with open(f'{logpath}', 'r') as log:
+                    body += log.read()
+    
+            msg = MIMEText(body)
+            msg['Subject'] = f'Workflow exited: {result}'
+            msg['From'] = f'flyemflows <{user}@{host}>'
+            msg['To'] = ','.join(addresses)
+    
+            try:
+                s = smtplib.SMTP('mail.hhmi.org')
+                s.sendmail(msg['From'], addresses, msg.as_string())
+                s.quit()
+            except:
+                msg = ("Failed to send completion email.  Perhaps your machine "
+                "is not configured to send login-less email, which is required for this feature.")
+                logger.error(msg)
+
+        try:
+            yield
+        except BaseException as ex:
+            send_email(f"Workflow {workflow_name} failed: {ex}\n", 'FAILED')
+            raise
+        else:
+            send_email(f"Workflow {workflow_name} exited successfully.\n", 'success')
+
+

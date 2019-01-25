@@ -8,7 +8,7 @@ from neuclease.util import Timer
 from ...util import extract_ip_from_link
 
 from .base_schema import BaseSchema
-from .contexts import email_on_exit, environment_context, LocalResourceManager, WorkerDaemons, WorkflowClusterContext
+from .contexts import environment_context, LocalResourceManager, WorkerDaemons, WorkflowClusterContext
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +83,6 @@ class Workflow(object):
         # See contexts.py
         workflow_name = self.config['workflow-name']
         with Timer(f"Running {workflow_name} with {self.num_workers} workers", logger), \
-             email_on_exit(self.config["exit-email"], workflow_name,  os.getcwd()), \
              LocalResourceManager(self.config["resource-manager"]), \
              WorkflowClusterContext(self, True, not kill_cluster), \
              environment_context(self.config["environment-variables"], self), \

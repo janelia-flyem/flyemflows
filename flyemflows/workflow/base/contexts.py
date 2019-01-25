@@ -17,13 +17,11 @@ import os
 import sys
 import time
 import socket
-import smtplib
 import getpass
 import logging
 import warnings
 import subprocess
 from collections import defaultdict
-from email.mime.text import MIMEText
 from contextlib import contextmanager
 from os.path import splitext, basename
 
@@ -72,73 +70,6 @@ def environment_context(update_dict, workflow=None):
         os.environ.update(old_env)
 
         
-@contextmanager
-def email_on_exit(email_config, workflow_name, execution_dir):
-    """
-    Context manager for workflows.
-    
-    Sends an email when the context exits.
-    Doesn't work unless sendmail works without password
-    (i.e. won't work on your laptop, will work on a Janelia cluster node).
-    """
-    if not email_config["send"]:
-        yield
-        return
-    
-    if not email_config["addresses"]:
-        logger.warning("Your config enabled the exit-email feature, but "
-                       "no email addresses were listed. Nothing will be sent.")
-        yield
-        return
-    
-    user = getpass.getuser()
-    host = socket.gethostname()
-    jobname = os.environ.get("LSB_JOBNAME", None)
-
-    addresses = []
-    for address in email_config["addresses"]:
-        if address == "JANELIA_USER":
-            address = f'{user}@janelia.hhmi.org'
-        addresses.append(address)
-
-    with Timer() as timer:
-        def send_email(headline, result):
-            body = (headline +
-                    f"Duration: {timer.timedelta}\n"
-                    f"Execution directory: {execution_dir}\n")
-            
-            if jobname:
-                body += f"Job name: {jobname}\n"
-    
-            if email_config["include-log"]:
-                os.system("sync")
-                body += "\nLOG (possibly truncated):\n\n"
-                with open(f'{execution_dir}/output.log', 'r') as log:
-                    body += log.read()
-    
-            msg = MIMEText(body)
-            msg['Subject'] = f'Workflow exited: {result}'
-            msg['From'] = f'flyemflows <{user}@{host}>'
-            msg['To'] = ','.join(addresses)
-    
-            try:
-                s = smtplib.SMTP('mail.hhmi.org')
-                s.sendmail(msg['From'], addresses, msg.as_string())
-                s.quit()
-            except:
-                msg = ("Failed to send completion email.  Perhaps your machine "
-                "is not configured to send login-less email, which is required for this feature.")
-                logger.error(msg)
-
-        try:
-            yield
-        except BaseException as ex:
-            send_email(f"Workflow {workflow_name} failed: {ex}\n", 'FAILED')
-            raise
-        else:
-            send_email(f"Workflow {workflow_name} exited successfully.\n", 'success')
-
-
 class LocalResourceManager:
     """
     Context manager.

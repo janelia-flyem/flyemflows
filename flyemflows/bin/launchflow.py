@@ -38,7 +38,7 @@ import confiddler.json as json
 from confiddler import load_config, dump_config, dump_default_config, validate
 
 from neuclease import configure_default_logging
-from flyemflows.util import tee_streams
+from flyemflows.util import tee_streams, email_on_exit
 from flyemflows.workflow import Workflow, BUILTIN_WORKFLOWS
 from flyemflows.workflow.base.dask_schema import DaskConfigSchema
 
@@ -166,18 +166,22 @@ def launch_flow(template_dir, num_workers, kill_cluster=True, _custom_execute_fn
     os.chmod(f'{execution_dir}/workflow.yaml', 0o444) # read-only
     
     logpath = f'{execution_dir}/output.log'
-    with tee_streams(logpath):
-        logger.info(f"Teeing output to {logpath}")
-
-        _load_and_overwrite_dask_config(execution_dir)
-        
-        # On NFS, sometimes it takes a while for it to flush the file cache to disk,
-        # which means your terminal doesn't see the new directory for a minute or two.
-        # That's slightly annoying, so let's call sync right away to force the flush.
-        os.system('sync')
-        
-        workflow_inst = _run_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster, _custom_execute_fn)
-        return execution_dir, workflow_inst
+    
+    # Email is the outer-most context here (not in Workflow.run()),
+    # so it will be sent after the log is written.
+    with email_on_exit(config_data["exit-email"], config_data["workflow-name"], execution_dir, logpath):
+        with tee_streams(logpath):
+            logger.info(f"Teeing output to {logpath}")
+    
+            _load_and_overwrite_dask_config(execution_dir)
+            
+            # On NFS, sometimes it takes a while for it to flush the file cache to disk,
+            # which means your terminal doesn't see the new directory for a minute or two.
+            # That's slightly annoying, so let's call sync right away to force the flush.
+            os.system('sync')
+            
+            workflow_inst = _run_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster, _custom_execute_fn)
+            return execution_dir, workflow_inst
 
 
 def _load_workflow_config(template_dir):
