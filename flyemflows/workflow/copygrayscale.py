@@ -24,6 +24,12 @@ from flyemflows.util.auto_retry import auto_retry
 logger = logging.getLogger(__name__)
 
 class CopyGrayscale(Workflow):
+    ##
+    ## TODO: Optionally persist the previous slab so it can be used when
+    ##       downsampling the next slab, instead of forcing a re-read of
+    ##       the uploaded data.  For thin slabs, the RAM usage won't be
+    ##       high, and I/O will be minimized.
+    ##
     CopyGrayscaleSchema = \
     {
         "type": "object",
