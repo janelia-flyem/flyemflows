@@ -65,7 +65,7 @@ class FindAdjacencies(Workflow):
             "output-table": {
                 "description": "Results file.  Must be .csv for now, and must contain at least columns x,y,z",
                 "type": "string",
-                "default": "point-samples.csv"
+                "default": "adjacencies.csv"
             }
         }
     }
@@ -246,7 +246,7 @@ def find_adjacencies_in_brick(brick, subset_bodies=[], subset_requirement=1, sub
 
     # Restore to original label set
     best_edges_df['label_a'] = reverse_mapper.apply(best_edges_df['label_a'].values)
-    best_edges_df['label_b'] = reverse_mapper.apply(best_edges_df['label_b'].values)    
+    best_edges_df['label_b'] = reverse_mapper.apply(best_edges_df['label_b'].values)
     return best_edges_df
 
 
