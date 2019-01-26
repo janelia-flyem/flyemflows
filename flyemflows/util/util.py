@@ -329,13 +329,16 @@ def email_on_exit(email_config, workflow_name, execution_dir, logpath):
         addresses.append(address)
 
     with Timer() as timer:
-        def send_email(headline, result):
+        def send_email(headline, result, error_str=None):
             body = (headline +
                     f"Duration: {timer.timedelta}\n"
                     f"Execution directory: {execution_dir}\n")
             
             if jobname:
                 body += f"Job name: {jobname}\n"
+            
+            if error_str:
+                body += f"Error: {error_str}\n"
     
             if email_config["include-log"]:
                 # Sync in the hope that the log will flush to disk
@@ -364,7 +367,7 @@ def email_on_exit(email_config, workflow_name, execution_dir, logpath):
         try:
             yield
         except BaseException as ex:
-            send_email(f"Workflow {workflow_name} failed: {ex}\n", 'FAILED')
+            send_email(f"Workflow {workflow_name} failed: {ex}\n", 'FAILED', str(ex))
             raise
         else:
             send_email(f"Workflow {workflow_name} exited successfully.\n", 'success')
