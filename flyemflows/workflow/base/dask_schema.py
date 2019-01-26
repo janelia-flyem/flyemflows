@@ -31,12 +31,14 @@ LsfJobSchema = \
             "default": 1
         },
         "memory": {
-            "description": "How much memory to allot to each 'job' (typically an entire\n"
-                           "node's worth, assuming the job reserved all CPUs).\n"
-                           "This memory will be divided up amongst the workers in the job.\n"
+            "description": "How much memory to allot to each 'job' (e.g. an entire\n"
+                           "node's worth, if the job reserved all CPUs).\n"
+                           "This memory will be divided up amongst the workers in the job,\n"
+                           "so if you are setting 'cores' to more than one core, you should\n"
+                           "increase this setting accordingly.\n"
                            "Specified as a string with a suffix for units, e.g. 4GB\n",
             "type": "string",
-            "default": "128GB"
+            "default": "15GB" # On the Janelia cluster, each slot gets 15 GB by default. 
         },
         "mem": {
             "description": "How much memory to reserve from LSF for each 'job'.\n"

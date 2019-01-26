@@ -342,6 +342,7 @@ def email_on_exit(email_config, workflow_name, execution_dir, logpath):
                 # Note: Currently raised exceptions haven't been printed yet, so they aren't yet in the log file.
                 os.system("sync")
                 time.sleep(2.0)
+                
                 body += "\nLOG (possibly truncated):\n\n"
                 with open(f'{logpath}', 'r') as log:
                     body += log.read()
