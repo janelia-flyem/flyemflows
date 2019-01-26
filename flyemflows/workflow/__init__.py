@@ -1,21 +1,17 @@
 from .base.workflow import Workflow
-from .samplepoints import SamplePoints
 from .copygrayscale import CopyGrayscale
 from .decimatemeshes import DecimateMeshes
+from .findadjacencies import FindAdjacencies
+from .samplepoints import SamplePoints
 from .sparsemeshes import SparseMeshes
 from .stitchedmeshes import StitchedMeshes
-from .findadjacencies import FindAdjacencies
 
-BUILTIN_WORKFLOWS = {
-    'workflow': Workflow, # Base class, used for unit testing only
-    'samplepoints': SamplePoints,
-    'findadjacencies': FindAdjacencies,
-    'copygrayscale': CopyGrayscale,
-    'decimatemeshes': DecimateMeshes,
-    'sparsemeshes': SparseMeshes,
-    'stitchedmeshes': StitchedMeshes
-}
-
-assert all([k == k.lower() for k in BUILTIN_WORKFLOWS.keys()]), \
-    "Keys of BUILTIN_WORKFLOWS must be lowercase"
-
+BUILTIN_WORKFLOWS = [
+    Workflow, # Base class, used for unit testing only
+    CopyGrayscale,
+    DecimateMeshes,
+    FindAdjacencies,
+    SamplePoints,
+    SparseMeshes,
+    StitchedMeshes,
+]

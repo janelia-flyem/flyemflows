@@ -1,4 +1,4 @@
-#!/bin/env python3
+#!/usr/bin/env python3
 """
 Entry point to launch a workflow for a given config, from a template directory.
 
@@ -78,7 +78,13 @@ def main():
     args = parser.parse_args()
 
     if args.list_workflows:
-        print( json.dumps( list(BUILTIN_WORKFLOWS.keys() ), indent=4) )
+        print("Built-in workflows:\n")
+        for w in BUILTIN_WORKFLOWS:
+            if w is not Workflow:
+                print(f"  {w.__name__}")
+        print("\nTo run a third-party workflow, use a fully-qualified class name in workflow.yaml.\n")
+        print("Example:\n\n  workflow-name: mypackage.mymodule.MyWorkflowSubclass\n")
+        sys.exit(0)
 
     if args.dump_schema:
         workflow_cls = get_workflow_cls(args.dump_schema, True)
@@ -278,14 +284,15 @@ def get_workflow_cls(name, exit_on_error=False):
         return cls
 
     # Is this a built-in workflow name?
-    try:
-        return BUILTIN_WORKFLOWS[name.lower()]
-    except KeyError:
-        msg = f"Unknown workflow: {name}"
-        if exit_on_error:
-            print(msg, file=sys.stderr)
-            sys.exit(1)
-        raise RuntimeError(msg)
+    for cls in BUILTIN_WORKFLOWS:
+        if name.lower() == cls.__name__.lower():
+            return cls
+
+    msg = f"Unknown workflow: {name}"
+    if exit_on_error:
+        print(msg, file=sys.stderr)
+        sys.exit(1)
+    raise RuntimeError(msg)
 
 
 if __name__ == "__main__":
