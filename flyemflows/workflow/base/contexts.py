@@ -14,6 +14,7 @@ Note:
     rather than including it in the Workflow class definition.
 """
 import os
+import re
 import sys
 import time
 import socket
@@ -334,7 +335,36 @@ class WorkflowClusterContext:
             self.workflow.client.close()
             self.workflow.client = None
         if self.workflow.cluster:
-            self.workflow.cluster.close()
+            try:
+                self.workflow.cluster.close()
+            except RuntimeError as ex:
+                ## For some reason, sometimes the cluster can't be closed due to some
+                ## problem with 'bkill', which fails with an error that looks like the following.
+                ## If that happens, try to re-run bkill one more time in the hopes of really
+                ## killing the cluster and not leaving lingering workers running.
+                ## (This issue has been observed on the Janelia cluster for both dask and spark clusters.)
+                ## 
+                #     RuntimeError: Command exited with non-zero exit code.
+                #     Exit code: 255
+                #     Command:
+                #     bkill 54421878 54421872 54421877
+                #     stdout:
+                #      
+                #     stderr:
+                #     Job <54421878>: Failed in an LSF library call: Slave LIM configuration is not ready yet
+                #     Job <54421872>: Failed in an LSF library call: Slave LIM configuration is not ready yet
+                #     Job <54421877>: Failed in an LSF library call: Slave LIM configuration is not ready yet
+                m = re.search(r'bkill( \d+)+', str(ex))
+                if not m:
+                    raise
+
+                logger.warn("Failed to kill cluster with bkill, trying one more time...")
+                time.sleep(2.0)
+                result = subprocess.run(m.group(), shell=True)
+                if result.returncode != 0:
+                    logger.error("Second attempt to kill the cluster failed!")
+                    raise
+                
             self.workflow.cluster = None
     
     def _init_dask(self):
