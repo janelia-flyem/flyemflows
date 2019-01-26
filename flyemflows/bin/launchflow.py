@@ -30,6 +30,7 @@ import shutil
 import logging
 import argparse
 import importlib
+import subprocess
 from datetime import datetime
 
 import dask.config
@@ -38,6 +39,7 @@ import confiddler.json as json
 from confiddler import load_config, dump_config, dump_default_config, validate
 
 from neuclease import configure_default_logging
+import flyemflows
 from flyemflows.util import tee_streams, email_on_exit
 from flyemflows.workflow import Workflow, BUILTIN_WORKFLOWS
 from flyemflows.workflow.base.dask_schema import DaskConfigSchema
@@ -165,8 +167,18 @@ def launch_flow(template_dir, num_workers, kill_cluster=True, _custom_execute_fn
     shutil.copytree(template_dir, execution_dir, symlinks=True)
     os.chmod(f'{execution_dir}/workflow.yaml', 0o444) # read-only
     
-    logpath = f'{execution_dir}/output.log'
+    # Export conda env for future reference
+    p = subprocess.run('conda env export', shell=True, check=True, stdout=subprocess.PIPE)
+    with open(f'{execution_dir}/conda-environment.yml', 'wb') as f:
+        f.write(p.stdout)
+
+    # Export bash environment variables for future reference
+    with open(f'{execution_dir}/bash-environment.sh', 'w') as f:
+        for k,v in os.environ.items():
+            f.write(f'{k}={v}\n')
     
+    logpath = f'{execution_dir}/output.log'
+
     # Email is the outer-most context here (not in Workflow.run()),
     # so it will be sent after the log is written.
     with email_on_exit(config_data["exit-email"], config_data["workflow-name"], execution_dir, logpath):
@@ -174,6 +186,7 @@ def launch_flow(template_dir, num_workers, kill_cluster=True, _custom_execute_fn
             logger.info(f"Teeing output to {logpath}")
     
             _load_and_overwrite_dask_config(execution_dir)
+            _log_flyemflows_version()
             
             # On NFS, sometimes it takes a while for it to flush the file cache to disk,
             # which means your terminal doesn't see the new directory for a minute or two.
@@ -182,6 +195,21 @@ def launch_flow(template_dir, num_workers, kill_cluster=True, _custom_execute_fn
             
             workflow_inst = _run_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster, _custom_execute_fn)
             return execution_dir, workflow_inst
+
+
+def _log_flyemflows_version():
+    """
+    If we're running flyemflows from a git repo (rather than an installed conda package),
+    log the git rev we're using.
+    """
+    flyemflows_dir = os.path.dirname(flyemflows.__file__)
+    flyemflows_git = f'{flyemflows_dir}/.git'
+    if os.path.exists(flyemflows_git):
+        env = os.environ.copy()
+        env['GIT_DIR'] = flyemflows_git
+        r = subprocess.run('git describe', env=env, shell=True, check=True, stdout=subprocess.PIPE)
+        git_rev = r.decode('utf-8')
+        logger.info(f"Running flyemflows from git repo at version: {git_rev}")
 
 
 def _load_workflow_config(template_dir):
