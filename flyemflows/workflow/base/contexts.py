@@ -446,9 +446,11 @@ class WorkflowClusterContext:
 
             hostgraph_url_path = 'graph-links.txt'
             with open(hostgraph_url_path, 'a') as f:
-                f.write(f"{socket.gethostname()} (driver)\n")
-                f.write(f"  {ganglia_url}\n")
+                header = f"=== Client RTM/Ganglia graphs ({socket.gethostname()}) ==="
+                f.write(header + "\n")
+                f.write("="*len(header) + "\n")
                 f.write(f"  {driver_rtm_url}\n")
+                f.write(f"  {ganglia_url}\n\n")
             
 
     def _write_worker_graph_urls(self, graph_url_path):
@@ -480,27 +482,41 @@ class WorkflowClusterContext:
         min_timestamp = min(host_min_submit_times.values())
         combined_ganglia_link = construct_ganglia_link(all_hosts, min_timestamp)
         
-        hostgraph_urls = self.workflow.run_on_each_worker(construct_rtm_url, False, True)
+        rtm_urls = self.workflow.run_on_each_worker(construct_rtm_url, False, True)
 
         # Some workers share the same parent LSF job,
         # and hence have the same hostgraph URL.
         # Don't show duplicate links, but do group the links by host
         # and indicate how many workers are hosted on each node.
-        host_url_counts = defaultdict(lambda: defaultdict(lambda: 0))
-        for addr, url in hostgraph_urls.items():
+        host_rtm_url_counts = defaultdict(lambda: defaultdict(lambda: 0))
+        for addr, url in rtm_urls.items():
             host = addr[len('tcp://'):].split(':')[0]
-            host_url_counts[host][url] += 1
+            host_rtm_url_counts[host][url] += 1
         
         with open(graph_url_path, 'a') as f:
-            f.write('-'*100 + '\n')
-            f.write("Combined Ganglia Graphs:\n")
-            f.write(f"  {combined_ganglia_link}\n")
-            
-            for host, url_counts in host_url_counts.items():
+            f.write("=== Worker RTM graphs ===\n")
+            f.write("=========================\n")
+            for host, url_counts in host_rtm_url_counts.items():
                 total_workers = sum(url_counts.values())
                 f.write(f"{host} ({total_workers} workers)\n")
-                f.write(f"  {host_ganglia_links[host]}\n")
+                f.write("-------------------------\n")
                 for url in url_counts.keys():
                     f.write(f"  {url}\n")
+                f.write("-------------------------\n\n")
+
+            f.write('\n')
+            f.write("=== Worker Ganglia graphs ===\n")
+            f.write("=============================\n\n")
+            f.write("All worker hosts:\n")
+            f.write("-----------------------------\n")
+            f.write(f"  {combined_ganglia_link}\n")
+
+            f.write("=============================\n")
+            for host, url_counts in host_rtm_url_counts.items():
+                total_workers = sum(url_counts.values())
+                f.write(f"{host} ({total_workers} workers)\n")
+                f.write("-----------------------------\n")
+                f.write(f"  {host_ganglia_links[host]}\n")
+                f.write("-----------------------------\n\n")
 
 
