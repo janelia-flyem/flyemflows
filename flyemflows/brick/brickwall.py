@@ -2,7 +2,7 @@ import numpy as np
 
 from neuclease.util import Grid, SparseBlockMask
 
-from ..util import persist_and_execute, downsample
+from ..util import persist_and_execute, downsample, DebugClient
 from .brick import ( Brick, generate_bricks_from_volume_source, realign_bricks_to_new_grid, pad_brick_data_from_volume_source )
 
 
@@ -50,7 +50,7 @@ class BrickWall:
                       costs after unpickling are only incurred once per partition.
      
             client:
-                dask distributed.Client
+                dask distributed.Client or suitable mock object.
      
             target_partition_size_voxels:
                 Optional. If provided, the RDD partition lengths (i.e. the number of bricks per RDD partition)
@@ -63,6 +63,9 @@ class BrickWall:
             lazy:
                 If True, the bricks' data will not be created until their 'volume' member is first accessed.
         """
+        if client is None:
+            client = DebugClient()
+        
         if target_partition_size_voxels is None:
             if sparse_boxes is None:
                 total_voxels = np.prod(bounding_box[1] - bounding_box[0])
@@ -71,7 +74,8 @@ class BrickWall:
                     sparse_boxes = list(sparse_boxes)
                 total_voxels = sum( map(lambda physbox: np.prod(physbox[1] - physbox[0]), sparse_boxes ) )
             
-            voxels_per_thread = total_voxels / client.ncores
+            ncores = sum(client.ncores().values())
+            voxels_per_thread = total_voxels / ncores
             target_partition_size_voxels = (voxels_per_thread // 2) # Arbitrarily aim for 2 partitions per thread
 
         block_size_voxels = np.prod(grid.block_shape)

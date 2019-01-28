@@ -7,7 +7,7 @@ import numpy as np
 import dask.bag
 
 from neuclease.util import Timer, Grid, boxes_from_grid, clipped_boxes_from_grid, box_intersection, box_to_slicing, overwrite_subvol, extract_subvol
-from ..util import CompressedNumpyArray
+from ..util import CompressedNumpyArray, DebugClient
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +196,9 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
         halo: An integer or shape indicating how much halo to add to each Brick's physical_box.
               The halo is applied in both 'dense' and 'sparse' cases.
     """
+    if client is None:
+        client = DebugClient()
+    
     if sparse_boxes is None:
         # Generate boxes from densely populated grid
         logical_boxes = boxes_from_grid(bounding_box, grid, include_halos=False)
