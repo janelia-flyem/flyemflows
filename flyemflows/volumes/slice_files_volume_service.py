@@ -13,7 +13,7 @@ from confiddler import validate
 from neuclease.util import box_to_slicing
 
 from ..util import replace_default_entries
-from . import VolumeServiceReader, VolumeServiceWriter, GeometrySchema
+from . import VolumeServiceWriter, GeometrySchema
 
 
 SliceFilesServiceSchema = \
@@ -41,7 +41,13 @@ SliceFilesServiceSchema = \
             "minItems": 2,
             "maxItems": 2,
             "default": [0,0],
-        }
+        },
+        "dtype": {
+            "description": "Datatype of the volume.  Must be specified when creating a new volume.",
+            "type": "string",
+            "enum": ["auto", "uint8", "uint16", "uint32", "uint64", "int8", "int16", "int32", "int64", "float32", "float64"],
+            "default": "auto"
+        },
     }
 }
 
@@ -57,7 +63,7 @@ SliceFilesVolumeSchema = \
 }
 
 
-class SliceFilesVolumeServiceReader(VolumeServiceReader):
+class SliceFilesVolumeService(VolumeServiceWriter):
 
     class NoSlicesFoundError(RuntimeError): pass
 
@@ -69,10 +75,13 @@ class SliceFilesVolumeServiceReader(VolumeServiceReader):
         assert not slice_fmt.startswith('gs://'), "FIXME: Support gbuckets"
         slice_fmt = os.path.abspath(slice_fmt)
 
-        # Determine complete bounding box
-        default_bounding_box_zyx, dtype = determine_stack_attributes(slice_fmt)
+        dtype = None
         bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
-        replace_default_entries(bounding_box_zyx, default_bounding_box_zyx)
+
+        # Determine complete bounding box
+        if -1 in bounding_box_zyx.flat:
+            default_bounding_box_zyx, dtype = determine_stack_attributes(slice_fmt)
+            replace_default_entries(bounding_box_zyx, default_bounding_box_zyx)
 
         # Determine complete preferred "message shape" - one full output slice.
         output_slice_shape = bounding_box_zyx[1] - bounding_box_zyx[0]
@@ -108,6 +117,8 @@ class SliceFilesVolumeServiceReader(VolumeServiceReader):
 
     @property
     def dtype(self):
+        if self._dtype is None:
+            _box, self._dtype = determine_stack_attributes(self._slice_fmt)
         return self._dtype
 
     @property
@@ -137,48 +148,11 @@ class SliceFilesVolumeServiceReader(VolumeServiceReader):
             output[z-z_offset] = slice_data[box_to_slicing(*yx_box)]
         return output
 
-class SliceFilesVolumeServiceWriter(VolumeServiceWriter):
-
-    def __init__(self, volume_config):
-        validate(volume_config, SliceFilesVolumeSchema, inject_defaults=True)
-
-        # Convert path to absolute if necessary (and write back to the config)
-        slice_fmt = volume_config["slice-files"]["slice-path-format"]
-        assert not slice_fmt.startswith('gs://'), "FIXME: Support gbuckets"
-        slice_fmt = os.path.abspath(slice_fmt)
-        slice_dir = os.path.dirname(slice_fmt)
-        os.makedirs(slice_dir, exist_ok=True)
-
-        bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
-        assert -1 not in bounding_box_zyx.flat[:], "Output bounding box must be completely specified."
-
-        # Determine complete preferred "message shape" - one full output slice.
-        output_slice_shape = bounding_box_zyx[1] - bounding_box_zyx[0]
-        output_slice_shape[0] = 1
-        preferred_message_shape_zyx = np.array(volume_config["geometry"]["message-block-shape"][::-1])
-        replace_default_entries(preferred_message_shape_zyx, output_slice_shape)
-        assert (preferred_message_shape_zyx == output_slice_shape).all(), \
-            f"Preferred message shape for slice files must be a single Z-slice, and a complete XY output plane ({output_slice_shape}), "\
-            f"not {preferred_message_shape_zyx}"
-
-        # Store members
-        self._slice_fmt = slice_fmt
-        self._preferred_message_shape_zyx = preferred_message_shape_zyx
-        self._bounding_box_zyx = bounding_box_zyx
-        
-        # Overwrite config entries that we might have modified
-        volume_config["slice-files"]["slice-path-format"] = slice_fmt
-        volume_config["geometry"]["bounding-box"] = bounding_box_zyx[:,::-1].tolist()
-        volume_config["geometry"]["message-block-shape"] = preferred_message_shape_zyx[::-1].tolist()
-
-        # Forbid unsupported config entries
-        assert volume_config["slice-files"]["slice-xy-offset"] == [0,0], \
-            "Non-zero slice-xy-offset is not yet supported"
-        assert volume_config["geometry"]["block-width"] == -1, \
-            "Slice files have no concept of a native block width. Please leave it set to the default (-1)"
-
 
     def write_subvolume(self, subvolume, offset_zyx, scale=0):
+        slice_dir = os.path.dirname(self._slice_fmt)
+        os.makedirs(slice_dir, exist_ok=True)
+
         offset_zyx = np.array(offset_zyx)
         assert scale == 0, "Currently, only writing scale 0 is supported."
         assert (offset_zyx[1:] == [0,0]).all(), \
@@ -189,21 +163,6 @@ class SliceFilesVolumeServiceWriter(VolumeServiceWriter):
             slice_path = self._slice_fmt.format(z)
             Image.fromarray(z_slice).save(slice_path)
 
-    @property
-    def bounding_box_zyx(self):
-        return self._bounding_box_zyx
-
-    @property
-    def preferred_message_shape(self):
-        return self._preferred_message_shape
-
-    @property
-    def dtype(self):
-        raise NotImplementedError
-    
-    @property
-    def block_width(self):
-        return -1
 
 def determine_stack_attributes(slice_fmt):
     """
@@ -219,7 +178,11 @@ def determine_stack_attributes(slice_fmt):
 
     matching_paths = sorted( glob.glob(f"{prefix}*{suffix}") )
     if not matching_paths:
-        raise SliceFilesVolumeServiceReader.NoSlicesFoundError(f"No slice files found to match pattern: {slice_fmt}")
+        raise SliceFilesVolumeService.NoSlicesFoundError(
+            "Could not determine stack attributes automatically."
+            f"No slice files found to match pattern: {slice_fmt}\n"
+            "If you are attempting to write a new directory of slices,"
+            "please specify the exact bounding-box and dtype in your config.")
 
     if (np.array(list(map(len, matching_paths))) != len(matching_paths[0])).all():
         raise RuntimeError("Image file paths are not all the same length. "

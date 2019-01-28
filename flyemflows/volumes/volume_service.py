@@ -44,7 +44,7 @@ class VolumeService(metaclass=ABCMeta):
         from .brainmaps_volume_service import BrainMapsVolumeServiceReader
         from .n5_volume_service import N5VolumeServiceReader
         from .zarr_volume_service import ZarrVolumeService
-        from .slice_files_volume_service import SliceFilesVolumeServiceReader
+        from .slice_files_volume_service import SliceFilesVolumeService
 
         if config_dir is None:
             config_dir = os.getcwd()
@@ -67,7 +67,7 @@ class VolumeService(metaclass=ABCMeta):
         elif "zarr" in volume_config:
             service = ZarrVolumeService( volume_config )
         elif "slice-files" in volume_config:
-            service = SliceFilesVolumeServiceReader( volume_config )
+            service = SliceFilesVolumeService( volume_config )
         else:
             raise RuntimeError( "Unknown service type." )
 

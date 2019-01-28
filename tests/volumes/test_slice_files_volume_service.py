@@ -1,17 +1,15 @@
-import os
 import tempfile
 
 import pytest
-
 import vigra
 import numpy as np
 
 from neuclease.util import box_to_slicing
 
-from flyemflows.volumes import SliceFilesVolumeServiceReader, SliceFilesVolumeServiceWriter
+from flyemflows.volumes import SliceFilesVolumeService
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture()
 def read_slices_setup():
     volume = np.random.randint(100, size=(512, 256, 128), dtype=np.uint8)
     volume = vigra.taggedView(volume, 'zyx')
@@ -34,8 +32,8 @@ def read_slices_setup():
 def test_read_full_volume(read_slices_setup):
     volume, config = read_slices_setup
     try:
-        reader = SliceFilesVolumeServiceReader(config)
-    except SliceFilesVolumeServiceReader.NoSlicesFoundError:
+        reader = SliceFilesVolumeService(config)
+    except SliceFilesVolumeService.NoSlicesFoundError:
         raise RuntimeError("Test data could not be found. "
                            "It is supposed to be generated when you run the INTEGRATION TESTS. "
                            "Please run (or at least start) the integration tests first.")
@@ -55,7 +53,7 @@ def test_read_slab(read_slices_setup):
     
     slab_from_raw = volume[box_to_slicing(*box)]
 
-    reader = SliceFilesVolumeServiceReader(config)
+    reader = SliceFilesVolumeService(config)
     slab_from_slices = reader.get_subvolume(box)
 
     assert slab_from_slices.shape == slab_from_raw.shape, \
@@ -86,23 +84,23 @@ def write_slices_setup():
 
 def test_write_full_volume(write_slices_setup):
     volume, config = write_slices_setup
-    writer = SliceFilesVolumeServiceWriter(config)
+    writer = SliceFilesVolumeService(config)
     writer.write_subvolume(volume, (0,0,0))
     
-    reader = SliceFilesVolumeServiceReader(config)
+    reader = SliceFilesVolumeService(config)
     written_vol = reader.get_subvolume(writer.bounding_box_zyx)
     assert (written_vol == volume).all()
 
 def test_write_slab(write_slices_setup):
     volume, config = write_slices_setup
-    writer = SliceFilesVolumeServiceWriter(config)
+    writer = SliceFilesVolumeService(config)
 
     slab_box = writer.bounding_box_zyx.copy()
     slab_box[:,0] = [64,128]
 
     writer.write_subvolume(volume[64:128], (64,0,0))
     
-    reader = SliceFilesVolumeServiceReader(config)
+    reader = SliceFilesVolumeService(config)
     written_vol = reader.get_subvolume(slab_box)
     assert (written_vol == volume[64:128]).all()
 
