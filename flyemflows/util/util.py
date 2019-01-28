@@ -367,7 +367,7 @@ def email_on_exit(email_config, workflow_name, execution_dir, logpath):
         try:
             yield
         except BaseException as ex:
-            send_email(f"Workflow {workflow_name} failed: {ex}\n", 'FAILED', str(ex))
+            send_email(f"Workflow {workflow_name} failed: {type(ex)}\n", 'FAILED', str(ex))
             raise
         else:
             send_email(f"Workflow {workflow_name} exited successfully.\n", 'success')
