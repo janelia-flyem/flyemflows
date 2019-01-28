@@ -61,6 +61,10 @@ class N5VolumeServiceReader(VolumeServiceReader):
         self._n5_file = None
         self._n5_datasets = {}
         
+        if self.n5_file.is_group(self._dataset_name):
+            raise RuntimeError("The N5 dataset you specified appears to be a 'group', not a volume.\n"
+                               "Please pass the complete dataset name.  If your dataset is multi-scale,\n"
+                               "pass scale 0 ('s0') as the dataset name.\n")
         chunk_shape = np.array(self.n5_dataset(0).chunks)
         assert len(chunk_shape) == 3
 
@@ -125,12 +129,15 @@ class N5VolumeServiceReader(VolumeServiceReader):
         box_zyx = np.asarray(box_zyx)
         return self.n5_dataset(scale)[box_to_slicing(*box_zyx.tolist())]
 
-    def n5_dataset(self, scale):
+    @property
+    def n5_file(self):
         # This member is memoized because that makes it
         # easier to support pickling/unpickling.
         if self._n5_file is None:
             self._n5_file = z5py.File(self._path)
-        
+        return self._n5_file
+
+    def n5_dataset(self, scale):
         if scale not in self._n5_datasets:
             if scale == 0:
                 name = self._dataset_name
@@ -140,7 +147,7 @@ class N5VolumeServiceReader(VolumeServiceReader):
                     "The N5 dataset does not appear to be a multi-resolution dataset."
                 name = self._dataset_name[:-1] + f'{scale}'
 
-            self._n5_datasets[scale] = self._n5_file[name]
+            self._n5_datasets[scale] = self.n5_file[name]
 
         return self._n5_datasets[scale]
 
