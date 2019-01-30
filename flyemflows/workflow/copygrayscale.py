@@ -20,6 +20,7 @@ from ..volumes import VolumeService, VolumeServiceWriter, GrayscaleVolumeSchema
 from . import Workflow
 
 from flyemflows.util.auto_retry import auto_retry
+from flyemflows.volumes.dvid_volume_service import DvidVolumeService
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +139,8 @@ class CopyGrayscale(Workflow):
 
         replace_default_entries(output_config["geometry"]["bounding-box"], self.input_service.bounding_box_zyx[:, ::-1])
         self.output_service = VolumeService.create_from_config( output_config, os.getcwd(), self.mgr_client )
-        assert isinstance( self.output_service, VolumeServiceWriter )
+        assert isinstance( self.output_service, VolumeServiceWriter ), \
+            "The output format you are attempting to use does not support writing"
 
         logger.info(f"Output bounding box: {self.output_service.bounding_box_zyx[:,::-1].tolist()}")
 
@@ -175,12 +177,13 @@ class CopyGrayscale(Workflow):
     def _prepare_output(self):
         """
         Create DVID data instances (including multi-scale) and update metadata.
+        (Only DVID output special handling.  Other formats do not.)
         """
         output_config = self.config["output"]
         max_scale = self.config["copygrayscale"]["max-pyramid-scale"]
 
-        # Only dvid supported so far...
-        assert "dvid" in output_config, "Unsupported output service type"
+        if "dvid" not in output_config:
+            return
 
         server = output_config["dvid"]["server"]
         uuid = output_config["dvid"]["uuid"]
@@ -313,7 +316,13 @@ class CopyGrayscale(Workflow):
         if scale == 0:
             output_accessor_func = lambda _box: 0
 
-        padding_grid = Grid( 3*(output_service.block_width,), output_grid.offset )
+        if isinstance( output_service.base_service, DvidVolumeService):
+            # For DVID, we use minimum padding (just pad up to the
+            # nearest block boundary, not the whole brick boundary).
+            padding_grid = Grid( 3*(output_service.block_width,), output_grid.offset )
+        else:
+            padding_grid = output_slab_wall.grid
+        
         padded_slab_wall = output_slab_wall.fill_missing(output_accessor_func, padding_grid)
         padded_slab_wall.persist_and_execute(f"Slab {slab_index}: Assembling scale {scale} bricks", logger)
 
@@ -383,33 +392,39 @@ class CopyGrayscale(Workflow):
 
 
 def write_brick(output_service, scale, brick):
-    shape = np.array(brick.volume.shape)
-    assert (shape[0:2] == output_service.block_width).all()
-    assert shape[2] % output_service.block_width == 0
-    
-    # Omit leading/trailing empty blocks
-    block_width = output_service.block_width
-    assert (np.array(brick.volume.shape) % block_width).all() == 0
-    blockwise_view = view_as_blocks( brick.volume, brick.volume.shape[0:2] + (block_width,) )
-    
-    # blockwise view has shape (1,1,X/bx, bz, by, bx)
-    assert blockwise_view.shape[0:2] == (1,1)
-    blockwise_view = blockwise_view[0,0] # drop singleton axes
-    
-    block_maxes = blockwise_view.max( axis=(1,2,3) )
-    assert block_maxes.ndim == 1
-    
-    nonzero_block_indexes = np.nonzero(block_maxes)[0]
-    if len(nonzero_block_indexes) == 0:
-        return # brick is completely empty
-    
-    first_nonzero_block = nonzero_block_indexes[0]
-    last_nonzero_block = nonzero_block_indexes[-1]
-    
-    nonzero_start = (0, 0, block_width*first_nonzero_block)
-    nonzero_stop = ( brick.volume.shape[0:2] + (block_width*(last_nonzero_block+1),) )
-    nonzero_subvol = brick.volume[box_to_slicing(nonzero_start, nonzero_stop)]
-    nonzero_subvol = np.asarray(nonzero_subvol, order='C')
+    # For most outputs, we just write the whole brick.
+    if not isinstance( output_service.base_service, DvidVolumeService):
+        output_service.write_subvolume(brick.volume, brick.physical_box[0], scale)
 
-    output_service.write_subvolume(nonzero_subvol, brick.physical_box[0] + nonzero_start, scale)
+    # For dvid outputs, we add some special checks/optimizations
+    else:
+        shape = np.array(brick.volume.shape)
+        assert (shape[0:2] == output_service.block_width).all()
+        assert shape[2] % output_service.block_width == 0
+        
+        # Omit leading/trailing empty blocks
+        block_width = output_service.block_width
+        assert (np.array(brick.volume.shape) % block_width).all() == 0
+        blockwise_view = view_as_blocks( brick.volume, brick.volume.shape[0:2] + (block_width,) )
+        
+        # blockwise view has shape (1,1,X/bx, bz, by, bx)
+        assert blockwise_view.shape[0:2] == (1,1)
+        blockwise_view = blockwise_view[0,0] # drop singleton axes
+        
+        block_maxes = blockwise_view.max( axis=(1,2,3) )
+        assert block_maxes.ndim == 1
+        
+        nonzero_block_indexes = np.nonzero(block_maxes)[0]
+        if len(nonzero_block_indexes) == 0:
+            return # brick is completely empty
+        
+        first_nonzero_block = nonzero_block_indexes[0]
+        last_nonzero_block = nonzero_block_indexes[-1]
+        
+        nonzero_start = (0, 0, block_width*first_nonzero_block)
+        nonzero_stop = ( brick.volume.shape[0:2] + (block_width*(last_nonzero_block+1),) )
+        nonzero_subvol = brick.volume[box_to_slicing(nonzero_start, nonzero_stop)]
+        nonzero_subvol = np.asarray(nonzero_subvol, order='C')
+    
+        output_service.write_subvolume(nonzero_subvol, brick.physical_box[0] + nonzero_start, scale)
 

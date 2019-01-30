@@ -12,6 +12,7 @@ from neuclease.dvid import create_voxel_instance, post_raw, fetch_raw
 
 import pytest
 from ruamel.yaml import YAML
+from flyemflows.volumes import SliceFilesVolumeService
 from flyemflows.bin.launchflow import launch_flow
 
 TESTVOL_SHAPE = (256,256,256)
@@ -202,6 +203,61 @@ def test_copygrayscale_from_hdf5_to_dvid_with_constrast_adjustment(setup_hdf5_gr
 
     _box_zyx, _scale_0_vol = _run( setup_hdf5_grayscale_input, check_scale_0=False )
     
+
+def test_copygrayscale_from_hdf5_to_slices():
+    template_dir = tempfile.mkdtemp(suffix="copygrayscale-from-hdf5-template")
+    
+    # Create volume, write to HDF5
+    volume = np.random.randint(10, size=TESTVOL_SHAPE, dtype=np.uint8)
+    volume_path = f"{template_dir}/volume.h5"
+    with h5py.File(volume_path, 'w') as f:
+        f['volume'] = volume
+    
+    SLICE_FMT = 'slices/{:04d}.png'
+
+    config_text = textwrap.dedent(f"""\
+        workflow-name: copygrayscale
+        cluster-type: {CLUSTER_TYPE}
+        
+        input:
+          hdf5:
+            path: {volume_path}
+            dataset: volume
+          
+          geometry:
+            message-block-shape: [64,64,256]
+            bounding-box: [[0,0,100], [256,200,256]]
+
+          # Enable multi-scale, since otherwise
+          # Hdf5VolumeService doesn't support it out-of-the box
+          rescale-level: 0
+
+        output:
+          slice-files:
+              slice-path-format: "{SLICE_FMT}"
+              dtype: uint8
+        
+        copygrayscale:
+          max-pyramid-scale: 0
+          slab-depth: 128
+    """)
+
+    with open(f"{template_dir}/workflow.yaml", 'w') as f:
+        f.write(config_text)
+
+    _execution_dir, workflow = launch_flow(template_dir, 1)
+    final_config = workflow.config
+
+    box_xyz = np.array( final_config['input']['geometry']['bounding-box'] )
+    box_zyx = box_xyz[:,::-1]
+    
+    output_vol = SliceFilesVolumeService(final_config['output']).get_subvolume([[100,0,0], [256,200,256]])
+    expected_vol = volume[box_to_slicing(*box_zyx)]
+    
+    assert (output_vol == expected_vol).all(), \
+        "Written vol does not match expected"
+
+
 
 if __name__ == "__main__":
     if 'CLUSTER_TYPE' in os.environ:

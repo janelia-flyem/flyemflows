@@ -138,6 +138,7 @@ class SliceFilesVolumeService(VolumeServiceWriter):
         return self._available_scales
 
     def get_subvolume(self, box_zyx, scale=0):
+        box_zyx = np.asarray(box_zyx)
         assert scale == 0, "Slice File reader only supports scale 0"
         z_offset = box_zyx[0,0]
         yx_box = box_zyx[:,1:]
