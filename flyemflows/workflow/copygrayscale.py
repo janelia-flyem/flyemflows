@@ -104,11 +104,6 @@ class CopyGrayscale(Workflow):
                 "items": {"type": "integer"},
                 "minItems": 2,
                 "default": [-1] + HEMIBRAIN_TAB_BOUNDARIES[1:].tolist() # Must begin with -1, not 0
-            },
-            "reinit-cluster-between-slabs": {
-                "description": "If true, the cluster will be destroyed and reinitialized in between slabs, to renew the lease on LSF cluster nodes.",
-                "type": "boolean",
-                "default": False
             }
         }
     }
@@ -264,9 +259,6 @@ class CopyGrayscale(Workflow):
                     logger.info(f"Slab {slab_index}: Scale {scale} took {scale_timer.timedelta}")
 
             logger.info(f"Slab {slab_index}: DONE. ({slab_timer.timedelta})", extra={'status': f"DONE with slab {slab_index}"})
-            
-            if options["reinit-cluster-between-slabs"] and slab_index != len(slab_boxes)-1:
-                self.reinitialize_cluster()
 
         logger.info(f"DONE exporting {len(slab_boxes)} slabs")
 
