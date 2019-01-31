@@ -25,6 +25,17 @@ from flyemflows.volumes.dvid_volume_service import DvidVolumeService
 logger = logging.getLogger(__name__)
 
 class CopyGrayscale(Workflow):
+    """
+    Copy a grayscale volume from one source to another, possibly in a different format.
+    The copy is performed one "slab" at a time, with slab width defined in the config.
+    
+    For DVID outputs, a pyramid of downsampled volumes can be generated and uploaded, too.
+    
+    Slab boundaries must be aligned to the input/output grid, but the corresponding
+    slab boundaries for the downsample pyramid volumes need not be perfectly aligned.
+    If they end up unaligned after downsampling, the existing data at the output will
+    be used to "pad" the slab before it is uploaded.
+    """
     ##
     ## TODO: Optionally persist the previous slab so it can be used when
     ##       downsampling the next slab, instead of forcing a re-read of
