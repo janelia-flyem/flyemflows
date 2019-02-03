@@ -110,9 +110,9 @@ class Hdf5VolumeService(VolumeServiceReader, VolumeServiceWriter):
                 block_width = DEFAULT_CHUNK_WIDTH
             
             self._dataset = self._h5_file.create_dataset( dataset_name,
-                                                    shape=bounding_box_zyx[1],
-                                                    dtype=np.dtype(dtype),
-                                                    chunks=3*(block_width,) )
+                                                          shape=bounding_box_zyx[1],
+                                                          dtype=np.dtype(dtype),
+                                                          chunks=3*(block_width,) )
 
         ###
         ### bounding_box_zyx
