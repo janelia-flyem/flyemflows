@@ -158,7 +158,7 @@ def setup_hdf5_segmentation_input(setup_dvid_repo, random_segmentation):
     return template_dir, config, random_segmentation, dvid_address, repo_uuid, output_segmentation_name
 
 
-def _run(setup, check_scale_0=True):
+def _run_to_dvid(setup, check_scale_0=True):
     template_dir, config, volume, dvid_address, repo_uuid, output_segmentation_name = setup
 
     yaml = YAML()
@@ -185,11 +185,11 @@ def _run(setup, check_scale_0=True):
 
 
 def test_copysegmentation_from_dvid_to_dvid(setup_dvid_segmentation_input):
-    _box_zyx, _expected_vol = _run(setup_dvid_segmentation_input)
+    _box_zyx, _expected_vol = _run_to_dvid(setup_dvid_segmentation_input)
    
    
 def test_copysegmentation_from_hdf5_to_dvid(setup_hdf5_segmentation_input):
-    _box_zyx, _expected_vol = _run(setup_hdf5_segmentation_input)
+    _box_zyx, _expected_vol = _run_to_dvid(setup_hdf5_segmentation_input)
  
  
 def test_copysegmentation_from_hdf5_to_dvid_multiscale(setup_hdf5_segmentation_input):
@@ -241,6 +241,83 @@ def test_copysegmentation_from_hdf5_to_dvid_multiscale(setup_hdf5_segmentation_i
         "Scale 1: Written vol does not match expected"
     assert (output_2_vol == scale_2_vol).all(), \
         "Scale 2: Written vol does not match expected"
+
+
+@pytest.mark.skipif(not os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', None), reason="Skipping Brainmaps test")
+def test_copysegmentation_from_brainmaps_to_dvid(setup_dvid_repo):
+    """
+    Fetch a tiny subvolume from a Brainmaps source.
+    To run this test, you must have valid application credentials loaded in your bash environment,
+    
+    For example:
+        
+        export GOOGLE_APPLICATION_CREDENTIALS=/Users/bergs/dvid-em-28a78d822e11.json
+        PYTHONPATH=. pytest -s --tb=native --pyargs tests.workflows.test_copysegmentation -k copysegmentation_from_brainmaps_to_dvid
+    """
+    dvid_address, repo_uuid = setup_dvid_repo
+    output_segmentation_name = 'segmentation-output-from-brainmaps'
+
+    box_start = np.array([8000, 23296, 12800])
+    box_xyz = np.array([box_start, box_start + 256])
+    box_zyx = box_xyz[:,::-1]
+
+    config_text = textwrap.dedent(f"""\
+        workflow-name: copysegmentation
+        cluster-type: {CLUSTER_TYPE}
+         
+        input:
+          brainmaps:
+            project: '274750196357'
+            dataset: hemibrain
+            volume-id: base20180227_8nm_watershed_fixed
+            change-stack-id: ffn_agglo_20180312_32_16_8_freeze10
+
+          geometry:
+            bounding-box: {box_xyz.tolist()}
+            message-block-shape: [6400, 64, 64]
+            block-width: 64
+            available-scales: [0,1,2]
+
+        outputs:
+          - dvid:
+              server: {dvid_address}
+              uuid: {repo_uuid}
+              segmentation-name: {output_segmentation_name}
+              supervoxels: true
+              disable-indexing: true
+           
+            geometry: {{}} # Auto-set from input
+ 
+        copysegmentation:
+          pyramid-depth: 2
+          slab-depth: 128
+          download-pre-downsampled: true
+    """)
+ 
+    template_dir = tempfile.mkdtemp(suffix="copysegmentation-from-brainmaps") 
+    with open(f"{template_dir}/workflow.yaml", 'w') as f:
+        f.write(config_text)
+ 
+    yaml = YAML()
+    with StringIO(config_text) as f:
+        config = yaml.load(f)
+ 
+    _execution_dir, _workflow = launch_flow(template_dir, 1)
+
+    # Fetch the data via a simpler method, and verify that it matches what we stored in DVID.
+    from flyemflows.volumes.brainmaps_volume import BrainMapsVolume
+    bmv = BrainMapsVolume.from_flyem_source_info(config['input']['brainmaps'])
+    
+    
+    for scale in (0,1,2):
+        expected_vol = bmv.get_subvolume(box_zyx // 2**scale, scale=scale)
+    
+        assert expected_vol.any(), \
+            f"Something is wrong with this test: The brainmaps volume at scale {scale} is all zeros!"
+        
+        output_vol = fetch_labelarray_voxels(dvid_address, repo_uuid, output_segmentation_name, box_zyx // 2**scale, scale=scale)
+        assert (output_vol == expected_vol).all()
+
 
 if __name__ == "__main__":
     if 'CLUSTER_TYPE' in os.environ:
