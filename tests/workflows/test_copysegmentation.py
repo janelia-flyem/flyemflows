@@ -14,11 +14,8 @@ import pytest
 from ruamel.yaml import YAML
 from flyemflows.bin.launchflow import launch_flow
 
-TESTVOL_SHAPE = (256,256,256)
-
 # Overridden below when running from __main__
 CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'local-cluster')
-#CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'synchronous')
 
 @pytest.fixture
 def random_segmentation():
