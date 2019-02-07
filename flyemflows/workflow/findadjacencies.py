@@ -179,8 +179,6 @@ def find_adjacencies_in_brick(brick, subset_bodies=[], subset_requirement=1, sub
     
     mapper = LabelMapper(brick_labels, consecutive_labels)
     reverse_mapper = LabelMapper(consecutive_labels, brick_labels)
-    remapped_brick = mapper.apply(brick.volume)
-
     remapped_subset_bodies = None
     if len(subset_bodies) > 0:
         subset_bodies = set(brick_labels).intersection(subset_bodies)
@@ -198,6 +196,7 @@ def find_adjacencies_in_brick(brick, subset_bodies=[], subset_requirement=1, sub
         remapped_subset_edges = pd.DataFrame(mapper.apply(subset_edges.values), columns=['label_a', 'label_b'])
 
     # Construct RAG -- finds all edges in the volume, on a per-pixel basis.
+    remapped_brick = mapper.apply(brick.volume)
     rag = Rag(vigra.taggedView(remapped_brick, 'zyx'))
     
     # Edges are stored by axis -- concatenate them all.
