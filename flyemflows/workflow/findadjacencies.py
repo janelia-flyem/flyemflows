@@ -152,7 +152,7 @@ def find_adjacencies_in_brick(brick, subset_bodies=[], subset_requirement=1, sub
         If the brick contains no edges at all (other than edges to label 0), return None.
         
         Otherwise, returns pd.DataFrame with columns:
-            [label_a, label_b, forwardness, z, y, x, axis, edge_area].
+            [label_a, label_b, forwardness, z, y, x, axis, edge_area, distance].
         
         where label_a < label_b,
         'axis' indicates which axis the edge crosses at the chosen coordinate,
@@ -197,7 +197,35 @@ def find_adjacencies_in_brick(brick, subset_bodies=[], subset_requirement=1, sub
 
     # Construct RAG -- finds all edges in the volume, on a per-pixel basis.
     remapped_brick = mapper.apply(brick.volume)
-    rag = Rag(vigra.taggedView(remapped_brick, 'zyx'))
+    best_edges_df = _find_best_edges(remapped_brick, remapped_subset_bodies, subset_requirement, remapped_subset_edges)
+
+    # Translate coordinates to global space
+    best_edges_df.loc[:, ['z', 'y', 'x']] += brick.physical_box[0]
+
+    # These edges are all directly adjacent.
+    best_edges_df['distance'] = np.float32(0.0)
+
+    # Restore to original label set
+    best_edges_df['label_a'] = reverse_mapper.apply(best_edges_df['label_a'].values)
+    best_edges_df['label_b'] = reverse_mapper.apply(best_edges_df['label_b'].values)
+    
+    return best_edges_df
+
+
+def _find_best_edges(volume, subset_bodies, subset_requirement, subset_edges):
+    """
+    Helper function.
+    Find the "best" (most central) edges in a volume.
+    
+    The volume must already be of type np.uint32.
+    The caller may need to apply a mapping the volume, bodies, and edges
+    before calling this function.
+    
+    The coordinates in the returned DataFrame will be in terms of the
+    local volume's coordinates (i.e. between (0,0,0) and volume.shape).
+    """
+    assert volume.dtype == np.uint32
+    rag = Rag(vigra.taggedView(volume, 'zyx'))
     
     # Edges are stored by axis -- concatenate them all.
     edges_z, edges_y, edges_x = rag.dense_edge_tables.values()
@@ -224,28 +252,21 @@ def find_adjacencies_in_brick(brick, subset_bodies=[], subset_requirement=1, sub
     all_edges_df.query("label_a != 0 and label_b != 0", inplace=True)
 
     # Filter by subset-bodies
-    if remapped_subset_bodies is not None:
+    if subset_bodies is not None:
         if subset_requirement == 1:
-            all_edges_df.query("label_a in @remapped_subset_bodies or label_b in @remapped_subset_bodies", inplace=True)
+            all_edges_df.query("label_a in @subset_bodies or label_b in @subset_bodies", inplace=True)
         if subset_requirement == 2:
-            all_edges_df.query("label_a in @remapped_subset_bodies and label_b in @remapped_subset_bodies", inplace=True)
+            all_edges_df.query("label_a in @subset_bodies and label_b in @subset_bodies", inplace=True)
 
     # Filter by subset-edges
-    if remapped_subset_edges is not None:
-        all_edges_df = all_edges_df.merge(remapped_subset_edges, on=['label_a', 'label_b'], how='inner')
+    if subset_edges is not None:
+        all_edges_df = all_edges_df.merge(subset_edges, on=['label_a', 'label_b'], how='inner')
     
     if len(all_edges_df) == 0:
         return None # No edges left after filtering
 
     # Find most-central edge in each group    
     best_edges_df = select_central_edges(all_edges_df)
-    
-    # Translate coordinates to global space
-    best_edges_df.loc[:, ['z', 'y', 'x']] += brick.physical_box[0]
-
-    # Restore to original label set
-    best_edges_df['label_a'] = reverse_mapper.apply(best_edges_df['label_a'].values)
-    best_edges_df['label_b'] = reverse_mapper.apply(best_edges_df['label_b'].values)
     return best_edges_df
 
 
