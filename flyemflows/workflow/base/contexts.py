@@ -35,7 +35,7 @@ import confiddler.json as json
 
 from ...util import get_localhost_ip_address, kill_if_running, extract_ip_from_link, construct_ganglia_link
 from ...util.lsf import construct_rtm_url, get_job_submit_time
-from ...util.dask_util import update_lsf_config_with_defaults, DebugClient
+from ...util.dask_util import update_lsf_config_with_defaults, dump_dask_config, DebugClient
 
 logger = logging.getLogger(__name__)
 USER = getpass.getuser()
@@ -403,6 +403,8 @@ class WorkflowClusterContext:
             self.workflow.client = DebugClient(cluster_type)
         else:
             assert False, "Unknown cluster type"
+
+        dump_dask_config('full-dask-config.yaml')
 
         if self.workflow.cluster:
             dashboard = self.workflow.cluster.dashboard_link

@@ -1,4 +1,5 @@
 import os
+import copy
 import getpass
 import tempfile
 import multiprocessing
@@ -8,6 +9,7 @@ import dask
 from dask.bag import Bag
 from distributed.utils import parse_bytes
 
+from confiddler import dump_config
 from neuclease.util import Timer
 
 def update_lsf_config_with_defaults():
@@ -18,7 +20,7 @@ def update_lsf_config_with_defaults():
     """
     # Must import LSFCluster first, or else the
     # dask.config data for lsf isn't fully populated yet.
-    from dask_jobqueue import LSFCluster #@UnresolvedImport
+    from dask_jobqueue import LSFCluster #@UnresolvedImport @UnusedImport
 
     # 'ncpus' is how many CPUs are RESERVED for the LSF job.
     # By default, set it to the number of CPUs the workers will actually use ('cores')
@@ -49,7 +51,25 @@ def update_lsf_config_with_defaults():
     
     # Forked processes will use this for tempfile.tempdir
     os.environ['TMPDIR'] = local_dir
+    
 
+def dump_dask_config(path):
+    """
+    Dump the current dask.config.config to the given path.
+    
+    Note: If jobqueue settings are present in the config,
+          only the lsf settings are included.
+          Others are omitted. 
+    """
+    config = copy.deepcopy(dask.config.config)
+    if dask.config.get('jobqueue.lsf', None):
+        # Delete all the other jobqueue settings we
+        # don't care about (i.e. other cluster types)
+        lsf = config['jobqueue']['lsf']
+        del config['jobqueue']
+        config['jobqueue'] = { 'lsf': lsf }
+    dump_config(config, path)
+    
 
 def persist_and_execute(bag, description, logger=None, optimize_graph=True):
     """
