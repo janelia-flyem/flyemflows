@@ -1,0 +1,75 @@
+##
+## Before launching your python program,
+## Enable these config settings via:
+##
+##  export DASK_CONFIG=dask-config.yaml
+##
+
+# General scheduler settings.
+# I tend to use the default settings, so most of this section is empty.
+# But I like to customize the log format (used by Python's logging module).
+distributed:
+  admin:
+    log-format: '[%(asctime)s] %(levelname)s %(message)s'
+
+# HPC cluster settings.
+jobqueue:
+  lsf:
+
+    # Spawn workers one at a time
+    # If you want your workers to be allocated in groups,
+    # You can increase this (and increase settings below accordingly)
+    # (See example below.)
+    processes: 1
+
+    # Each worker will only use one thread.
+    # Increase this if you want your workers to use a threadpool internally.
+    cores: 1
+
+    # This is used by LSF to determine how many cpus to reserve for this worker.
+    # If you omit this, then it will be set as ncpus = cores
+    # But in rare cases, if your job requires more than one slot's worth of RAM,
+    # you may want to tell LSF reserve more cores than the worker will actually use,
+    # just so that the cores you ARE using have access to more RAM.
+    ncpus: 1
+    
+    # How much memory should dask permit this group of workers to use?
+    memory: 15GB
+    
+    # This is used by the LSF reservation system.
+    # By default, it is equivalent to the 'memory' setting above.
+    # To be honest, I'm not sure if our LSF cluster even looks at this setting.
+    # I usually just omit it.
+    mem: 15000000000
+    
+    # How long these jobs will last before LSF kills them (bsub -W)
+    # If your computation will be short, set this to 1 hour (or less)
+    # to make it eligible for Janelia's "short queue"
+    # In general, shorter times get higher priority on the cluster.
+    walltime: '01:00'
+    
+    # Where to dump worker logs.  Workers will be launched like this: bsub -o {log-directory}/worker-NNNN.log
+    # Careful: If you leave this blank, LSF will send you a lot of emails!
+    log-directory: dask-worker-logs
+    
+    # If dask needs to store temporary data for caching or whatever, it will use this directory.
+    # On the Janelia cluster, the /scratch directory is the best place to use for temporary data. 
+    #local-directory: /scratch/<INSERT YOUR USERNAME HERE>
+
+    # The name of the worker jobs, i.e. what you see when you check the output of 'bjobs'
+    name: dask-worker
+
+
+## Sometimes it's slightly more convenient to launch workers in groups, rather than one at at a time.
+## There's no difference in how dask behaves, but it results in fewer lines to look at when inspecting 'bjobs'.
+## It also results in fewer RTM graphs, if you like to look at those.
+## Here's an example of launching 16 workers at a time, rather than one-by-one.
+#
+#jobqueue:
+#  lsf:
+#    processes: 16
+#    cores: 16
+#    memory: 240GB # 15GB * 16 cores
+#    walltime: '01:00'
+#    log-directory: dask-worker-logs
+#    local-directory: /scratch/<INSERT YOUR USERNAME HERE>
