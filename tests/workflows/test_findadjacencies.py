@@ -75,11 +75,11 @@ def test_findadjacencies(setup_findadjacencies):
     assert (1,2) in label_pairs
     assert (3,4) in label_pairs
     
-    assert output_df.query('label_a == 1')['z'].iloc[0] == 30
-    assert output_df.query('label_a == 1')['forwardness'].iloc[0] == True
+    assert output_df.query('label_a == 1')['za'].iloc[0] == 30
+    assert output_df.query('label_a == 1')['zb'].iloc[0] == 31
 
-    assert output_df.query('label_a == 3')['z'].iloc[0] == 140
-    assert output_df.query('label_a == 3')['forwardness'].iloc[0] == False
+    assert output_df.query('label_a == 3')['za'].iloc[0] == 141
+    assert output_df.query('label_a == 3')['zb'].iloc[0] == 140 # not 'forward'
 
 
 def test_findadjacencies_subset_bodies(setup_findadjacencies):
@@ -111,8 +111,8 @@ def test_findadjacencies_subset_bodies(setup_findadjacencies):
     #assert output_df.query('label_a == 1')['z'].iloc[0] == 30
     #assert output_df.query('label_a == 1')['forwardness'].iloc[0] == True
 
-    assert output_df.query('label_a == 3')['z'].iloc[0] == 140
-    assert output_df.query('label_a == 3')['forwardness'].iloc[0] == False
+    assert output_df.query('label_a == 3')['za'].iloc[0] == 141
+    assert output_df.query('label_a == 3')['zb'].iloc[0] == 140
 
 
 def test_findadjacencies_subset_edges(setup_findadjacencies):
@@ -146,8 +146,8 @@ def test_findadjacencies_subset_edges(setup_findadjacencies):
     #assert output_df.query('label_a == 1')['z'].iloc[0] == 30
     #assert output_df.query('label_a == 1')['forwardness'].iloc[0] == True
 
-    assert output_df.query('label_a == 3')['z'].iloc[0] == 140
-    assert output_df.query('label_a == 3')['forwardness'].iloc[0] == False
+    assert output_df.query('label_a == 3')['za'].iloc[0] == 141
+    assert output_df.query('label_a == 3')['zb'].iloc[0] == 140
 
 
 def test_findadjacencies_solid_volume():
@@ -188,7 +188,6 @@ def test_findadjacencies_solid_volume():
     with pytest.raises(RuntimeError):
         _execution_dir, _workflow = launch_flow(template_dir, 1)
 
-    
 
 if __name__ == "__main__":
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"

@@ -104,15 +104,23 @@ class FindAdjacencies(Workflow):
         is_supervoxels = False
         if isinstance(volume_service.base_service, DvidVolumeService):
             is_supervoxels = volume_service.base_service.supervoxels
-        
-        subset_bodies = load_body_list(options["subset-labels"], is_supervoxels)
+
         subset_requirement = options["subset-labels-requirement"]
+
+        # Load body list and eliminate duplicates
+        subset_bodies = load_body_list(options["subset-labels"], is_supervoxels)
+        subset_bodies = set(subset_bodies)
+        if len(subset_bodies) == 1 and subset_requirement == 2:
+            raise RuntimeError("Only one body was listed in subset-bodies.  No edges would be found!")
         
         subset_edges = np.zeros((0,2), np.uint64)
         if options["subset-edges"]:
             subset_edges = pd.read_csv(options["subset-edges"], dtype=np.uint64, header=0, names=['label_a', 'label_b']).values
             subset_edges.sort(axis=1)
         subset_edges = pd.DataFrame(subset_edges, columns=['label_a', 'label_b'], dtype=np.uint64)
+
+        # Remove invalid edges and eliminate duplicates
+        subset_edges = subset_edges.query('label_a != label_b').drop_duplicates(['label_a', 'label_b'])
 
         with Timer("Initializing BrickWall", logger):
             # Aim for 2 GB RDD partitions when loading segmentation
@@ -202,8 +210,9 @@ def find_adjacencies_in_brick(brick, subset_bodies=[], subset_requirement=1, sub
     # Translate coordinates to global space
     best_edges_df.loc[:, ['z', 'y', 'x']] += brick.physical_box[0]
 
-    # These edges are all directly adjacent.
-    best_edges_df['distance'] = np.float32(0.0)
+    # Translate coordinates to global space
+    best_edges_df.loc[:, ['za', 'ya', 'xa']] += brick.physical_box[0]
+    best_edges_df.loc[:, ['zb', 'yb', 'xb']] += brick.physical_box[0]
 
     # Restore to original label set
     best_edges_df['label_a'] = reverse_mapper.apply(best_edges_df['label_a'].values)
@@ -237,7 +246,8 @@ def _find_best_edges(volume, subset_bodies, subset_requirement, subset_edges):
     edges_y['axis'] = 'y'
     edges_x['axis'] = 'x'
     
-    all_edges_df = pd.concat([edges_z, edges_y, edges_x], ignore_index=True)
+    all_edges = list(filter(len, [edges_z, edges_y, edges_x]))
+    all_edges_df = pd.concat(all_edges, ignore_index=True)
     all_edges_df.rename(columns={'sp1': 'label_a', 'sp2': 'label_b'}, inplace=True)
     del all_edges_df['edge_label']
 
@@ -265,14 +275,35 @@ def _find_best_edges(volume, subset_bodies, subset_requirement, subset_edges):
     if len(all_edges_df) == 0:
         return None # No edges left after filtering
 
+    all_edges_df['distance'] = np.float32(1.0)
+
     # Find most-central edge in each group    
-    best_edges_df = select_central_edges(all_edges_df)
+    best_edges_df = select_central_edges(all_edges_df, ['z', 'y', 'x'])
+
+    # Compute the 'right-hand' coordinates
+    best_edges_df.rename(columns={'z': 'za', 'y': 'ya', 'x': 'xa'}, inplace=True)
+    best_edges_df['zb'] = best_edges_df['za']
+    best_edges_df['yb'] = best_edges_df['ya']
+    best_edges_df['xb'] = best_edges_df['xa']
+
+    z_edges = (best_edges_df['axis'] == 'z')
+    y_edges = (best_edges_df['axis'] == 'y')
+    x_edges = (best_edges_df['axis'] == 'x')
+
+    best_edges_df.loc[z_edges, 'zb'] += 1
+    best_edges_df.loc[y_edges, 'yb'] += 1
+    best_edges_df.loc[x_edges, 'xb'] += 1
+
+    swap_df_cols(best_edges_df, ['z', 'y', 'x'], ~(best_edges_df['forwardness']), ['a', 'b'])
+    del best_edges_df['forwardness']
+    del best_edges_df['axis']
+
     return best_edges_df
 
 
-def select_central_edges(all_edges_df):
+def select_central_edges(all_edges_df, coord_cols=['za', 'ya', 'xa']):
     """
-    Given a DataFrame with at least columns [label_a, label_b, z, y, x],
+    Given a DataFrame with at least columns [label_a, label_b, *coord_cols, distance],
     select the row with the most-central point for each
     unique [label_a, label_b] pair.
 
@@ -294,9 +325,11 @@ def select_central_edges(all_edges_df):
     ##
     ## Compute (weighted) centroids
     ##
-    all_edges_df['cz'] = all_edges_df.eval('z * edge_area')
-    all_edges_df['cy'] = all_edges_df.eval('y * edge_area')
-    all_edges_df['cx'] = all_edges_df.eval('x * edge_area')
+    Z, Y, X = coord_cols
+    
+    all_edges_df['cz'] = all_edges_df.eval(f'{Z} * edge_area')
+    all_edges_df['cy'] = all_edges_df.eval(f'{Y} * edge_area')
+    all_edges_df['cx'] = all_edges_df.eval(f'{X} * edge_area')
 
     centroids_df = ( all_edges_df[['label_a', 'label_b', 'cz', 'cy', 'cx', 'edge_area']]
                        .groupby(['label_a', 'label_b']).sum() )
@@ -313,11 +346,11 @@ def select_central_edges(all_edges_df):
     all_edges_df = all_edges_df.merge(centroids_df, on=['label_a', 'label_b'], how='left')
     
     # Calculate each distance to the centroid
-    all_edges_df['distance'] = all_edges_df.eval('sqrt( (z-cz)**2 + (y-cy)**2 + (x-cx)**2 )')
+    all_edges_df['distance_to_centroid'] = all_edges_df.eval(f'sqrt( ({Z}-cz)**2 + ({Y}-cy)**2 + ({X}-cx)**2 )')
 
     # Find the best row for each edge (min distance)
-    min_distance_df = all_edges_df[['label_a', 'label_b', 'distance']].groupby(['label_a', 'label_b']).idxmin()
-    min_distance_df.rename(columns={'distance': 'best_row'}, inplace=True)
+    min_distance_df = all_edges_df[['label_a', 'label_b', 'distance_to_centroid']].groupby(['label_a', 'label_b']).idxmin()
+    min_distance_df.rename(columns={'distance_to_centroid': 'best_row'}, inplace=True)
 
     # Select the best rows from the original data and return
     best_edges_df = all_edges_df.loc[min_distance_df['best_row'], orig_columns]
