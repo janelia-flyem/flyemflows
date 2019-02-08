@@ -22,10 +22,10 @@ def setup_findadjacencies():
 
     _ = 0
     #           0 1 2 3  4 5 6 7
-    volume = [[[_,_,_,_, _,_,_,_], # 0
+    volume = [[[_,_,_,_, _,6,6,6], # 0
                [_,1,1,2, 2,_,6,_], # 1
                [_,1,1,2, 2,_,_,_], # 2
-               [_,1,1,2, 2,_,7,_], # 3
+               [_,1,1,2, 8,_,7,7], # 3
 
                [_,_,_,_, _,_,_,_], # 4
                [_,4,4,4, 4,_,_,_], # 5
@@ -185,6 +185,57 @@ def test_findadjacencies_solid_volume():
 
     with pytest.raises(RuntimeError):
         _execution_dir, _workflow = launch_flow(template_dir, 1)
+
+
+def test_findadjacencies_closest_approach_subset_edges(setup_findadjacencies):
+    template_dir, config, _volume = setup_findadjacencies
+
+    subset_edges = pd.DataFrame([[4,3], [7,6]], columns=['label_a', 'label_b'])
+    subset_edges.to_csv(f'{template_dir}/subset-edges.csv', index=False, header=True)
+    
+    # Overwrite config with updated settings.
+    config = copy.copy(config)
+    config["findadjacencies"]["subset-edges"] = 'subset-edges.csv'
+    config["findadjacencies"]["find-closest"] = True
+
+    _impl_test_findadjacencies_closest_approach(template_dir, config)
+
+
+def test_findadjacencies_closest_approach_subset_labels(setup_findadjacencies):
+    template_dir, config, _volume = setup_findadjacencies
+
+    # Overwrite config with updated settings.
+    config = copy.copy(config)
+    config["findadjacencies"]["subset-labels"] = [3,4,6,7]
+    config["findadjacencies"]["find-closest"] = True
+
+    _impl_test_findadjacencies_closest_approach(template_dir, config)
+
+
+def _impl_test_findadjacencies_closest_approach(template_dir, config):
+    with open(f"{template_dir}/workflow.yaml", 'w') as f:
+        yaml.dump(config, f)
+
+    execution_dir, workflow = launch_flow(template_dir, 1)
+    
+    final_config = workflow.config
+    output_df = pd.read_csv(f'{execution_dir}/{final_config["findadjacencies"]["output-table"]}')
+
+    label_pairs = output_df[['label_a', 'label_b']].values
+    assert 0 not in label_pairs.flat
+
+    label_pairs = list(map(tuple, label_pairs))
+    assert (1,2) not in label_pairs
+    assert (3,4) in label_pairs
+    assert (6,7) in label_pairs
+    
+    assert (output_df.query('label_a == 3')[['za', 'zb']].values[0] == 0).all()
+    assert (output_df.query('label_a == 3')[['ya', 'yb']].values[0] == (6,5)).all() # not 'forward'
+    assert (output_df.query('label_a == 3')[['xa', 'xb']].values[0] == 2).all()
+
+    assert (output_df.query('label_a == 6')[['za', 'zb']].values[0] == 0).all()
+    assert (output_df.query('label_a == 6')[['ya', 'yb']].values[0] == (1,3)).all() # not 'forward'
+    assert (output_df.query('label_a == 6')[['xa', 'xb']].values[0] == 6).all()
 
 
 if __name__ == "__main__":

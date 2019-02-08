@@ -1,13 +1,14 @@
 import os
 import copy
 import logging
+from itertools import combinations
 
 import vigra
 import numpy as np
 import pandas as pd
 
 from dvid_resource_manager.client import ResourceManagerClient
-from neuclease.util import Timer, Grid
+from neuclease.util import Timer, Grid, swap_df_cols, closest_approach
 
 from ilastikrag import Rag
 from dvidutils import LabelMapper
@@ -61,6 +62,12 @@ class FindAdjacencies(Workflow):
                                "given as a CSV with columns: label_a,label_b.\n",
                 "type": "string",
                 "default": ""
+            },
+            "find-closest": {
+                "description": "For body pairs that do not physically touch, find the points at which they come closest to eachother.\n"
+                               "Only permitted when using subset-labels or subset-edges.\n",
+                "type": "boolean",
+                "default": False
             },
             "output-table": {
                 "description": "Results file.  Must be .csv for now, and must contain at least columns x,y,z",
@@ -122,6 +129,13 @@ class FindAdjacencies(Workflow):
         # Remove invalid edges and eliminate duplicates
         subset_edges = subset_edges.query('label_a != label_b').drop_duplicates(['label_a', 'label_b'])
 
+        find_closest = options["find-closest"]
+        if find_closest and (len(subset_bodies) == 0 and len(subset_edges) == 0):
+            raise RuntimeError("Can't use find-closest unless you provide a list of subset-edges or subset-bodies.")
+        
+        if find_closest and subset_requirement != 2:
+            raise RuntimeError("Can't use find-closest unless subset-requirement == 2")
+
         with Timer("Initializing BrickWall", logger):
             # Aim for 2 GB RDD partitions when loading segmentation
             GB = 2**30
@@ -134,7 +148,7 @@ class FindAdjacencies(Workflow):
 
         with Timer("Finding adjacencies in bricks", logger):
             def find_adj(brick):
-                return find_adjacencies_in_brick(brick, subset_bodies, subset_requirement, subset_edges)
+                return find_adjacencies_in_brick(brick, subset_bodies, subset_requirement, subset_edges, find_closest)
             
             brick_edge_tables = brickwall.bricks.map(find_adj).compute()
             brick_edge_tables = list(filter(lambda t: t is not None, brick_edge_tables))
@@ -143,13 +157,27 @@ class FindAdjacencies(Workflow):
 
         with Timer("Combining brick results", logger):
             all_edges_df = pd.concat(brick_edge_tables, ignore_index=True)
-            best_edges_df = select_central_edges(all_edges_df)
+            
+            adjacent_edges_df = all_edges_df.query('distance == 1.0')
+            best_adj_edges_df = select_central_edges(adjacent_edges_df, ['za', 'ya', 'xa'])
+
+            if not find_closest:
+                best_edges_df = best_adj_edges_df
+            else:
+                # Find the non-adjacent edges that had no adjacent edge
+                nonadjacent_edges_df = all_edges_df.merge(best_adj_edges_df[['label_a', 'label_b']],
+                                                          'left', ['label_a', 'label_b'],
+                                                          indicator='source').query("source == 'left_only'")
+                del nonadjacent_edges_df['source']
+                
+                best_nonadj_edges_df = select_closest_edges(nonadjacent_edges_df)
+                best_edges_df = pd.concat((best_adj_edges_df, best_nonadj_edges_df))
 
         with Timer("Writing edges", logger):
             best_edges_df.to_csv(options["output-table"], header=True, index=False)
 
 
-def find_adjacencies_in_brick(brick, subset_bodies=[], subset_requirement=1, subset_edges=[]):
+def find_adjacencies_in_brick(brick, subset_bodies=[], subset_requirement=1, subset_edges=[], find_closest=False):
     """
     Find all pairs of adjacent labels in the given brick,
     and find the central-most point along the edge between them.
@@ -187,6 +215,7 @@ def find_adjacencies_in_brick(brick, subset_bodies=[], subset_requirement=1, sub
     
     mapper = LabelMapper(brick_labels, consecutive_labels)
     reverse_mapper = LabelMapper(consecutive_labels, brick_labels)
+
     remapped_subset_bodies = None
     if len(subset_bodies) > 0:
         subset_bodies = set(brick_labels).intersection(subset_bodies)
@@ -207,8 +236,24 @@ def find_adjacencies_in_brick(brick, subset_bodies=[], subset_requirement=1, sub
     remapped_brick = mapper.apply(brick.volume)
     best_edges_df = _find_best_edges(remapped_brick, remapped_subset_bodies, subset_requirement, remapped_subset_edges)
 
-    # Translate coordinates to global space
-    best_edges_df.loc[:, ['z', 'y', 'x']] += brick.physical_box[0]
+    if find_closest:
+        assert subset_requirement == 2, \
+            "Can't use 'find_closest' mode unless subset_requirement == 2"
+
+        ignored_edges = None
+        if best_edges_df is not None:
+            ignored_edges = best_edges_df[['label_a', 'label_b']]
+        
+        close_edges_df = _find_closest_approaches(remapped_brick, remapped_subset_bodies, remapped_subset_edges, ignored_edges)
+        if close_edges_df is not None:
+            if best_edges_df is None:
+                best_edges_df = close_edges_df
+            else:
+                assert set(best_edges_df.columns) == set(close_edges_df.columns)
+                best_edges_df = pd.concat((best_edges_df, close_edges_df))
+
+    if best_edges_df is None:
+        return None
 
     # Translate coordinates to global space
     best_edges_df.loc[:, ['za', 'ya', 'xa']] += brick.physical_box[0]
@@ -217,8 +262,100 @@ def find_adjacencies_in_brick(brick, subset_bodies=[], subset_requirement=1, sub
     # Restore to original label set
     best_edges_df['label_a'] = reverse_mapper.apply(best_edges_df['label_a'].values)
     best_edges_df['label_b'] = reverse_mapper.apply(best_edges_df['label_b'].values)
+
+    swap_df_cols(best_edges_df, None, best_edges_df.eval('label_a > label_b'), ['a', 'b'])
     
     return best_edges_df
+
+
+def _find_closest_approaches(volume, subset_bodies, subset_edges, ignored_edges):
+    """
+    Given a volume and a list of list of edges (body pairs),
+    Find the points at which the two bodies come closest to one
+    another in the volume.
+    
+    Note:
+        None of the body pairs of interest should actually touch each
+        other in the volume.  Use ``ignored_edges`` to explicitly avoid
+        analyzing bodies that actually touch.
+    
+    Args:
+        volume:
+            3D label volume, np.uint32
+            
+        subset_bodies:
+            Consider all pairwise combinations of bodies in this list
+            and use it instead of subset_edges.
+            Cannot be used with subset_edges.
+        
+        subset_edges:
+            The list of body pairs to analyze.  Cannot be used with subset_bodies.
+        
+        ignored_edges:
+            Explicitly ignore any edges (body pairs) in this list.
+    
+    Returns:
+        DataFrame with columns:
+            [label_a, label_b, za, ya, xa, zb, yb, xb, distance, edge_area]
+        Note:
+            ``edge_area`` will be 0 for all rows, since none of the body pairs
+            physically touch in the volume (a precondition for the input).
+    """
+    assert volume.ndim == 3
+    assert volume.dtype == np.uint32
+    assert (subset_bodies is None) or (subset_edges is None), \
+        "You can't use subset-bodies and subset-edges.  Pick one or the other."
+    assert (subset_bodies is not None) or (subset_edges is not None), \
+        "You can't use find-closest-approaches unless you are using subset-edges or subset-bodies."
+
+    if subset_bodies and len(subset_bodies) == 1:
+        return None
+    
+    if subset_bodies is not None:
+        assert isinstance(subset_bodies, set)
+        subset_edges = list(combinations(subset_bodies, 2))
+        subset_edges = np.array(subset_edges)
+        subset_edges.sort(axis=1)
+        subset_edges = pd.DataFrame(subset_edges, columns=['label_a', 'label_b'])
+
+    if ignored_edges is not None:
+        # Normalize
+        ignored_edges = ignored_edges.copy()
+        swap_df_cols(ignored_edges, None, ignored_edges.eval('label_a > label_b') )
+        swap_df_cols(subset_edges, None, subset_edges.eval('label_a > label_b') )
+    
+        # Discard edges that should be ignored (i.e. they were already found by other means)
+        subset_edges = subset_edges.merge(ignored_edges, 'left', ['label_a', 'label_b'],
+                                          indicator='source').query("source == 'left_only'")
+        subset_edges.drop(columns=['source'], inplace=True)
+    
+    approach_rows = []
+    for row in subset_edges.itertuples(index=False):
+        coord_a, coord_b, distance = closest_approach(volume, row.label_a, row.label_b, check_present=False)
+        approach_rows.append((row.label_a, row.label_b, *coord_a, *coord_b, distance))
+    
+    if len(approach_rows) == 0:
+        return None
+    
+    df = pd.DataFrame(approach_rows, columns=['label_a', 'label_b', 'za', 'ya', 'xa', 'zb', 'yb', 'xb', 'distance'])
+    df['label_a'] = df['label_a'].astype(np.uint32)
+    df['label_b'] = df['label_b'].astype(np.uint32)
+    df['za'] = df['za'].astype(np.int32)
+    df['ya'] = df['ya'].astype(np.int32)
+    df['xa'] = df['xa'].astype(np.int32)
+    df['zb'] = df['zb'].astype(np.int32)
+    df['yb'] = df['yb'].astype(np.int32)
+    df['xb'] = df['xb'].astype(np.int32)
+    df['distance'] = df['distance'].astype(np.float32)
+    
+    assert not (df['distance'] <= 1.0).any(), \
+        "I didn't expect you to call this function with objects that physically touch!"
+    
+    # These objects don't touch
+    # (Don't call this function for objects that do touch)
+    df['edge_area'] = np.int32(0)
+    
+    return df[['label_a', 'label_b', 'za', 'ya', 'xa', 'zb', 'yb', 'xb', 'distance', 'edge_area']]
 
 
 def _find_best_edges(volume, subset_bodies, subset_requirement, subset_edges):
@@ -298,7 +435,7 @@ def _find_best_edges(volume, subset_bodies, subset_requirement, subset_edges):
     del best_edges_df['forwardness']
     del best_edges_df['axis']
 
-    return best_edges_df
+    return best_edges_df[['label_a', 'label_b', 'za', 'ya', 'xa', 'zb', 'yb', 'xb', 'distance', 'edge_area']]
 
 
 def select_central_edges(all_edges_df, coord_cols=['za', 'ya', 'xa']):
@@ -316,8 +453,8 @@ def select_central_edges(all_edges_df, coord_cols=['za', 'ya', 'xa']):
     
     Any extra columns are passed on in the output.
     """
+    all_edges_df = all_edges_df.copy()
     if 'edge_area' not in all_edges_df:
-        all_edges_df = all_edges_df.copy()
         all_edges_df['edge_area'] = np.int32(1)
 
     orig_columns = all_edges_df.columns
@@ -353,5 +490,14 @@ def select_central_edges(all_edges_df, coord_cols=['za', 'ya', 'xa']):
     min_distance_df.rename(columns={'distance_to_centroid': 'best_row'}, inplace=True)
 
     # Select the best rows from the original data and return
-    best_edges_df = all_edges_df.loc[min_distance_df['best_row'], orig_columns]
+    best_edges_df = all_edges_df.loc[min_distance_df['best_row'], orig_columns].copy()
     return best_edges_df
+
+
+def select_closest_edges(all_edges_df):
+    """
+    Filter the given edges to include only the edge with
+    the minimum distance for each [label_a,label_b] pair.
+    """
+    min_selections = all_edges_df.groupby(['label_a', 'label_b']).agg({'distance': 'idxmin'})
+    return all_edges_df.loc[min_selections['distance'].values]
