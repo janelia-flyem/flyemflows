@@ -19,15 +19,21 @@ CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'local-cluster')
 @pytest.fixture
 def setup_findadjacencies():
     template_dir = tempfile.mkdtemp(suffix="findadjacencies-template")
-    
-    # Create volume
-    volume = np.zeros((256,256,256), np.uint64)
-    volume[30,  0:192, 0:64] = 1
-    volume[31,  0:192, 0:64] = 2
 
-    volume[140,  0:192, 0:64] = 4
-    volume[141,  0:192, 0:64] = 3
-    
+    _ = 0
+    #           0 1 2 3  4 5 6 7
+    volume = [[[_,_,_,_, _,_,_,_], # 0
+               [_,1,1,2, 2,_,6,_], # 1
+               [_,1,1,2, 2,_,_,_], # 2
+               [_,1,1,2, 2,_,7,_], # 3
+
+               [_,_,_,_, _,_,_,_], # 4
+               [_,4,4,4, 4,_,_,_], # 5
+               [_,3,3,3, 3,_,_,_], # 6
+               [_,_,_,_, _,_,_,_]]]# 7
+    #           0 1 2 3  4 5 6 7
+
+    volume = np.array(volume, np.uint64)
     volume_path = f"{template_dir}/volume.h5"
     with h5py.File(volume_path, 'w') as f:
         f['volume'] = volume
@@ -42,7 +48,7 @@ def setup_findadjacencies():
                 "dataset": "volume"
             },
             "geometry": {
-                "message-block-shape": [64,64,64]
+                "message-block-shape": [4,4,1]
             },
         },
         
@@ -75,11 +81,13 @@ def test_findadjacencies(setup_findadjacencies):
     assert (1,2) in label_pairs
     assert (3,4) in label_pairs
     
-    assert output_df.query('label_a == 1')['za'].iloc[0] == 30
-    assert output_df.query('label_a == 1')['zb'].iloc[0] == 31
+    assert (output_df.query('label_a == 1')[['za', 'zb']].values[0] == 0).all()
+    assert (output_df.query('label_a == 1')[['ya', 'yb']].values[0] == 2).all()
+    assert (output_df.query('label_a == 1')[['xa', 'xb']].values[0] == (2,3)).all()
 
-    assert output_df.query('label_a == 3')['za'].iloc[0] == 141
-    assert output_df.query('label_a == 3')['zb'].iloc[0] == 140 # not 'forward'
+    assert (output_df.query('label_a == 3')[['za', 'zb']].values[0] == 0).all()
+    assert (output_df.query('label_a == 3')[['ya', 'yb']].values[0] == (6,5)).all() # not 'forward'
+    assert (output_df.query('label_a == 3')[['xa', 'xb']].values[0] == 2).all()
 
 
 def test_findadjacencies_subset_bodies(setup_findadjacencies):
@@ -98,21 +106,16 @@ def test_findadjacencies_subset_bodies(setup_findadjacencies):
     final_config = workflow.config
     output_df = pd.read_csv(f'{execution_dir}/{final_config["findadjacencies"]["output-table"]}')
 
-    #print(output_df.columns)
-    #print(output_df)
-
     label_pairs = output_df[['label_a', 'label_b']].values
     assert 0 not in label_pairs.flat
 
     label_pairs = list(map(tuple, label_pairs))
     assert (1,2) not in label_pairs
     assert (3,4) in label_pairs
-    
-    #assert output_df.query('label_a == 1')['z'].iloc[0] == 30
-    #assert output_df.query('label_a == 1')['forwardness'].iloc[0] == True
 
-    assert output_df.query('label_a == 3')['za'].iloc[0] == 141
-    assert output_df.query('label_a == 3')['zb'].iloc[0] == 140
+    assert (output_df.query('label_a == 3')[['za', 'zb']].values[0] == 0).all()
+    assert (output_df.query('label_a == 3')[['ya', 'yb']].values[0] == (6,5)).all() # not 'forward'
+    assert (output_df.query('label_a == 3')[['xa', 'xb']].values[0] == 2).all()
 
 
 def test_findadjacencies_subset_edges(setup_findadjacencies):
@@ -133,9 +136,6 @@ def test_findadjacencies_subset_edges(setup_findadjacencies):
     final_config = workflow.config
     output_df = pd.read_csv(f'{execution_dir}/{final_config["findadjacencies"]["output-table"]}')
 
-    #print(output_df.columns)
-    #print(output_df)
-
     label_pairs = output_df[['label_a', 'label_b']].values
     assert 0 not in label_pairs.flat
 
@@ -143,11 +143,9 @@ def test_findadjacencies_subset_edges(setup_findadjacencies):
     assert (1,2) not in label_pairs
     assert (3,4) in label_pairs
     
-    #assert output_df.query('label_a == 1')['z'].iloc[0] == 30
-    #assert output_df.query('label_a == 1')['forwardness'].iloc[0] == True
-
-    assert output_df.query('label_a == 3')['za'].iloc[0] == 141
-    assert output_df.query('label_a == 3')['zb'].iloc[0] == 140
+    assert (output_df.query('label_a == 3')[['za', 'zb']].values[0] == 0).all()
+    assert (output_df.query('label_a == 3')[['ya', 'yb']].values[0] == (6,5)).all() # not 'forward'
+    assert (output_df.query('label_a == 3')[['xa', 'xb']].values[0] == 2).all()
 
 
 def test_findadjacencies_solid_volume():
