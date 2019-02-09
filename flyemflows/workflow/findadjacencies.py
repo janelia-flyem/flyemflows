@@ -8,7 +8,8 @@ import numpy as np
 import pandas as pd
 
 from dvid_resource_manager.client import ResourceManagerClient
-from neuclease.util import Timer, Grid, swap_df_cols, closest_approach
+from neuclease.util import Timer, Grid, swap_df_cols, closest_approach, SparseBlockMask
+from neuclease.dvid import fetch_sparsevol_coarse_threaded
 
 from ilastikrag import Rag
 from dvidutils import LabelMapper
@@ -104,6 +105,7 @@ class FindAdjacencies(Workflow):
         input_config = self.config["input"]
         options = self.config["findadjacencies"]
         resource_config = self.config["resource-manager"]
+        subset_requirement = options["subset-labels-requirement"]
 
         resource_mgr_client = ResourceManagerClient(resource_config["server"], resource_config["port"])
         volume_service = VolumeService.create_from_config(input_config, os.getcwd(), resource_mgr_client)
@@ -112,12 +114,10 @@ class FindAdjacencies(Workflow):
         if isinstance(volume_service.base_service, DvidVolumeService):
             is_supervoxels = volume_service.base_service.supervoxels
 
-        subset_requirement = options["subset-labels-requirement"]
-
         # Load body list and eliminate duplicates
-        subset_bodies = load_body_list(options["subset-labels"], is_supervoxels)
-        subset_bodies = set(subset_bodies)
-        if len(subset_bodies) == 1 and subset_requirement == 2:
+        subset_labels = load_body_list(options["subset-labels"], is_supervoxels)
+        subset_labels = set(subset_labels)
+        if len(subset_labels) == 1 and subset_requirement == 2:
             raise RuntimeError("Only one body was listed in subset-bodies.  No edges would be found!")
         
         subset_edges = np.zeros((0,2), np.uint64)
@@ -130,25 +130,17 @@ class FindAdjacencies(Workflow):
         subset_edges = subset_edges.query('label_a != label_b').drop_duplicates(['label_a', 'label_b'])
 
         find_closest = options["find-closest"]
-        if find_closest and (len(subset_bodies) == 0 and len(subset_edges) == 0):
+        if find_closest and (len(subset_labels) == 0 and len(subset_edges) == 0):
             raise RuntimeError("Can't use find-closest unless you provide a list of subset-edges or subset-bodies.")
         
         if find_closest and subset_requirement != 2:
             raise RuntimeError("Can't use find-closest unless subset-requirement == 2")
 
-        with Timer("Initializing BrickWall", logger):
-            # Aim for 2 GB RDD partitions when loading segmentation
-            GB = 2**30
-            target_partition_size_voxels = 2 * GB // np.uint64().nbytes
-            brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.client, target_partition_size_voxels)
-
-            if options["use-halo"]:
-                overlapping_grid = Grid(brickwall.grid.block_shape, halo=1)
-                brickwall = brickwall.realign_to_new_grid(overlapping_grid)
+        brickwall = self.init_brickwall(volume_service, subset_labels, subset_edges, options["use-halo"])
 
         with Timer("Finding adjacencies in bricks", logger):
             def find_adj(brick):
-                return find_adjacencies_in_brick(brick, subset_bodies, subset_requirement, subset_edges, find_closest)
+                return find_adjacencies_in_brick(brick, subset_labels, subset_requirement, subset_edges, find_closest)
             
             brick_edge_tables = brickwall.bricks.map(find_adj).compute()
             brick_edge_tables = list(filter(lambda t: t is not None, brick_edge_tables))
@@ -176,6 +168,51 @@ class FindAdjacencies(Workflow):
         with Timer("Writing edges", logger):
             best_edges_df.to_csv(options["output-table"], header=True, index=False)
 
+
+    def init_brickwall(self, volume_service, subset_labels, subset_edges, use_halo):
+        sbm = None
+        if isinstance(volume_service, DvidVolumeService):
+            labels = set()
+            if len(subset_labels) != 0:
+                labels |= subset_labels
+            
+            if len(subset_edges) != 0:
+                labels |= set(pd.unique(subset_edges[['label_a', 'label_b']].values.flat))
+    
+            if labels:
+                # Fetch all sparseblocks for the subset of bodies and combine them into a block mask
+                coords_dict = fetch_sparsevol_coarse_threaded( *volume_service.instance_triple, 
+                                                               labels,
+                                                               volume_service.supervoxels,
+                                                               num_threads=8 )
+
+                first_coord = next(iter(coords_dict.values()))[0]
+                min_coord = max_coord = first_coord
+                for coords in coords_dict.values():
+                    min_coord = np.minimum(min_coord, coords.min(axis=0))
+                    max_coord = np.maximum(max_coord, coords.max(axis=0))
+                
+                mask_box = np.array((min_coord, 1+max_coord))
+                mask_shape = mask_box[1] - mask_box[0]
+                mask = np.zeros(mask_shape, np.uint16)
+                for coords in coords_dict.values():
+                    coords = coords - mask_box[0]
+                    mask[(*coords.transpose(),)] += 1
+                
+                # We're only interested in blocks that contain at least two of our objects of interest.
+                sbm = SparseBlockMask((mask > 1), 64*mask_box, 64)
+
+        with Timer("Initializing BrickWall", logger):
+            # Aim for 2 GB RDD partitions when loading segmentation
+            GB = 2**30
+            target_partition_size_voxels = 2 * GB // np.uint64().nbytes
+            brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.client, target_partition_size_voxels, sbm)
+
+            if use_halo:
+                overlapping_grid = Grid(brickwall.grid.block_shape, halo=1)
+                brickwall = brickwall.realign_to_new_grid(overlapping_grid)
+
+        return brickwall
 
 def find_adjacencies_in_brick(brick, subset_bodies=[], subset_requirement=1, subset_edges=[], find_closest=False):
     """
