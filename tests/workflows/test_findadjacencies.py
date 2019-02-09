@@ -99,7 +99,7 @@ def test_findadjacencies_subset_bodies(setup_findadjacencies):
     template_dir, config, _volume = setup_findadjacencies
     
     # Overwrite config with updated settings.
-    config = copy.copy(config)
+    config = copy.deepcopy(config)
     config["findadjacencies"]["subset-labels"] = [3]
     config["findadjacencies"]["subset-labels-requirement"] = 1
 
@@ -130,7 +130,7 @@ def test_findadjacencies_subset_edges(setup_findadjacencies):
     subset_edges.to_csv(f'{template_dir}/subset-edges.csv', index=False, header=True)
     
     # Overwrite config with updated settings.
-    config = copy.copy(config)
+    config = copy.deepcopy(config)
     config["findadjacencies"]["subset-edges"] = 'subset-edges.csv'
 
     with open(f"{template_dir}/workflow.yaml", 'w') as f:
@@ -199,7 +199,7 @@ def test_findadjacencies_closest_approach_subset_edges(setup_findadjacencies):
     subset_edges.to_csv(f'{template_dir}/subset-edges.csv', index=False, header=True)
     
     # Overwrite config with updated settings.
-    config = copy.copy(config)
+    config = copy.deepcopy(config)
     config["findadjacencies"]["subset-edges"] = 'subset-edges.csv'
     config["findadjacencies"]["find-closest"] = True
 
@@ -303,7 +303,7 @@ def setup_dvid_segmentation_input(setup_dvid_repo):
 
 def test_findadjacencies_from_dvid_sparse_labels(setup_dvid_segmentation_input):
     template_dir, config, _volume, _dvid_address, _repo_uuid = setup_dvid_segmentation_input
-    config = copy.copy(config)
+    config = copy.deepcopy(config)
     config["findadjacencies"]["subset-labels"] = [1,2,3,4,6,7,8]
     _impl_test_findadjacencies_from_dvid_sparse(template_dir, config)
 
@@ -315,7 +315,7 @@ def test_findadjacencies_from_dvid_sparse_edges(setup_dvid_segmentation_input):
     subset_edges.to_csv(f'{template_dir}/subset-edges.csv', index=False, header=True)
     
     # Overwrite config with updated settings.
-    config = copy.copy(config)
+    config = copy.deepcopy(config)
     config["findadjacencies"]["subset-edges"] = 'subset-edges.csv'
 
     _impl_test_findadjacencies_from_dvid_sparse(template_dir, config)
