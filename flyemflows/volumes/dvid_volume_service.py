@@ -267,6 +267,10 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         return self._instance_name
 
     @property
+    def instance_triple(self):
+        return (self.server, self.uuid, self.instance_name)
+
+    @property
     def dtype(self):
         return self._dtype
 

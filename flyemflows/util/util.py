@@ -17,6 +17,7 @@ from subprocess import Popen, PIPE, TimeoutExpired
 import psutil
 import scipy.ndimage
 import numpy as np
+from skimage.util import view_as_blocks
 
 from dvidutils import downsample_labels
 from neuclease.util import Timer, parse_timestamp
@@ -69,6 +70,19 @@ def downsample(volume, factor, method):
         return downsample_labels(volume, factor, True)
 
     raise AssertionError("Shouldn't get here.")
+
+
+def upsample(volume, factor):
+    """
+    Upsample the volume into a larger volume by duplicating values.
+    """
+    ndim = volume.ndim
+    upsampled_data = np.empty( np.array(volume.shape) * factor, dtype=volume.dtype )
+    v = view_as_blocks(upsampled_data, ndim * (factor,))
+    
+    slicing = ((slice(None),) * ndim) + ((None,) * ndim)
+    v[:] = volume[slicing]
+    return upsampled_data
 
 def get_localhost_ip_address():
     """
