@@ -2,7 +2,7 @@ import numpy as np
 from skimage.util.shape import view_as_blocks
 
 from neuclease.util import box_to_slicing
-from ..util import downsample
+from ..util import downsample, upsample
 
 from . import VolumeServiceReader
 
@@ -116,11 +116,7 @@ class ScaledVolumeService(VolumeServiceReader):
             orig_box_zyx = downsample_box(box_zyx, np.array(3*(upsample_factor,)))
             orig_data = self.original_volume_service.get_subvolume(orig_box_zyx, best_base_scale)
 
-            orig_shape = np.array(orig_data.shape)
-            upsampled_data = np.empty( orig_shape * upsample_factor, dtype=self.dtype )
-            v = view_as_blocks(upsampled_data, 3*(upsample_factor,))
-            v[:] = orig_data[:,:,:,None, None, None]
-
+            upsampled_data = upsample(orig_data, upsample_factor)
             relative_box = box_zyx - upsample_factor*orig_box_zyx[0]
             requested_data = upsampled_data[box_to_slicing(*relative_box)]
 
