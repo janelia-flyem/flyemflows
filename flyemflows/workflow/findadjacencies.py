@@ -186,6 +186,14 @@ class FindAdjacencies(Workflow):
                                                                    labels,
                                                                    volume_service.supervoxels,
                                                                    num_threads=8 )
+                bad_labels = []
+                for label, coords in coords_dict.items():
+                    if coords is None:
+                        bad_labels.append(label)
+
+                if bad_labels:
+                    logger.warning(f"Could not obtain coarse sparsevol for {len(bad_labels)} labels: {bad_labels}")
+                    coords_dict = { k:v for k,v in coords_dict.items() if v is not None }
 
                 with Timer("Constructing SparseBlockMask", logger=logger):
                     first_coord = next(iter(coords_dict.values()))[0]
