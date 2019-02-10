@@ -180,27 +180,29 @@ class FindAdjacencies(Workflow):
                 labels |= set(pd.unique(subset_edges[['label_a', 'label_b']].values.flat))
     
             if labels:
-                # Fetch all sparseblocks for the subset of bodies and combine them into a block mask
-                coords_dict = fetch_sparsevol_coarse_threaded( *volume_service.instance_triple, 
-                                                               labels,
-                                                               volume_service.supervoxels,
-                                                               num_threads=8 )
+                with Timer(f"Fetching coarse sparsevols for {len(labels)} labels", logger=logger):
+                    # Fetch all sparseblocks for the subset of bodies and combine them into a block mask
+                    coords_dict = fetch_sparsevol_coarse_threaded( *volume_service.instance_triple,
+                                                                   labels,
+                                                                   volume_service.supervoxels,
+                                                                   num_threads=8 )
 
-                first_coord = next(iter(coords_dict.values()))[0]
-                min_coord = max_coord = first_coord
-                for coords in coords_dict.values():
-                    min_coord = np.minimum(min_coord, coords.min(axis=0))
-                    max_coord = np.maximum(max_coord, coords.max(axis=0))
-                
-                mask_box = np.array((min_coord, 1+max_coord))
-                mask_shape = mask_box[1] - mask_box[0]
-                mask = np.zeros(mask_shape, np.uint16)
-                for coords in coords_dict.values():
-                    coords = coords - mask_box[0]
-                    mask[(*coords.transpose(),)] += 1
-                
-                # We're only interested in blocks that contain at least two of our objects of interest.
-                sbm = SparseBlockMask((mask > 1), 64*mask_box, 64)
+                with Timer("Constructing SparseBlockMask", logger=logger):
+                    first_coord = next(iter(coords_dict.values()))[0]
+                    min_coord = max_coord = first_coord
+                    for coords in coords_dict.values():
+                        min_coord = np.minimum(min_coord, coords.min(axis=0))
+                        max_coord = np.maximum(max_coord, coords.max(axis=0))
+                    
+                    mask_box = np.array((min_coord, 1+max_coord))
+                    mask_shape = mask_box[1] - mask_box[0]
+                    mask = np.zeros(mask_shape, np.uint16)
+                    for coords in coords_dict.values():
+                        coords = coords - mask_box[0]
+                        mask[(*coords.transpose(),)] += 1
+                    
+                    # We're only interested in blocks that contain at least two of our objects of interest.
+                    sbm = SparseBlockMask((mask > 1), 64*mask_box, 64)
 
         with Timer("Initializing BrickWall", logger):
             # Aim for 2 GB RDD partitions when loading segmentation
