@@ -314,7 +314,7 @@ def test_findadjacencies_from_dvid_sparse_labels(setup_dvid_segmentation_input):
 def test_findadjacencies_from_dvid_sparse_edges(setup_dvid_segmentation_input):
     template_dir, config, _volume, _dvid_address, _repo_uuid = setup_dvid_segmentation_input
 
-    subset_edges = pd.DataFrame([[1,2], [4,3], [7,6]], columns=['label_a', 'label_b'])
+    subset_edges = pd.DataFrame([[1,2], [4,3], [7,6], [1,6]], columns=['label_a', 'label_b'])
     subset_edges.to_csv(f'{template_dir}/subset-edges.csv', index=False, header=True)
     
     # Overwrite config with updated settings.
@@ -322,7 +322,6 @@ def test_findadjacencies_from_dvid_sparse_edges(setup_dvid_segmentation_input):
     config["findadjacencies"]["subset-edges"] = 'subset-edges.csv'
 
     _impl_test_findadjacencies_from_dvid_sparse(template_dir, config)
-    
 
 def _impl_test_findadjacencies_from_dvid_sparse(template_dir, config):
     with open(f"{template_dir}/workflow.yaml", 'w') as f:
@@ -339,6 +338,7 @@ def _impl_test_findadjacencies_from_dvid_sparse(template_dir, config):
     assert (1,2) in label_pairs
     assert (3,4) in label_pairs
     assert (6,7) in label_pairs
+    assert (1,6) in label_pairs
     
     assert (output_df.query('label_a == 3')[['za', 'zb']].values[0] == 31).all()
     assert (output_df.query('label_a == 3')[['ya', 'yb']].values[0] == (6*16, 6*16-1)).all() # not 'forward'
@@ -349,6 +349,53 @@ def _impl_test_findadjacencies_from_dvid_sparse(template_dir, config):
     assert (output_df.query('label_a == 6')[['ya', 'yb']].values[0] == (2*16-1, 3*16)).all() # not 'forward'
     assert (output_df.query('label_a == 6')[['xa', 'xb']].values[0] == 6*16).all()
     
+
+def test_findadjacencies_different_dvid_blocks_sparse_labels(setup_dvid_segmentation_input):
+    """
+    There was a bug that caused a brick to be excluded from the computation if the objects
+    of interest were in different DVID blocks, even though they were in the same brick.
+    This checks that case.
+    """
+    template_dir, config, _volume, _dvid_address, _repo_uuid = setup_dvid_segmentation_input
+    config = copy.deepcopy(config)
+
+    # objects 1 and 6 are in different dvid blocks, but the same brick.
+    config["findadjacencies"]["subset-labels"] = [1,6]
+    _impl_findadjacencies_different_dvid_blocks_sparse_edges(template_dir, config)
+
+
+def test_findadjacencies_different_dvid_blocks_sparse_edges(setup_dvid_segmentation_input):
+    """
+    There was a bug that caused a brick to be excluded from the computation if the objects
+    of interest were in different DVID blocks, even though they were in the same brick.
+    This checks that case.
+    """
+    template_dir, config, _volume, _dvid_address, _repo_uuid = setup_dvid_segmentation_input
+
+    # objects 1 and 6 are in different dvid blocks, but the same brick.
+    subset_edges = pd.DataFrame([[1,6]], columns=['label_a', 'label_b'])
+    subset_edges.to_csv(f'{template_dir}/subset-edges.csv', index=False, header=True)
+
+    # Overwrite config with updated settings.
+    config = copy.deepcopy(config)
+    config["findadjacencies"]["subset-edges"] = 'subset-edges.csv'
+    _impl_findadjacencies_different_dvid_blocks_sparse_edges(template_dir, config)
+
+
+def _impl_findadjacencies_different_dvid_blocks_sparse_edges(template_dir, config):
+    with open(f"{template_dir}/workflow.yaml", 'w') as f:
+        yaml.dump(config, f)
+    
+    execution_dir, workflow = launch_flow(template_dir, 1)
+    final_config = workflow.config
+    output_df = pd.read_csv(f'{execution_dir}/{final_config["findadjacencies"]["output-table"]}')
+
+    label_pairs = output_df[['label_a', 'label_b']].values
+    assert 0 not in label_pairs.flat
+
+    label_pairs = list(map(tuple, label_pairs))
+    assert (1,6) in label_pairs
+
 
 if __name__ == "__main__":
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"

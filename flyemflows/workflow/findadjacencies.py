@@ -149,21 +149,33 @@ class FindAdjacencies(Workflow):
 
         with Timer("Combining brick results", logger):
             all_edges_df = pd.concat(brick_edge_tables, ignore_index=True)
-            
-            adjacent_edges_df = all_edges_df.query('distance == 1.0')
-            best_adj_edges_df = select_central_edges(adjacent_edges_df, ['za', 'ya', 'xa'])
 
-            if not find_closest:
-                best_edges_df = best_adj_edges_df
+            adjacent_edges_df = all_edges_df.query('distance == 1.0')
+            
+            if len(adjacent_edges_df) > 0:
+                best_adj_edges_df = select_central_edges(adjacent_edges_df, ['za', 'ya', 'xa'])
+            else:
+                best_adj_edges_df = None
+
+            if best_adj_edges_df is None:
+                nonadjacent_edges_df = all_edges_df
             else:
                 # Find the non-adjacent edges that had no adjacent edge
-                nonadjacent_edges_df = all_edges_df.merge(best_adj_edges_df[['label_a', 'label_b']],
-                                                          'left', ['label_a', 'label_b'],
-                                                          indicator='source').query("source == 'left_only'")
+                nonadjacent_edges_df = all_edges_df.merge( best_adj_edges_df[['label_a', 'label_b']],
+                                                           'left', ['label_a', 'label_b'],
+                                                           indicator='source' ).query("source == 'left_only'")
                 del nonadjacent_edges_df['source']
-                
+            
+            if len(nonadjacent_edges_df) == 0:
+                best_edges_df = best_adj_edges_df
+            else:
                 best_nonadj_edges_df = select_closest_edges(nonadjacent_edges_df)
-                best_edges_df = pd.concat((best_adj_edges_df, best_nonadj_edges_df))
+                best_edges_df = pd.concat((best_adj_edges_df, best_nonadj_edges_df), ignore_index=True)
+
+        with Timer("Sorting edges", logger):
+            # This sort isn't strictly necessary, but makes it
+            # easier to diff results of one execution vs another.
+            best_edges_df.sort_values(list(best_edges_df.columns), inplace=True)
 
         with Timer("Writing edges", logger):
             best_edges_df.to_csv(options["output-table"], header=True, index=False)
@@ -215,6 +227,9 @@ def init_sparseblockmask(volume_service, subset_labels, subset_edges):
         coords_dict = { k:v for k,v in coords_dict.items() if v is not None }
 
     with Timer("Constructing SparseBlockMask", logger=logger):
+
+        # Coords are in terms of DVID blocks, not bricks,
+        # so we'll need to divide them before applying them to the mask.
         first_coord = next(iter(coords_dict.values()))[0]
         min_coord = max_coord = first_coord
         for coords in coords_dict.values():
@@ -222,15 +237,20 @@ def init_sparseblockmask(volume_service, subset_labels, subset_edges):
             max_coord = np.maximum(max_coord, coords.max(axis=0))
 
         if len(subset_labels) != 0:
-            mask_box = np.array((min_coord, 1+max_coord))
+            # Compute the number of labels-of-interest in each brick.
+            brick_shape = volume_service.preferred_message_shape
+            blocks_per_brick = brick_shape // 64
+            mask_box = (np.array((min_coord, 1+max_coord)) + blocks_per_brick-1) // blocks_per_brick
             mask_shape = mask_box[1] - mask_box[0]
+
             mask = np.zeros(mask_shape, np.uint16)
             for coords in coords_dict.values():
+                coords //= blocks_per_brick
                 coords = coords - mask_box[0]
                 mask[(*coords.transpose(),)] += 1
             
             # We're only interested in blocks that contain at least two of our objects of interest.
-            sbm = SparseBlockMask((mask > 1), 64*mask_box, 64)
+            sbm = SparseBlockMask((mask > 1), brick_shape*mask_box, brick_shape)
 
         elif len(subset_edges) != 0:
             # Compute the set of labels found in each block
@@ -238,45 +258,51 @@ def init_sparseblockmask(volume_service, subset_labels, subset_edges):
             blocks_per_brick = brick_shape // 64
             blockset_box = (np.array((min_coord, 1+max_coord)) + blocks_per_brick-1) // blocks_per_brick
             blockset_shape = blockset_box[1] - blockset_box[0]
-            empty_sets = [set() for _ in ndrange((0,0,0), blockset_shape)]
-            blocksets = np.array(empty_sets, dtype=object).reshape(blockset_shape)
-            
-            for label, coords in coords_dict.items():
-                coords //= blocks_per_brick
-                coords = coords - blockset_box[0]
-                blocksets[(*coords.transpose(),)] |= set([label])
 
-            # Considering all possible label pairs in each set,
-            # which of those are actually mentioned in the subset_edges?
-            # Construct a mask to show only those blocks which actually could contain edges of interest.
-            
-            blocklists = np.vectorize(sorted, otypes=(object,))(blocksets)
+            with Timer("Constructing blocklists", logger):
+                empty_sets = [set() for _ in ndrange((0,0,0), blockset_shape)]
+                blocksets = np.array(empty_sets, dtype=object).reshape(blockset_shape)
+                for label, coords in coords_dict.items():
+                    coords //= blocks_per_brick
+                    coords = coords - blockset_box[0]
+                    blocksets[(*coords.transpose(),)] |= set([label])
+    
+                # Considering all possible label pairs in each set,
+                # which of those are actually mentioned in the subset_edges?
+                # Construct a mask to show only those blocks which actually could contain edges of interest.
+                
+                blocklists = np.vectorize(sorted, otypes=(object,))(blocksets)
+                del blocksets
 
-            coords = []
-            pairs = []
-            for z,y,x in ndrange(blocklists.shape):
-                bl = blocklists[z,y,x]
-                if len(bl) < 2:
-                    continue
-                for pair in combinations(bl, 2):
-                    coords.append((z,y,x,))
-                    pairs.append(pair)
-
-            coords_df = pd.DataFrame(coords, columns=['z', 'y', 'x'], dtype=np.int32)
-            pairs_df = pd.DataFrame(pairs, columns=['label_a', 'label_b'], dtype=np.uint64)
-            pairs_df['z'] = coords_df['z']
-            pairs_df['y'] = coords_df['y']
-            pairs_df['x'] = coords_df['x']
-            
-            # Filter out pair combinations found in the blocks that
-            # aren't of interest (not mentioned in subset_edges)
-            subset_pairs_df = pairs_df.merge(subset_edges, 'inner', ['label_a', 'label_b'])
-            subset_coords = subset_pairs_df[['z', 'y', 'x']].values.transpose()
-
-            mask = np.zeros(blocksets.shape, bool)
-            mask[(*subset_coords,)] = True
-            
-            sbm = SparseBlockMask(mask, brick_shape*blockset_box, brick_shape)
+            with Timer("Constructing pair combinations", logger):
+                coords = []
+                pairs = []
+                for z,y,x in ndrange(blocklists.shape):
+                    bl = blocklists[z,y,x]
+                    if len(bl) < 2:
+                        continue
+                    for pair in combinations(bl, 2):
+                        coords.append((z,y,x,))
+                        pairs.append(pair)
+                del blocklists
+    
+            with Timer("Filtering pairs", logger):
+                coords_df = pd.DataFrame(coords, columns=['z', 'y', 'x'], dtype=np.int32)
+                pairs_df = pd.DataFrame(pairs, columns=['label_a', 'label_b'], dtype=np.uint64)
+                pairs_df['z'] = coords_df['z']
+                pairs_df['y'] = coords_df['y']
+                pairs_df['x'] = coords_df['x']
+                
+                # Filter out pair combinations found in the blocks that
+                # aren't of interest (not mentioned in subset_edges)
+                subset_pairs_df = pairs_df.merge(subset_edges, 'inner', ['label_a', 'label_b'])
+                subset_coords = subset_pairs_df[['z', 'y', 'x']].values.transpose()
+    
+            with Timer("Constructing mask", logger):
+                mask = np.zeros(blockset_shape, bool)
+                mask[(*subset_coords,)] = True
+                
+                sbm = SparseBlockMask(mask, brick_shape*blockset_box, brick_shape)
 
         return sbm
 
