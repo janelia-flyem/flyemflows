@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from dvid_resource_manager.client import ResourceManagerClient
-from neuclease.util import Timer, Grid, swap_df_cols, closest_approach, SparseBlockMask
+from neuclease.util import Timer, Grid, swap_df_cols, closest_approach, SparseBlockMask, ndrange
 from neuclease.dvid import fetch_sparsevol_coarse_threaded
 
 from ilastikrag import Rag
@@ -170,48 +170,8 @@ class FindAdjacencies(Workflow):
 
 
     def init_brickwall(self, volume_service, subset_labels, subset_edges, use_halo):
-        sbm = None
-        if isinstance(volume_service, DvidVolumeService):
-            labels = set()
-            if len(subset_labels) != 0:
-                labels |= subset_labels
+        sbm = init_sparseblockmask(volume_service, subset_labels, subset_edges)
             
-            if len(subset_edges) != 0:
-                labels |= set(pd.unique(subset_edges[['label_a', 'label_b']].values.reshape(-1)))
-    
-            if labels:
-                with Timer(f"Fetching coarse sparsevols for {len(labels)} labels", logger=logger):
-                    # Fetch all sparseblocks for the subset of bodies and combine them into a block mask
-                    coords_dict = fetch_sparsevol_coarse_threaded( *volume_service.instance_triple,
-                                                                   labels,
-                                                                   volume_service.supervoxels,
-                                                                   num_threads=8 )
-                bad_labels = []
-                for label, coords in coords_dict.items():
-                    if coords is None:
-                        bad_labels.append(label)
-
-                if bad_labels:
-                    logger.warning(f"Could not obtain coarse sparsevol for {len(bad_labels)} labels: {bad_labels}")
-                    coords_dict = { k:v for k,v in coords_dict.items() if v is not None }
-
-                with Timer("Constructing SparseBlockMask", logger=logger):
-                    first_coord = next(iter(coords_dict.values()))[0]
-                    min_coord = max_coord = first_coord
-                    for coords in coords_dict.values():
-                        min_coord = np.minimum(min_coord, coords.min(axis=0))
-                        max_coord = np.maximum(max_coord, coords.max(axis=0))
-                    
-                    mask_box = np.array((min_coord, 1+max_coord))
-                    mask_shape = mask_box[1] - mask_box[0]
-                    mask = np.zeros(mask_shape, np.uint16)
-                    for coords in coords_dict.values():
-                        coords = coords - mask_box[0]
-                        mask[(*coords.transpose(),)] += 1
-                    
-                    # We're only interested in blocks that contain at least two of our objects of interest.
-                    sbm = SparseBlockMask((mask > 1), 64*mask_box, 64)
-
         with Timer("Initializing BrickWall", logger):
             # Aim for 2 GB RDD partitions when loading segmentation
             GB = 2**30
@@ -223,6 +183,102 @@ class FindAdjacencies(Workflow):
                 brickwall = brickwall.realign_to_new_grid(overlapping_grid)
 
         return brickwall
+
+def init_sparseblockmask(volume_service, subset_labels, subset_edges):
+    if not isinstance(volume_service, DvidVolumeService):
+        return None
+
+    labels = set()
+    if len(subset_labels) != 0:
+        labels |= subset_labels
+    
+    if len(subset_edges) != 0:
+        labels |= set(pd.unique(subset_edges[['label_a', 'label_b']].values.reshape(-1)))
+
+    if not labels:
+        return None
+
+    with Timer(f"Fetching coarse sparsevols for {len(labels)} labels", logger=logger):
+        # Fetch all sparseblocks for the subset of bodies and combine them into a block mask
+        coords_dict = fetch_sparsevol_coarse_threaded( *volume_service.instance_triple,
+                                                       labels,
+                                                       volume_service.supervoxels,
+                                                       num_threads=32 )
+
+    bad_labels = []
+    for label, coords in coords_dict.items():
+        if coords is None:
+            bad_labels.append(label)
+
+    if bad_labels:
+        logger.warning(f"Could not obtain coarse sparsevol for {len(bad_labels)} labels: {bad_labels}")
+        coords_dict = { k:v for k,v in coords_dict.items() if v is not None }
+
+    with Timer("Constructing SparseBlockMask", logger=logger):
+        first_coord = next(iter(coords_dict.values()))[0]
+        min_coord = max_coord = first_coord
+        for coords in coords_dict.values():
+            min_coord = np.minimum(min_coord, coords.min(axis=0))
+            max_coord = np.maximum(max_coord, coords.max(axis=0))
+
+        if len(subset_labels) != 0:
+            mask_box = np.array((min_coord, 1+max_coord))
+            mask_shape = mask_box[1] - mask_box[0]
+            mask = np.zeros(mask_shape, np.uint16)
+            for coords in coords_dict.values():
+                coords = coords - mask_box[0]
+                mask[(*coords.transpose(),)] += 1
+            
+            # We're only interested in blocks that contain at least two of our objects of interest.
+            sbm = SparseBlockMask((mask > 1), 64*mask_box, 64)
+
+        elif len(subset_edges) != 0:
+            # Compute the set of labels found in each block
+            brick_shape = volume_service.preferred_message_shape
+            blocks_per_brick = brick_shape // 64
+            blockset_box = (np.array((min_coord, 1+max_coord)) + blocks_per_brick-1) // blocks_per_brick
+            blockset_shape = blockset_box[1] - blockset_box[0]
+            empty_sets = [set() for _ in ndrange((0,0,0), blockset_shape)]
+            blocksets = np.array(empty_sets, dtype=object).reshape(blockset_shape)
+            
+            for label, coords in coords_dict.items():
+                coords //= blocks_per_brick
+                coords = coords - blockset_box[0]
+                blocksets[(*coords.transpose(),)] |= set([label])
+
+            # Considering all possible label pairs in each set,
+            # which of those are actually mentioned in the subset_edges?
+            # Construct a mask to show only those blocks which actually could contain edges of interest.
+            
+            blocklists = np.vectorize(sorted, otypes=(object,))(blocksets)
+
+            coords = []
+            pairs = []
+            for z,y,x in ndrange(blocklists.shape):
+                bl = blocklists[z,y,x]
+                if len(bl) < 2:
+                    continue
+                for pair in combinations(bl, 2):
+                    coords.append((z,y,x,))
+                    pairs.append(pair)
+
+            coords_df = pd.DataFrame(coords, columns=['z', 'y', 'x'], dtype=np.int32)
+            pairs_df = pd.DataFrame(pairs, columns=['label_a', 'label_b'], dtype=np.uint64)
+            pairs_df['z'] = coords_df['z']
+            pairs_df['y'] = coords_df['y']
+            pairs_df['x'] = coords_df['x']
+            
+            # Filter out pair combinations found in the blocks that
+            # aren't of interest (not mentioned in subset_edges)
+            subset_pairs_df = pairs_df.merge(subset_edges, 'inner', ['label_a', 'label_b'])
+            subset_coords = subset_pairs_df[['z', 'y', 'x']].values.transpose()
+
+            mask = np.zeros(blocksets.shape, bool)
+            mask[(*subset_coords,)] = True
+            
+            sbm = SparseBlockMask(mask, brick_shape*blockset_box, brick_shape)
+
+        return sbm
 
 def find_adjacencies_in_brick(brick, subset_bodies=[], subset_requirement=1, subset_edges=[], find_closest=False):
     """

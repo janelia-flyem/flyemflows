@@ -263,11 +263,11 @@ def setup_dvid_segmentation_input(setup_dvid_repo):
                       [_,_,_,_, _,_,_,_]]]# 7
     #                  0 1 2 3  4 5 6 7
     
-    lowres_volume = np.zeros((8,8,8), np.uint64)
+    lowres_volume = np.zeros((4,8,8), np.uint64)
     lowres_volume[:] = volume_layout
 
     volume = upsample(lowres_volume, 16)
-    assert volume.shape == (128,128,128)
+    assert volume.shape == (64,128,128)
  
     input_segmentation_name = 'findadjacencies-input'
     create_labelmap_instance(dvid_address, repo_uuid, input_segmentation_name)
@@ -285,6 +285,9 @@ def setup_dvid_segmentation_input(setup_dvid_repo):
             uuid: {repo_uuid}
             segmentation-name: {input_segmentation_name}
             supervoxels: true
+        
+          geometry:
+            message-block-shape: [128,64,64]
  
         findadjacencies:
           output-table: output.csv
