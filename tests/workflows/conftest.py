@@ -49,9 +49,11 @@ def setup_dvid_repo():
     finally:
         print("\nTerminating DVID test server...")
         dvid_server_proc.send_signal(signal.SIGTERM)
+        stdout = dvid_server_proc.communicate(timeout=1.0)
         try:
             dvid_server_proc.wait(DVID_SHUTDOWN_TIMEOUT)
         except subprocess.TimeoutExpired:
+            print(stdout)
             print("Force-killing dvid")
             dvid_server_proc.send_signal(signal.SIGKILL)
         print("DVID test server is terminated.")
@@ -61,7 +63,8 @@ def _launch_dvid_server():
     with open(DVID_CONFIG_PATH, 'w') as f:
         f.write(DVID_CONFIG)
 
-    dvid_proc = subprocess.Popen(f'dvid -verbose -fullwrite serve {DVID_CONFIG_PATH}', shell=True)
+    dvid_proc = subprocess.Popen(f'dvid -verbose -fullwrite serve {DVID_CONFIG_PATH}',
+                                 shell=True, stdout=subprocess.PIPE) # Hide output ("Sending log messages to...")
     time.sleep(1.0)
     if dvid_proc.poll() is not None:
         raise RuntimeError(f"dvid couldn't be launched.  Exited with code: {dvid_proc.returncode}")
