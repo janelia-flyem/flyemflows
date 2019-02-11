@@ -204,14 +204,19 @@ class CopySegmentation(Workflow):
         input_config = self.config["input"]
         output_configs = self.config["outputs"]
         mgr_options = self.config["resource-manager"]
+        slab_depth = self.config["copysegmentation"]["slab-depth"]
 
         self.mgr_client = ResourceManagerClient( mgr_options["server"], mgr_options["port"] )
         self.input_service = VolumeService.create_from_config( input_config, None, self.mgr_client )
+        
+        brick_shape = self.input_service.preferred_message_shape
+        if slab_depth % brick_shape[0] != 0:
+            self.input_service.preferred_message_shape[0]
+            logger.warning(f"Your slab-depth {slab_depth} is not a multiple of the input's brick width {brick_shape[0]}")
 
         if isinstance(self.input_service.base_service, DvidVolumeService):
             assert input_config["dvid"]["supervoxels"], \
                 'DVID input service config must use "supervoxels: true"'
-            
 
         self.output_services = []
         for i, output_config in enumerate(output_configs):
