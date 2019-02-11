@@ -177,7 +177,7 @@ class FindAdjacencies(Workflow):
                 labels |= subset_labels
             
             if len(subset_edges) != 0:
-                labels |= set(pd.unique(subset_edges[['label_a', 'label_b']].values.flat))
+                labels |= set(pd.unique(subset_edges[['label_a', 'label_b']].values.reshape(-1)))
     
             if labels:
                 with Timer(f"Fetching coarse sparsevols for {len(labels)} labels", logger=logger):
@@ -250,7 +250,7 @@ def find_adjacencies_in_brick(brick, subset_bodies=[], subset_requirement=1, sub
         And 'edge_area' is the total count of the voxels touching both labels.
     """
     # ilastikrag requires uint32, so remap to consecutive ints
-    brick_labels = np.sort(pd.unique(brick.volume.flat))
+    brick_labels = np.sort(pd.unique(brick.volume.reshape(-1)))
     consecutive_labels = np.arange(1, len(brick_labels)+1, dtype=np.uint32)
 
     # Preserve label 0
