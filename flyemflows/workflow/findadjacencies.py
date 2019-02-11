@@ -517,15 +517,15 @@ def _find_best_edges(volume, subset_bodies, subset_requirement, subset_edges):
     all_edges_df.rename(columns={'sp1': 'label_a', 'sp2': 'label_b'}, inplace=True)
     del all_edges_df['edge_label']
 
+    # Filter: not interested in label 0
+    all_edges_df.query("label_a != 0 and label_b != 0", inplace=True)
+
     # Some coordinates may be listed twice for a given edge pair, since the
     # same coordinate might be "above" and "to the left" of the partner
     # object if the edge boundary "jagged".
     # Subjectively, it's better not to double-count such edges when computing
     # the centroid of the edge's coordinates.
-    all_edges_df.drop_duplicates(['label_a', 'label_b', 'z', 'y', 'x'], inplace=True)
-
-    # Filter: not interested in label 0
-    all_edges_df.query("label_a != 0 and label_b != 0", inplace=True)
+    all_edges_df.drop_duplicates(['label_a', 'label_b', 'z', 'y', 'x'], inplace=True) # 6.61%
 
     # Filter by subset-bodies
     if subset_bodies is not None:
