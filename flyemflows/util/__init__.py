@@ -1,5 +1,5 @@
 from .util import *
 from .auto_retry import auto_retry
 from .procutils import *
-from .compressed_numpy_array import CompressedNumpyArray
 from .dask_util import persist_and_execute, as_completed_synchronous, DebugClient
+from .compress_volume import *

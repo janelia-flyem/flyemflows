@@ -1,3 +1,4 @@
+import pickle
 from functools import partial
 
 import pytest
@@ -5,8 +6,8 @@ import numpy as np
 
 from neuclease.util import extract_subvol, box_intersection, Grid
 
-from flyemflows.util import DebugClient
-from flyemflows.brick import ( Brick, generate_bricks_from_volume_source,
+from flyemflows.util import DebugClient, COMPRESSION_METHODS
+from flyemflows.brick import ( Brick, BrickWall, generate_bricks_from_volume_source,
                                realign_bricks_to_new_grid, split_brick, assemble_brick_fragments,
                                pad_brick_data_from_volume_source )
 
@@ -273,6 +274,29 @@ def test_realign_bricks_to_new_grid_WITH_HALO():
         # Volume data must match
         assert (brick.volume == extract_subvol( volume, brick.physical_box )).all()
 
+
+def test_compression():
+    vol_box = [(0,0,0), (100,100,120)]
+    volume = np.random.randint(10, size=vol_box[1], dtype=np.uint64)
+    
+    for method in COMPRESSION_METHODS:
+        wall = BrickWall.from_accessor_func(vol_box, Grid((64,64,128)), lambda box: extract_subvol(volume, box), compression=method)
+
+        # Compress them all
+        wall.bricks.map(Brick.compress).compute()
+        
+        def check_pickle(brick):
+            pickle.dumps(brick)
+
+        # Compress them all
+        wall.bricks.map(check_pickle).compute()
+        
+        def check_brick(brick):
+            assert (brick.volume.shape == (brick.physical_box[1] - brick.physical_box[0])).all()
+            assert (brick.volume == extract_subvol(volume, brick.physical_box)).all()
+        
+        # Check them all (implicit decompression)
+        wall.bricks.map(check_brick).compute()
 
 if __name__ == "__main__":
     pytest.main(['-s', '--tb=native', '--pyargs', 'tests.brick.test_brick'])

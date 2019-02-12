@@ -33,7 +33,7 @@ class BrickWall:
     ##
 
     @classmethod
-    def from_accessor_func(cls, bounding_box, grid, volume_accessor_func=None, client=None, target_partition_size_voxels=None, sparse_boxes=None, lazy=False):
+    def from_accessor_func(cls, bounding_box, grid, volume_accessor_func=None, client=None, target_partition_size_voxels=None, sparse_boxes=None, lazy=False, compression=None):
         """
         Convenience constructor, taking an arbitrary volume_accessor_func.
         
@@ -63,6 +63,8 @@ class BrickWall:
             lazy:
                 If True, the bricks' data will not be created until their 'volume' member is first accessed.
         """
+        bounding_box = np.asarray(bounding_box)
+        
         if client is None:
             client = DebugClient()
         
@@ -81,12 +83,12 @@ class BrickWall:
         block_size_voxels = np.prod(grid.block_shape)
         rdd_partition_length = target_partition_size_voxels // block_size_voxels
 
-        bricks, num_bricks = generate_bricks_from_volume_source(bounding_box, grid, volume_accessor_func, client, rdd_partition_length, sparse_boxes, lazy)
+        bricks, num_bricks = generate_bricks_from_volume_source(bounding_box, grid, volume_accessor_func, client, rdd_partition_length, sparse_boxes, lazy, compression=compression)
         return BrickWall( bounding_box, grid, bricks, num_bricks )
 
 
     @classmethod
-    def from_volume_service(cls, volume_service, scale=0, bounding_box_zyx=None, client=None, target_partition_size_voxels=None, sparse_block_mask=None, lazy=False):
+    def from_volume_service(cls, volume_service, scale=0, bounding_box_zyx=None, client=None, target_partition_size_voxels=None, sparse_block_mask=None, lazy=False, compression=None):
         """
         Convenience constructor, initialized from a VolumeService object.
         
@@ -122,7 +124,9 @@ class BrickWall:
         
         if bounding_box_zyx is None:
             bounding_box_zyx = volume_service.bounding_box_zyx
-        
+
+        bounding_box_zyx = np.asarray(bounding_box_zyx)
+                
         if scale == 0:
             downsampled_box = bounding_box_zyx
         else:
@@ -151,7 +155,8 @@ class BrickWall:
                                              client,
                                              target_partition_size_voxels,
                                              sparse_boxes,
-                                             lazy )
+                                             lazy,
+                                             compression=compression )
 
 
     ##
@@ -162,6 +167,10 @@ class BrickWall:
         Remove all empty (completely zero) bricks from the BrickWall.
         """
         filtered_bricks = self.bricks.filter(lambda brick: brick.volume.any())
+        def compress(brick):
+            brick.compress()
+            return brick
+        filtered_bricks = filtered_bricks.map(compress)
         return BrickWall( self.bounding_box, self.grid, filtered_bricks, None ) # Don't know num_bricks any more
 
 
@@ -222,7 +231,8 @@ class BrickWall:
             return Brick( brick.logical_box + offset_zyx,
                           brick.physical_box + offset_zyx,
                           brick.volume,
-                          location_id=tuple(brick.logical_box[0] // new_grid.block_shape) )
+                          location_id=tuple(brick.logical_box[0] // new_grid.block_shape),
+                          compression=brick.compression )
         translated_bricks = self.bricks.map( translate_brick )
         
         return BrickWall( new_bounding_box, new_grid, translated_bricks, self.num_bricks )
@@ -248,7 +258,7 @@ class BrickWall:
             downsampled_logical_box = brick.logical_box // factor
             downsampled_physical_box = brick.physical_box // factor
             
-            return Brick(downsampled_logical_box, downsampled_physical_box, downsampled_volume)
+            return Brick(downsampled_logical_box, downsampled_physical_box, downsampled_volume, compression=brick.compression)
 
         new_bounding_box = None
         if self.bounding_box is not None:

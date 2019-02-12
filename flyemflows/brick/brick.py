@@ -7,7 +7,7 @@ import numpy as np
 import dask.bag
 
 from neuclease.util import Timer, Grid, boxes_from_grid, clipped_boxes_from_grid, box_intersection, box_to_slicing, overwrite_subvol, extract_subvol
-from ..util import CompressedNumpyArray, DebugClient
+from ..util import compress_volume, uncompress_volume, DebugClient
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class Brick:
      
         Note: Both boxes (logical and physical) are always stored in GLOBAL coordinates.
     """
-    def __init__(self, logical_box, physical_box, volume=None, *, location_id=None, lazy_creation_fn=None, use_compression=False):
+    def __init__(self, logical_box, physical_box, volume=None, *, location_id=None, lazy_creation_fn=None, compression=None):
         """
         Args:
             logical_box:
@@ -60,6 +60,9 @@ class Brick:
             lazy_creation_fn:
                 Instead of providing a volume at construction, you may provide a function to create the volume,
                 which will be called upon the first access to Brick.volume
+            compression:
+                Optional. Specify a compression scheme to be used when this brick is serialized.
+                See compressed_volume.py for available compression methods.
         """
         assert (volume is None) ^ (lazy_creation_fn is None), \
             "Must supply either volume or lazy_creation_fn (not both)"
@@ -75,14 +78,17 @@ class Brick:
             assert ((self.physical_box[1] - self.physical_box[0]) == self._volume.shape).all()
         
         # Used for pickling.
-        self.use_compression = use_compression
+        self.compression = compression
         self._compressed_volume = None
+        self._compressed_box = None
         self._destroyed = False
+        self._dtype = None
         
         self._create_volume_fn = None
         if lazy_creation_fn is not None:
             self._create_volume_fn = cloudpickle.dumps(lazy_creation_fn)
 
+        self.compress()
 
     def __str__(self):
         if (self.logical_box == self.physical_box).all():
@@ -99,12 +105,16 @@ class Brick:
         if self._destroyed:
             raise RuntimeError("Attempting to access data for a brick that has already been explicitly destroyed:\n"
                                f"{self}")
+
         if self._volume is not None:
             return self._volume
 
         if self._compressed_volume is not None:
-            assert self._compressed_volume is not None
-            self._volume = self._compressed_volume.deserialize()
+            self._volume = uncompress_volume( self.compression,
+                                              self._compressed_volume,
+                                              self._dtype,
+                                              self._compressed_box,
+                                              self.physical_box )
             return self._volume
         
         if self._create_volume_fn is not None:
@@ -126,8 +136,9 @@ class Brick:
             raise RuntimeError("Attempting to compress data for a brick that has already been explicitly destroyed:\n"
                                f"{self}")
 
-        if self._volume is not None and self._volume.dtype == np.uint64:
-            self._compressed_volume = CompressedNumpyArray(self._volume)
+        if self._volume is not None and self.compression is not None:
+            self._dtype = self._volume.dtype
+            self._compressed_box, self._compressed_volume = compress_volume(self.compression, self._volume, self.physical_box)
             self._volume = None
     
 
@@ -135,35 +146,24 @@ class Brick:
         """
         Pickle representation.
         
-        By default, the volume would be compressed/decompressed transparently via
-        the code in CompressedNumpyArray.py, but we want decompression to be
-        performed lazily.
-        
-        Therefore, we explicitly compress the volume here, and decompress it only
-        first upon access, via the self.volume property.
-        
-        This avoids decompression during certain Spark operations that don't
-        require actual manipulation of the voxels, notably groupByKey().
+        If compression is enabled, compress the brick before pickling.
+        The data will be decompressed lazily, upon first access to self.volume
         """
         if self._destroyed:
             raise RuntimeError("Attempting to pickle a brick that has already been explicitly destroyed:\n"
                                f"{self}")
         
-        if self.use_compression and self._volume is not None:
-            self._compressed_volume = CompressedNumpyArray(self._volume)
-            d = self.__dict__.copy()
-            d['_volume'] = None
-        else:
-            d = self.__dict__.copy()
-            
-        return d
+        self.compress()
+        return self.__dict__.copy()
+
 
     def destroy(self):
         self._volume = None
+        self._compressed_volume = None
         self._destroyed = True
 
 
-def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func, client, partition_size=None, sparse_boxes=None, lazy=False ):
+def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func, client, partition_size=None, sparse_boxes=None, lazy=False, compression=None ):
     """
     Generate a dask.Bag of Bricks for the given bounding box and grid.
      
@@ -277,10 +277,10 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
         logical_box, physical_box = logical_and_physical_box
         location_id = tuple(logical_box[0] // grid.block_shape)
         if lazy:
-            return Brick(logical_box, physical_box, location_id=location_id, lazy_creation_fn=volume_accessor_func)
+            return Brick(logical_box, physical_box, location_id=location_id, lazy_creation_fn=volume_accessor_func, compression=compression)
         else:
             volume = volume_accessor_func(physical_box)
-            return Brick(logical_box, physical_box, volume, location_id=location_id)
+            return Brick(logical_box, physical_box, volume, location_id=location_id, compression=compression)
     
     bricks = boxes_bag.map( make_bricks )
     return bricks, num_bricks
@@ -297,7 +297,9 @@ def clip_to_logical( brick ):
     
     intersection_within_physical = intersection - brick.physical_box[0]
     new_vol = brick.volume[ box_to_slicing(*intersection_within_physical) ]
-    return Brick( brick.logical_box, intersection, new_vol, location_id=brick.location_id )
+    new_brick = Brick( brick.logical_box, intersection, new_vol, location_id=brick.location_id, compression=brick.compression )
+    brick.compress()
+    return new_brick
 
 
 def pad_brick_data_from_volume_source( padding_grid, volume_accessor_func, brick ):
@@ -387,7 +389,9 @@ def pad_brick_data_from_volume_source( padding_grid, volume_accessor_func, brick
         halo_box_within_padded = halo_box - padded_box[0]
         overwrite_subvol(padded_volume, halo_box_within_padded, halo_volume)
 
-    return Brick( brick.logical_box, padded_box, padded_volume, location_id=brick.location_id )
+    new_brick = Brick( brick.logical_box, padded_box, padded_volume, location_id=brick.location_id, compression=brick.compression )
+    brick.compress()
+    return new_brick
 
 
 def apply_label_mapping(bricks, mapping_pairs):
@@ -419,6 +423,7 @@ def apply_label_mapping(bricks, mapping_pairs):
             brick.volume = np.asarray( brick.volume, order='C' )
             
             mapper.apply_inplace(brick.volume, allow_unmapped=True)
+            brick.compress()
         return partition_bricks
     
     # Use mapPartitions (instead of map) so LabelMapper can be constructed just once per partition
@@ -493,11 +498,12 @@ def split_brick(new_grid, original_brick):
 
         new_location_id = tuple(new_logical_box[0] // new_grid.block_shape)
         
-        fragment_brick = Brick(new_logical_box, split_box, fragment_vol, location_id=new_location_id, use_compression=original_brick.use_compression)
+        fragment_brick = Brick(new_logical_box, split_box, fragment_vol, location_id=new_location_id, compression=original_brick.compression)
         fragment_brick.compress()
 
         fragments.append( fragment_brick )
 
+    original_brick.compress()
     return fragments
 
 
@@ -559,14 +565,16 @@ def assemble_brick_fragments( fragments ):
     for frag in fragments:
         internal_box = frag.physical_box - final_physical_box[0]
         overwrite_subvol(final_volume, internal_box, frag.volume)
+        
+        # Recompress fragment now that we're done with it.
+        frag.compress()
 
         ## It's tempting to destroy the fragment to save RAM,
         ## but the fragment might be needed by more than one final brick.
         ## (Also, it might be needed twice if a Worker gets restarted.)
         # frag.destroy()
 
-    use_compression = fragments[0].use_compression
-    brick = Brick( final_logical_box, final_physical_box, final_volume, location_id=final_location_id, use_compression=use_compression )
-    if use_compression:
-        brick.compress()
+    compression = fragments[0].compression
+    brick = Brick( final_logical_box, final_physical_box, final_volume, location_id=final_location_id, compression=compression )
+    brick.compress()
     return brick
