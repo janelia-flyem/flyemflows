@@ -16,7 +16,7 @@ from neuclease.dvid.rle import runlength_encode_to_ranges
 
 from dvid_resource_manager.client import ResourceManagerClient
 
-from flyemflows.util import replace_default_entries
+from flyemflows.util import replace_default_entries, COMPRESSION_METHODS
 from flyemflows.workflow import Workflow
 from flyemflows.brick import BrickWall
 from flyemflows.volumes import ( VolumeService, VolumeServiceWriter, SegmentationVolumeSchema,
@@ -99,6 +99,14 @@ class CopySegmentation(Workflow):
                                "Will not work unless you add the 'available-scales' setting to the input service's geometry config.",
                 "type": "boolean",
                 "default": True
+            },
+            "brick-compression": {
+                "description": "Internally, downloaded bricks will be stored in a compressed format.\n"
+                               "This setting specifies the compression scheme to use.\n"
+                               f"Options: {COMPRESSION_METHODS}",
+                "type": "string",
+                "enum": COMPRESSION_METHODS,
+                "default": "lz4_2x"
             },
             "dont-overwrite-identical-blocks": {
                 "description": "Before writing each block, read the existing segmentation from DVID\n"
@@ -448,7 +456,7 @@ class CopySegmentation(Workflow):
         pyramid_depth = options["pyramid-depth"]
 
         input_slab_box = output_slab_box - self.translation_offset_zyx
-        input_wall = BrickWall.from_volume_service(self.input_service, 0, input_slab_box, self.client, self.target_partition_size_voxels, compression='gzip_labelarray')
+        input_wall = BrickWall.from_volume_service(self.input_service, 0, input_slab_box, self.client, self.target_partition_size_voxels, compression=options['brick-compression'])
         input_wall.persist_and_execute(f"Slab {slab_index}: Reading ({input_slab_box[:,::-1].tolist()})", logger)
 
         # Translate coordinates from input to output
@@ -505,7 +513,7 @@ class CopySegmentation(Workflow):
                 for new_scale in range(1, 1+pyramid_depth):
                     if options["download-pre-downsampled"] and new_scale in self.input_service.available_scales:
                         del padded_wall
-                        downsampled_wall = BrickWall.from_volume_service(self.input_service, new_scale, input_slab_box, self.client, self.target_partition_size_voxels, compression='gzip_labelarray')
+                        downsampled_wall = BrickWall.from_volume_service(self.input_service, new_scale, input_slab_box, self.client, self.target_partition_size_voxels, compression=options["brick-compression"])
                         downsampled_wall.persist_and_execute(f"Slab {slab_index}: Scale {new_scale}: Downloading pre-downsampled bricks", logger)
                     else:
                         # Compute downsampled (results in smaller bricks)

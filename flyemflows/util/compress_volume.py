@@ -3,11 +3,11 @@ import numpy as np
 from neuclease.util import box_to_slicing
 from neuclease.dvid import encode_nonaligned_labelarray_volume, decode_labelarray_volume
 
-COMPRESSION_METHODS = ['gzip_labelarray',
+COMPRESSION_METHODS = ['gzip_labelarray', # DVID's native labelarray/labemap compression format
                        #'lz4_labelarray', # Not supported yet -- need a tiny libdvid change
                        #'labelarray',     # Not supported yet -- need a tiny libdvid change
                        'lz4',
-                       'lz4_2x',
+                       'lz4_2x', # lz4 compressionn, applied twice.
                        ]
 
 
