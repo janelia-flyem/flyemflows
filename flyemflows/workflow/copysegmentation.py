@@ -448,7 +448,7 @@ class CopySegmentation(Workflow):
         pyramid_depth = options["pyramid-depth"]
 
         input_slab_box = output_slab_box - self.translation_offset_zyx
-        input_wall = BrickWall.from_volume_service(self.input_service, 0, input_slab_box, self.client, self.target_partition_size_voxels)
+        input_wall = BrickWall.from_volume_service(self.input_service, 0, input_slab_box, self.client, self.target_partition_size_voxels, compression='gzip_labelarray')
         input_wall.persist_and_execute(f"Slab {slab_index}: Reading ({input_slab_box[:,::-1].tolist()})", logger)
 
         # Translate coordinates from input to output
@@ -505,7 +505,7 @@ class CopySegmentation(Workflow):
                 for new_scale in range(1, 1+pyramid_depth):
                     if options["download-pre-downsampled"] and new_scale in self.input_service.available_scales:
                         del padded_wall
-                        downsampled_wall = BrickWall.from_volume_service(self.input_service, new_scale, input_slab_box, self.client, self.target_partition_size_voxels)
+                        downsampled_wall = BrickWall.from_volume_service(self.input_service, new_scale, input_slab_box, self.client, self.target_partition_size_voxels, compression='gzip_labelarray')
                         downsampled_wall.persist_and_execute(f"Slab {slab_index}: Scale {new_scale}: Downloading pre-downsampled bricks", logger)
                     else:
                         # Compute downsampled (results in smaller bricks)
@@ -555,10 +555,8 @@ class CopySegmentation(Workflow):
         else:
             # Consolidate bricks to full-size, aligned blocks (shuffles data)
             realigned_wall = input_wall.realign_to_new_grid( output_writing_grid )
-            realigned_wall.persist_and_execute(f"Slab {slab_index}: Scale {scale}: Shuffling bricks into alignment", logger)
-
-            # Discard original
             del input_wall
+            realigned_wall.persist_and_execute(f"Slab {slab_index}: Scale {scale}: Shuffling bricks into alignment", logger)
         
         if not pad:
             return realigned_wall
@@ -571,6 +569,7 @@ class CopySegmentation(Workflow):
         output_accessor_func = partial(output_service.get_subvolume, scale=scale)
         
         padded_wall = realigned_wall.fill_missing(output_accessor_func, output_padding_grid)
+        del realigned_wall
         padded_wall.persist_and_execute(f"Slab {slab_index}: Scale {scale}: Padding", logger)
 
         return padded_wall
