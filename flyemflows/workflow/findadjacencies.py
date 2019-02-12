@@ -584,7 +584,7 @@ def select_central_edges(all_edges_df, coord_cols=['za', 'ya', 'xa']):
     all_edges_df['cx'] = all_edges_df.eval(f'{X} * edge_area')
 
     centroids_df = ( all_edges_df[['label_a', 'label_b', 'cz', 'cy', 'cx', 'edge_area']]
-                       .groupby(['label_a', 'label_b']).sum() )
+                       .groupby(['label_a', 'label_b'], sort=False).sum() )
 
     centroids_df['cz'] = centroids_df.eval('cz / edge_area')
     centroids_df['cy'] = centroids_df.eval('cy / edge_area')
@@ -601,7 +601,7 @@ def select_central_edges(all_edges_df, coord_cols=['za', 'ya', 'xa']):
     all_edges_df['distance_to_centroid'] = all_edges_df.eval(f'sqrt( ({Z}-cz)**2 + ({Y}-cy)**2 + ({X}-cx)**2 )')
 
     # Find the best row for each edge (min distance)
-    min_distance_df = all_edges_df[['label_a', 'label_b', 'distance_to_centroid']].groupby(['label_a', 'label_b']).idxmin()
+    min_distance_df = all_edges_df[['label_a', 'label_b', 'distance_to_centroid']].groupby(['label_a', 'label_b'], sort=False).idxmin()
     min_distance_df.rename(columns={'distance_to_centroid': 'best_row'}, inplace=True)
 
     # Select the best rows from the original data and return
@@ -614,5 +614,5 @@ def select_closest_edges(all_edges_df):
     Filter the given edges to include only the edge with
     the minimum distance for each [label_a,label_b] pair.
     """
-    min_selections = all_edges_df.groupby(['label_a', 'label_b']).agg({'distance': 'idxmin'})
+    min_selections = all_edges_df.groupby(['label_a', 'label_b'], sort=False).agg({'distance': 'idxmin'})
     return all_edges_df.loc[min_selections['distance'].values]
