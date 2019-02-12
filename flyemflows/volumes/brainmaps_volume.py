@@ -1,5 +1,6 @@
 import os
 import json
+import threading
 from itertools import chain
 
 from httplib2 import Http
@@ -16,9 +17,37 @@ import snappy
 BRAINMAPS_API_VERSION = 'v1'
 BRAINMAPS_BASE_URL = f'https://brainmaps.googleapis.com/{BRAINMAPS_API_VERSION}'
 
+CACHED_BRAINMAPS_HTTP_HANDLES = {}
+
+def get_brainmaps_http_interface(timeout):
+    """
+    Obtain an Http object for accessing BrainMaps from the global pool of such objects.
+    This allows us to avoid re-initializing Http objects repeatedly if BrainMapsVolume
+    instances are created (or unpickled) repeatedly in the same process/thread.
+    """
+    # One handle per thread/process
+    thread_id = threading.current_thread().ident
+    pid = os.getpid()
+    key = (pid, thread_id, timeout)
+
+    try:
+        http = CACHED_BRAINMAPS_HTTP_HANDLES[key]
+    except KeyError:
+        credentials_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '')
+        if  not credentials_path:
+            raise RuntimeError("To access BrainMaps volumes, you must define GOOGLE_APPLICATION_CREDENTIALS "
+                               "in your environment, which must point to a google service account json credentials file.")
+
+        scopes = ['https://www.googleapis.com/auth/brainmaps']
+        credentials = ServiceAccountCredentials.from_json_keyfile_name(credentials_path, scopes)
+        http = credentials.authorize(Http(timeout=timeout))
+        CACHED_BRAINMAPS_HTTP_HANDLES[key] = http
+    
+    return http
+
 
 class BrainMapsVolume:
-    def __init__(self, project, dataset, volume_id, change_stack_id="", dtype=None, skip_checks=False, use_gzip=True):
+    def __init__(self, project, dataset, volume_id, change_stack_id="", dtype=None, skip_checks=False, use_gzip=True, timeout=60.0):
         """
         Utility for accessing subvolumes of a BrainMaps volume.
         Instances of this class are pickleable, but they will have to re-authenticate after unpickling.
@@ -49,6 +78,7 @@ class BrainMapsVolume:
         self.skip_checks = skip_checks
         self._dtype = None # Assigned *after* check below.
         self.use_gzip = use_gzip
+        self.timeout = timeout
 
         # These members are lazily computed/memoized.
         self._http = None
@@ -211,14 +241,7 @@ class BrainMapsVolume:
         if self._http is not None:
             return self._http
 
-        credentials_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', '')
-        if  not credentials_path:
-            raise RuntimeError("To access BrainMaps volumes, you must define GOOGLE_APPLICATION_CREDENTIALS "
-                               "in your environment, which must point to a google service account json credentials file.")
-
-        scopes = ['https://www.googleapis.com/auth/brainmaps']
-        credentials = ServiceAccountCredentials.from_json_keyfile_name(credentials_path, scopes)
-        self._http = credentials.authorize(Http())
+        self._http = get_brainmaps_http_interface(self.timeout)
         return self._http
 
 
