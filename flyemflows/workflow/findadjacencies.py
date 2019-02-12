@@ -251,9 +251,9 @@ class FindAdjacencies(Workflow):
         all_coords = np.concatenate( [kv[1] for kv in labels_and_coords] )
         coords_df = pd.DataFrame( all_coords )
         
-        with Timer("Constructing SparseBlockMask", logger=logger):
+        with Timer(f"Constructing SparseBlockMask from {len(coords_df)} rows", logger=logger):
             if len(subset_edges) > 0:
-                with Timer("Generating combinations", logger):
+                with Timer(f"Generating combinations", logger):
                     label_pairs = []
                     coord_list = []
                     for coord, df in coords_df.groupby(['z', 'y', 'x'], sort=False):
@@ -268,11 +268,12 @@ class FindAdjacencies(Workflow):
                     comb_df['label_a'] = label_pairs[:, 0]
                     comb_df['label_b'] = label_pairs[:, 1]
     
-                with Timer("Filtering pairs", logger):
+                with Timer(f"Filtering {len(comb_df)} pairs", logger):
                     # Filter out pair combinations found in the blocks that
                     # aren't of interest (not mentioned in subset_edges)
                     subset_pairs_df = comb_df.merge(subset_edges, 'inner', ['label_a', 'label_b'])
                     subset_coords = subset_pairs_df[['z', 'y', 'x']].values
+                logger.info(f"After filtering, {len(subset_coords)} pairs remain")
     
             elif len(subset_labels) > 0:
                 sizes = coords_df.groupby(['z', 'y', 'x'], sort=False).size()
