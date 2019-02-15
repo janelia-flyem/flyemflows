@@ -62,6 +62,10 @@ class BrickWall:
 
             lazy:
                 If True, the bricks' data will not be created until their 'volume' member is first accessed.
+
+            compression:
+                If provided, the brick volume data will be serialized/stored in a compressed format.
+                See ``flyemflows.util.compressed_volume.COMPRESSION_METHODS``
         """
         bounding_box = np.asarray(bounding_box)
         
@@ -88,7 +92,7 @@ class BrickWall:
 
 
     @classmethod
-    def from_volume_service(cls, volume_service, scale=0, bounding_box_zyx=None, client=None, target_partition_size_voxels=None, sparse_block_mask=None, lazy=False, compression=None):
+    def from_volume_service(cls, volume_service, scale=0, bounding_box_zyx=None, client=None, target_partition_size_voxels=None, halo=0, sparse_block_mask=None, lazy=False, compression=None):
         """
         Convenience constructor, initialized from a VolumeService object.
         
@@ -114,13 +118,22 @@ class BrickWall:
                 Optional. If provided, the RDD partition lengths (i.e. the number of bricks per RDD partition)
                 will be chosen to have (approximately) this many total voxels in each partition.
             
+            halo:
+                If provided, add a halo to the brick grid that will be used to fetch the data.
+                Depending on your use-case and/or input source, this can be faster than applying
+                a halo after-the-fact, which involves shuffling data across the cluster.
+            
             sparse_block_mask:
                 Instance of SparseBlockMask
             
             lazy:
                 If True, the bricks' data will not be created until their 'volume' member is first accessed.
+            
+            compression:
+                If provided, the brick volume data will be serialized/stored in a compressed format.
+                See ``flyemflows.util.compressed_volume.COMPRESSION_METHODS``
         """
-        grid = Grid(volume_service.preferred_message_shape, (0,0,0))
+        grid = Grid(volume_service.preferred_message_shape, (0,0,0), halo)
         
         if bounding_box_zyx is None:
             bounding_box_zyx = volume_service.bounding_box_zyx

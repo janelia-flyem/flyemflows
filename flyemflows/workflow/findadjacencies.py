@@ -190,7 +190,8 @@ class FindAdjacencies(Workflow):
             # Aim for 2 GB RDD partitions when loading segmentation
             GB = 2**30
             target_partition_size_voxels = 2 * GB // np.uint64().nbytes
-            brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.client, target_partition_size_voxels, sbm)
+            
+            brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.client, target_partition_size_voxels, 0, sbm)
 
             if use_halo:
                 overlapping_grid = Grid(brickwall.grid.block_shape, halo=1)
