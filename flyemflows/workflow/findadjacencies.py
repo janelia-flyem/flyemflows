@@ -199,7 +199,12 @@ class FindAdjacencies(Workflow):
         return brickwall
 
     def init_sparseblockmask(self, volume_service, subset_labels, subset_edges):
+        if not isinstance(volume_service.base_service, DvidVolumeService):
+            return None
+        
         if not isinstance(volume_service, DvidVolumeService):
+            logger.warning("Fetching all bricks in the volume -- currently, sparse fetching only "
+                           "works for raw dvid volumes (not scaled or transposed ones)")
             return None
     
         labels = set()
