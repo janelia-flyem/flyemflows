@@ -217,6 +217,7 @@ class FindAdjacencies(Workflow):
         if not labels:
             return None
     
+        is_supervoxels = volume_service.supervoxels
         brick_shape = volume_service.preferred_message_shape
         blocks_per_brick = brick_shape // 64
 
@@ -230,7 +231,7 @@ class FindAdjacencies(Workflow):
             """
             try:
                 with mgr.access_context(volume_service.server, True, 1, 1):
-                    coords = fetch_sparsevol_coarse_via_labelindex(*volume_service.instance_triple, label)
+                    coords = fetch_sparsevol_coarse_via_labelindex(*volume_service.instance_triple, label, is_supervoxels)
                     coords //= blocks_per_brick
                     coords = pd.DataFrame(coords, columns=['z', 'y', 'x'], dtype=np.int32).drop_duplicates()
                     coords['label'] = np.uint64(label)
