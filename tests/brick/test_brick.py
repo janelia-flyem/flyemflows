@@ -1,15 +1,18 @@
 import pickle
+from itertools import chain
 from functools import partial
 
 import pytest
 import numpy as np
+import pandas as pd
 
 from neuclease.util import extract_subvol, box_intersection, Grid
 
 from flyemflows.util import DebugClient, COMPRESSION_METHODS
 from flyemflows.brick import ( Brick, BrickWall, generate_bricks_from_volume_source,
                                realign_bricks_to_new_grid, split_brick, assemble_brick_fragments,
-                               pad_brick_data_from_volume_source )
+                               pad_brick_data_from_volume_source, extract_halos )
+from neuclease.util.box import overwrite_subvol
 
 def box_as_tuple(box):
     if isinstance(box, np.ndarray):
@@ -298,5 +301,116 @@ def test_compression():
         # Check them all (implicit decompression)
         wall.bricks.map(check_brick).compute()
 
+
+def test_extract_halos():
+    halo = 1
+    grid = Grid( (10,20), (0,0), halo )
+    bounding_box = np.array([(15,30), (95,290)])
+    volume = np.random.randint(0,10, (100,300) )
+
+    bricks, _num_bricks = generate_bricks_from_volume_source( bounding_box, grid, partial(extract_subvol, volume), DebugClient() )
+
+    outer_halos = extract_halos(bricks, grid, 'outer').compute()
+    inner_halos = extract_halos(bricks, grid, 'inner').compute()
+
+    for halo_type, halo_bricks in zip(('outer', 'inner'), (outer_halos, inner_halos)):
+        for hb in halo_bricks:
+            # Even bricks on the edge of the volume
+            # (which have smaller physical boxes than logical boxes)
+            # return halos which correspond to the original
+            # logical box (except for the halo axis).
+            # (Each halo's "logical box" still corresponds to
+            # the brick it was extracted from.)
+            if halo_type == 'outer':
+                assert (hb.physical_box[0] != hb.logical_box[0]).sum() == 1
+                assert (hb.physical_box[1] != hb.logical_box[1]).sum() == 1
+            else:
+                assert (hb.physical_box != hb.logical_box).sum() == 1
+
+            # The bounding box above is not grid aligned,
+            # so blocks on the volume edge will only have partial data
+            # (i.e. a smaller physical_box than logical_box)
+            # However, halos are always produced to correspond to the logical_box size,
+            # and zero-padded if necessary to achieve that size.
+            # Therefore, only compare the actually valid portion of the halo here with the expected volume.
+            # The other voxels should be zeros.
+            valid_box = box_intersection(bounding_box, hb.physical_box)
+            halo_vol = extract_subvol(hb.volume, valid_box - hb.physical_box[0])
+            expected_vol = extract_subvol(volume, valid_box)
+            assert (halo_vol == expected_vol).all()
+            
+            # Other voxels should be zero
+            full_halo_vol = hb.volume.copy()
+            overwrite_subvol(full_halo_vol, valid_box - hb.physical_box[0], 0)
+            assert (full_halo_vol == 0).all()
+
+    rows = []
+    for hb in chain(outer_halos):
+        rows.append([*hb.physical_box.flat, hb, 'outer'])
+
+    for hb in chain(inner_halos):
+        rows.append([*hb.physical_box.flat, hb, 'inner'])
+    
+    halo_df = pd.DataFrame(rows, columns=['y0', 'x0', 'y1', 'x1', 'brick', 'halo_type'])
+    
+    halo_counts = halo_df.groupby(['y0', 'x0', 'y1', 'x1']).size()
+
+    # Since the bricks' physical boxes are all clipped to the overall bounding-box,
+    # every outer halo should have a matching inner halo from a neighboring brick.
+    # (This would not necessarily be true for Bricks that are initialized from a sparse mask.)
+    assert halo_counts.min() == 2
+    assert halo_counts.max() == 2
+    
+    for _box, halos_df in halo_df.groupby(['y0', 'x0', 'y1', 'x1']):
+        assert set(halos_df['halo_type']) == set(['outer', 'inner'])
+
+        brick0 = halos_df.iloc[0]['brick']
+        brick1 = halos_df.iloc[1]['brick']
+        assert (brick0.volume == brick1.volume).all()
+
+
+def test_extract_halos_subsets():
+    halo = 1
+    grid = Grid( (10,20), (0,0), halo )
+    bounding_box = np.array([(15,30), (95,290)])
+    volume = np.random.randint(0,10, (100,300) )
+
+    bricks, _num_bricks = generate_bricks_from_volume_source( bounding_box, grid, partial(extract_subvol, volume), DebugClient() )
+
+    def bricks_to_df(bricks):
+        rows = []
+        for brick in bricks:
+            rows.append([*brick.physical_box.flat, brick.volume])
+        df = pd.DataFrame(rows, columns=['y0', 'x0', 'y1', 'x1', 'brickvol'])
+        df = df.sort_values(['y0', 'x0', 'y1', 'x1']).reset_index(drop=True)
+        return df
+
+    def check(all_halos, lower_halos, upper_halos):
+        all_df = bricks_to_df(all_halos)
+        lower_df = bricks_to_df(lower_halos)
+        upper_df = bricks_to_df(upper_halos)
+        
+        combined_df = pd.concat([lower_df, upper_df], ignore_index=True).sort_values(['y0', 'x0', 'y1', 'x1'])
+        combined_df.reset_index(drop=True, inplace=True)
+    
+        assert (all_df[['y0', 'x0', 'y1', 'x1']] == combined_df[['y0', 'x0', 'y1', 'x1']]).all().all()
+        for a, b in zip(all_df['brickvol'].values, combined_df['brickvol'].values):
+            assert (a == b).all()
+    
+    # Check that 'all' is the same as combining 'lower' and 'upper'
+    all_outer_halos = extract_halos(bricks, grid, 'outer', 'all').compute()
+    lower_outer_halos = extract_halos(bricks, grid, 'outer', 'lower').compute()
+    upper_outer_halos = extract_halos(bricks, grid, 'outer', 'upper').compute()
+
+    all_inner_halos = extract_halos(bricks, grid, 'inner', 'all').compute()
+    lower_inner_halos = extract_halos(bricks, grid, 'inner', 'lower').compute()
+    upper_inner_halos = extract_halos(bricks, grid, 'inner', 'upper').compute()
+
+    check(all_outer_halos, lower_outer_halos, upper_outer_halos)
+    check(all_inner_halos, lower_inner_halos, upper_inner_halos)
+
+
 if __name__ == "__main__":
+    import dask.config
+    dask.config.set(scheduler="synchronous")
     pytest.main(['-s', '--tb=native', '--pyargs', 'tests.brick.test_brick'])

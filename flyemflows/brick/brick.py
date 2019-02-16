@@ -578,3 +578,137 @@ def assemble_brick_fragments( fragments ):
     brick = Brick( final_logical_box, final_physical_box, final_volume, location_id=final_location_id, compression=compression )
     brick.compress()
     return brick
+
+
+def extract_halos( bricks, grid, halo_type, sides='all' ):
+    """
+    Extract the 'halo' volume from all sides of the given dask.Bag of bricks.
+    
+    If a given brick's physical box does not extend the full length of
+    its logical box for a given dimension, it will be zero-padded to ensure
+    that all halos extracted across a given axis have the same dimensions.
+    
+    Args:
+        bricks:
+            dask.Bag of Brick objects
+        
+        grid:
+            Grid, whose blockshape must correspond to the bricks' logical boxes,
+            and whose halo_shape should not be larger than the one used to construct the Bricks.
+        
+        halo_type:
+            Either 'outer' or 'inner'.
+
+            If 'outer', the halos will be extracted from the region outside each brick's logical box,
+            i.e. the portions of the brick that overlap with its neighbors' logical boxes.
+
+            If 'inner', the halos will be extracted from within the brick's logical box,
+            i.e. the portions within the brick's logical box that overlap with its neighbors'
+            'outer' halos.
+            
+            TODO: Add option for requesting both 'outer' and 'inner' combined.
+        
+        sides:
+            Either 'lower', 'upper', or 'all'.
+            If 'all', extract a halo from all sides of the volume (an upper/lower halo for each axis)
+            If 'lower', only extract half on the halos, on the leading edge of the brick for each axis.
+            If 'upper' extract the halos from the trailing edge of the brick along each axis.
+            For example: A 3D brick results in 6 halos if using 'all', but only 3 halos if using
+            'lower' or 'upper'.
+    
+    Returns:
+        dask.Bag of Brick objects (one for each halo), whose logical boxes indicate which
+        Brick they were extracted from, and whose physical boxes indicate the halo's exact
+        location.  For example, given 3D bricks, the returned Bag will have ~6x as many bricks
+        as the input bag.
+    """
+    assert grid.halo_shape.any(), "Grid has no halo!"
+    assert halo_type in ('outer', 'inner')
+    assert sides in ('lower', 'upper', 'all')
+
+    def zero_fill(vol, box, full_box):
+        """
+        Given a volume, it's corresponding box, and a 'full box' that encompasses it,
+        Return a volume that fills the full box, padding with zeros if necessary.
+        """
+        if (box == full_box).all():
+            return vol
+        else:
+            full_vol = np.zeros(full_box[1] - full_box[0], vol.dtype)
+            overwrite_subvol(full_vol, box - full_box[0], vol)
+            return full_vol
+
+    def _extract_subbrick(brick, box):
+        """
+        Given a brick and the box to extract from it,
+        return a new Brick with the same logical_box as the original brick,
+        but only containing the subvolume corresponding to the given box.
+        
+        If necessary, the returned subbrick will be zero-padded to full
+        the entirety of the given box. 
+        """
+        box_clipped = box_intersection(box, brick.physical_box)
+        if (box_clipped[1] - box_clipped[0] <= 0).any():
+            return None
+    
+        subvol = extract_subvol(brick.volume, box_clipped - brick.physical_box[0])
+        full_subvol = zero_fill(subvol, box_clipped, box)
+        
+        # FIXME: Should we bother with location_id?
+        #        (If we don't, realign operations won't work,
+        #        but it's not clear what that would mean for halos anyway)
+        subbrick = Brick(brick.logical_box, box, full_subvol, compression=brick.compression)
+        return subbrick
+
+    def _extract_halo_sides(brick):
+        """
+        For the given brick, extract a halo from each side.
+        For example, if the brick is 3D and sides='all', extract 6 halos.
+        If sides='lower', only extract 3 halos: from the lower Z-face, lower
+        Y-face, and lower (left) X-face.
+        
+        Each halo will have have the same dimensions as the brick's logical box,
+        except for the axis from which the halo was extracted.
+        
+        For example, if a Brick's logical box is ``[[10,20], [20,40]]`` and a physical
+        box 1 pixel wider in each dimension, its 'outer' halos along the Y axis would have
+        physical boxes of ``[[9,10], [20,40]]`` and ``[[10,11], [20,40]]``.
+        
+        If the brick's physical_box is smaller than its logical_box along any axis,
+        the halos for that axis will be zero-padded to ensure that the halo dimensions
+        always correspond to the brick's logical box.
+        
+        The resulting halos are returned as bricks whose logical_box matches the original
+        brick (indicating where they came from), but whose physical boxes correspond to
+        the exact region they occupy in space.
+        """
+        halo_bricks = []
+        for axis, halo in enumerate(grid.halo_shape):
+            logical_lower, logical_upper = brick.logical_box[:,axis]
+
+            if sides in ('lower', 'all'):
+                lower_halo_box = brick.logical_box.copy()
+                if halo_type == 'outer':
+                    lower_halo_box[:, axis] = (logical_lower - halo, logical_lower)
+                else:
+                    lower_halo_box[:, axis] = (logical_lower, logical_lower + halo)
+                
+                lower_halo_brick = _extract_subbrick(brick, lower_halo_box)
+                if lower_halo_brick is not None:
+                    halo_bricks.append(lower_halo_brick)
+                
+            if sides in ('upper', 'all'):
+                upper_halo_box = brick.logical_box.copy()
+                if halo_type == 'outer':
+                    upper_halo_box[:, axis] = (logical_upper, logical_upper + halo)
+                else:
+                    upper_halo_box[:, axis] = (logical_upper - halo, logical_upper)
+                    
+                upper_halo_brick = _extract_subbrick(brick, upper_halo_box)
+                if upper_halo_brick is not None:
+                    halo_bricks.append(upper_halo_brick)
+        
+        return halo_bricks
+
+    halo_bricks = bricks.map(_extract_halo_sides).flatten()
+    return halo_bricks
