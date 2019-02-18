@@ -1,10 +1,14 @@
 import numpy as np
 
-from neuclease.util import Grid, SparseBlockMask
+from neuclease.util import Grid, SparseBlockMask, round_box
 
 from ..util import persist_and_execute, downsample, DebugClient
 from .brick import ( Brick, generate_bricks_from_volume_source, realign_bricks_to_new_grid, pad_brick_data_from_volume_source )
 
+# Column names used below for logical box coordinates and physical box coordinates.
+# FIXME: There might be a more elegant way to define thise via pandas multi-indexes...
+LB_COLS = ['logical_z0', 'logical_y0', 'logical_x0', 'logical_z1', 'logical_y1', 'logical_x1']
+PB_COLS = ['physical_z0', 'physical_y0', 'physical_x0', 'physical_z1', 'physical_y1', 'physical_x1']
 
 class BrickWall:
     """
@@ -281,3 +285,51 @@ class BrickWall:
         
         return BrickWall( new_bounding_box, new_grid, new_bricks, self.num_bricks )
 
+    @classmethod
+    def bricks_as_ddf(cls, bricks):
+        """
+        Return given dask Bag of bricks as a dask DataFrame,
+        with columns for the logical and physical boxes.
+        """
+        def boxes_and_brick(brick):
+            return (*brick.logical_box.flat, *brick.physical_box.flat, brick)
+        
+        dtypes = {col: np.int32 for col in LB_COLS + PB_COLS}
+        dtypes['brick'] = object
+        bricks_df = bricks.map(boxes_and_brick).to_dataframe(dtypes)
+        return bricks_df
+
+
+    @classmethod
+    def compute_brick_index(cls, brick, wall_box, wall_grid):
+        """
+        For a given brick in this BrickWall,
+        compute a unique index based on the brick's logical_box.
+        (We just compute the scan-order index.)
+        Note that in the case of a sparsely populated brick wall,
+        brick indexes will not be consecutive.
+        """
+        wall_box = round_box( wall_box, wall_grid.block_shape, 'out' )
+        wall_shape = wall_box[1] - wall_box[0]
+        
+        wall_index_box = np.array(([0,0,0], wall_shape)) // wall_grid.block_shape
+        wall_index_shape = wall_index_box[1] - wall_index_box[0]
+
+        location_id = (brick.logical_box[0] - wall_box[0]) // wall_grid.block_shape
+
+        def _scan_order_index(coord, shape):
+            # Example:
+            #  coord = (z,y,x,c)
+            #  shape = (Z,Y,X,C)
+            #  strides = (Y*X*C, X*C, C, 1)
+            #  index = z*Y*X*C + y*X*C + x*C + c*1
+            
+            # Accumulate products in reverse
+            reverse_shape = tuple(shape[::-1]) # (C,X,Y,Z)
+            reverse_strides = np.multiply.accumulate((1,) + reverse_shape[:-1]) # (1, C, C*X, C*X*Y)
+
+            strides = reverse_strides[::-1]
+            index = (coord * strides).sum()
+            return np.uint32(index)
+
+        return _scan_order_index(location_id, wall_index_shape)
