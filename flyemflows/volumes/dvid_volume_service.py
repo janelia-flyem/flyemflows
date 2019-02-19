@@ -7,7 +7,7 @@ from confiddler import validate
 from dvid_resource_manager.client import ResourceManagerClient
 
 from neuclease.util import boxes_from_grid, box_to_slicing
-from neuclease.dvid import fetch_instance_info, fetch_volume_box, fetch_raw, post_raw, fetch_labelarray_voxels, post_labelarray_blocks
+from neuclease.dvid import fetch_instance_info, fetch_volume_box, fetch_raw, post_raw, fetch_labelarray_voxels, post_labelmap_voxels
 
 from ..util import auto_retry, replace_default_entries
 from . import GeometrySchema, VolumeServiceReader, VolumeServiceWriter, NewAxisOrderSchema, RescaleLevelSchema, LabelMapSchema
@@ -87,6 +87,11 @@ DvidSegmentationServiceSchema = \
             "description": "Tell the server not to update the label index after POST blocks.\n"
                            "Useful during initial volume ingestion, in which label\n"
                            "indexes will be sent by the client later on.\n",
+            "type": "boolean",
+            "default": False
+        },
+        "enable-downres": {
+            "description": "When scale-0 data is posted, tell the server to update the low-resolution downsample pyramids.\n",
             "type": "boolean",
             "default": False
         }
@@ -186,6 +191,11 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             self.disable_indexing = volume_config["dvid"]["disable-indexing"]
         else:
             self.disable_indexing = False
+
+        if "enable-downres" in volume_config["dvid"]:
+            self.enable_downres = volume_config["dvid"]["enable-downres"]
+        else:
+            self.enable_downres = False
 
         # Whether or not to read the supervoxels from the labelmap instance instead of agglomerated labels.
         self.supervoxels = ("supervoxels" in volume_config["dvid"]) and (volume_config["dvid"]["supervoxels"])
@@ -363,17 +373,19 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
 
         is_block_aligned = (box_zyx % self.block_width == 0).all()
         
+        assert (not self.enable_downres) or (scale == 0), \
+            "When using enable-downres, you can only write scale-0 data."
+        
         try:
             # Labelarray data can be posted very efficiently if the request is block-aligned
             if self._instance_type in ('labelarray', 'labelmap') and is_block_aligned:
-                block_boxes = list(boxes_from_grid(box_zyx, self.block_width))
-                corners = [box[0] for box in block_boxes]
-                blocks = (subvolume[box_to_slicing(*(box - offset_zyx))] for box in block_boxes)
-
                 with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
-                    post_labelarray_blocks( self._server, self._uuid, instance_name, corners, blocks, scale,
-                                            downres=False, noindexing=self.disable_indexing, throttle=throttle )
+                    post_labelmap_voxels( self._server, self._uuid, instance_name, offset_zyx, subvolume, scale,
+                                            self.enable_downres, self.disable_indexing, throttle )
             else:
+                assert not self.enable_downres, \
+                    "Can't use enable-downres: You are attempting to post non-block-aligned data."
+
                 with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
                     post_raw( self._server, self._uuid, instance_name, offset_zyx, subvolume,
                               throttle=throttle, mutate=not self.disable_indexing )
