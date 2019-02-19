@@ -51,6 +51,7 @@ SegmentationVolumeSchema = \
     "required": ["geometry"],
     "default": {},
     "oneOf": [
+        { "properties": { "zarr": ZarrServiceSchema }, "required": ["zarr"] },
         { "properties": { "hdf5": Hdf5ServiceSchema }, "required": ["hdf5"] },
         { "properties": { "dvid": DvidSegmentationServiceSchema }, "required": ["dvid"] },
         { "properties": { "brainmaps": BrainMapsServiceSchema }, "required": ["brainmaps"] }
