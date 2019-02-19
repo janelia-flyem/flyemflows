@@ -40,7 +40,10 @@ Hdf5ServiceSchema = \
         "writable": {
             "description": "Open the file in read/write mode.\n"
                            "If the file (or dataset) doesn't exist yet, create it upon initialization.\n"
-                           "(Requires an explicit dtype and bounding box.)\n",
+                           "(Requires an explicit dtype and bounding box.)\n"
+                           "Note: \n"
+                           "  Writability is not currently safe in multi-process mode.\n"
+                           "  Writing HDF5 volumes is only to be used for testing (in a single process).\n",
             "type": "boolean",
             "default": False
         }
@@ -66,6 +69,10 @@ Hdf5VolumeSchema = \
 DEFAULT_CHUNK_WIDTH = 64
 
 class Hdf5VolumeService(VolumeServiceReader, VolumeServiceWriter):
+    """
+    Note: Writability is not currently safe in multi-process mode.
+          Writing HDF5 volumes via this class is suitable only for testing (in a single process).
+    """
 
     def __init__(self, volume_config):
         validate(volume_config, Hdf5VolumeSchema, inject_defaults=True)
@@ -91,7 +98,7 @@ class Hdf5VolumeService(VolumeServiceReader, VolumeServiceWriter):
         if writable:
             mode = 'a'
         
-        self._h5_file = h5py.File(path, mode)        
+        self._h5_file = h5py.File(path, mode)
 
         if dataset_name in self._h5_file:
             self._dataset = self._h5_file[dataset_name]
@@ -107,12 +114,15 @@ class Hdf5VolumeService(VolumeServiceReader, VolumeServiceWriter):
                 raise RuntimeError(f"Can't create dataset '{dataset_name}': Bounding box is not completely specified in the config.")
 
             if block_width == -1:
-                block_width = DEFAULT_CHUNK_WIDTH
+                chunks = np.minimum(3*(DEFAULT_CHUNK_WIDTH,), bounding_box_zyx[1])
+                replace_default_entries(chunks, 3*(DEFAULT_CHUNK_WIDTH,))
+            else:
+                chunks = 3*(block_width,)
             
             self._dataset = self._h5_file.create_dataset( dataset_name,
                                                           shape=bounding_box_zyx[1],
                                                           dtype=np.dtype(dtype),
-                                                          chunks=3*(block_width,) )
+                                                          chunks=tuple(chunks) )
 
         ###
         ### bounding_box_zyx

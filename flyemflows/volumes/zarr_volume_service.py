@@ -41,7 +41,10 @@ ZarrServiceSchema = \
         "writable": {
             "description": "Open the array in read/write mode.\n"
                            "If the directory (or dataset) doesn't exist yet, create it upon initialization.\n"
-                           "(Requires an explicit dtype and bounding box.)\n",
+                           "(Requires an explicit dtype and bounding box.)\n"
+                           "Note: \n"
+                           "  It is not safe for multiple processes to write to the same brick simultaneously.\n"
+                           "  Clients should ensure that each process is responsible for writing brick-aligned portions of the dataset.\n",
             "type": "boolean",
             "default": False
         }
@@ -67,7 +70,11 @@ ZarrVolumeSchema = \
 DEFAULT_CHUNK_WIDTH = 64
 
 class ZarrVolumeService(VolumeServiceReader, VolumeServiceWriter):
-
+    """
+    Note:
+      It is not safe for multiple processes to write to the same brick simultaneously.
+      Clients should ensure that each process is responsible for writing brick-aligned portions of the dataset.
+    """
     def __init__(self, volume_config):
         validate(volume_config, ZarrVolumeSchema, inject_defaults=True)
 
@@ -119,7 +126,10 @@ class ZarrVolumeService(VolumeServiceReader, VolumeServiceWriter):
                 raise RuntimeError(f"Can't create Zarr array {path}/{dataset_name}: Bounding box is not completely specified in the config.")
 
             if block_width == -1:
-                block_width = DEFAULT_CHUNK_WIDTH
+                chunks = np.minimum(3*(DEFAULT_CHUNK_WIDTH,), bounding_box_zyx[1])
+                replace_default_entries(chunks, 3*(DEFAULT_CHUNK_WIDTH,))
+            else:
+                chunks = 3*(block_width,)
             
             if not dataset_name:
                 self._group = None
@@ -129,7 +139,7 @@ class ZarrVolumeService(VolumeServiceReader, VolumeServiceWriter):
                 self._dataset = self._group.create_dataset( dataset_name,
                                                             shape=bounding_box_zyx[1],
                                                             dtype=np.dtype(dtype),
-                                                            chunks=3*(block_width,) )
+                                                            chunks=tuple(chunks) )
 
         ###
         ### bounding_box_zyx
