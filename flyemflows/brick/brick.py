@@ -286,7 +286,7 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
     return bricks, num_bricks
 
 
-def clip_to_logical( brick ):
+def clip_to_logical( brick, recompress=True ):
     """
     Truncate the given brick so that it's volume does not exceed the bounds of its logical_box.
     (Useful if the brick was originally constructed with a halo.)
@@ -297,8 +297,13 @@ def clip_to_logical( brick ):
     
     intersection_within_physical = intersection - brick.physical_box[0]
     new_vol = brick.volume[ box_to_slicing(*intersection_within_physical) ]
-    new_brick = Brick( brick.logical_box, intersection, new_vol, location_id=brick.location_id, compression=brick.compression )
-    brick.compress()
+
+    if recompress:
+        compression = brick.compression
+    else:
+        compression = None
+
+    new_brick = Brick( brick.logical_box, intersection, new_vol, location_id=brick.location_id, compression=compression )
     return new_brick
 
 
