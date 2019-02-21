@@ -9,18 +9,20 @@ import h5py
 import numpy as np
 import pandas as pd
 
-from neuclease.util import Timer, Grid, slabs_from_box, block_stats_for_volume, BLOCK_STATS_DTYPES
+from neuclease.util import Timer, Grid, slabs_from_box, block_stats_for_volume, BLOCK_STATS_DTYPES, mask_for_labels
 from neuclease.dvid import fetch_repo_instances, fetch_instance_info
 from neuclease.dvid.rle import runlength_encode_to_ranges
 
 from dvid_resource_manager.client import ResourceManagerClient
 
-from flyemflows.util import replace_default_entries, COMPRESSION_METHODS
-from flyemflows.workflow import Workflow
-from flyemflows.brick import BrickWall
-from flyemflows.volumes import ( VolumeService, VolumeServiceWriter, SegmentationVolumeSchema,
+from ..util import replace_default_entries, COMPRESSION_METHODS
+from ..brick import Brick, BrickWall
+from ..volumes import ( VolumeService, VolumeServiceWriter, SegmentationVolumeSchema,
                                  DvidSegmentationVolumeSchema, TransposedVolumeService, ScaledVolumeService,
                                  DvidVolumeService )
+
+from . import Workflow
+from .util.config_helpers import BodyListSchema, load_body_list
 
 logger = logging.getLogger(__name__)
 
@@ -128,9 +130,19 @@ class CopySegmentation(Workflow):
                                "Should not be necessary for most use-cases.",
                 "type": "integer",
                 "default": 0,
-            }
+            },
+            "input-mask-labels": BodyListSchema,
+            "output-mask-labels": BodyListSchema
         }
     }
+    
+    OptionsSchema["properties"]["input-mask-labels"]["description"] += (
+        "If provided, only voxels under the given input labels in the output will be modified.\n"
+        "Others will remain untouched.\n" )
+
+    OptionsSchema["properties"]["output-mask-labels"]["description"] += (
+        "If provided, only voxels under the given labels in the output will be modified.\n"
+        "Others will remain untouched.\n" )
 
     Schema = copy.deepcopy(Workflow.schema())
     Schema["properties"].update({
@@ -193,9 +205,11 @@ class CopySegmentation(Workflow):
         input_config = self.config["input"]
         output_config = self.config["output"]
         mgr_options = self.config["resource-manager"]
-        slab_depth = self.config["copysegmentation"]["slab-depth"]
-        pyramid_depth = self.config["copysegmentation"]["pyramid-depth"]
-        permit_inconsistent_pyramids = self.config["copysegmentation"]["permit-inconsistent-pyramid"]
+        
+        options = self.config["copysegmentation"]
+        slab_depth = options["slab-depth"]
+        pyramid_depth = options["pyramid-depth"]
+        permit_inconsistent_pyramids = options["permit-inconsistent-pyramid"]
 
         self.mgr_client = ResourceManagerClient( mgr_options["server"], mgr_options["port"] )
         self.input_service = VolumeService.create_from_config( input_config, None, self.mgr_client )
@@ -330,6 +344,11 @@ class CopySegmentation(Workflow):
             slab_depth = block_width * 2**pyramid_depth
         options["slab-depth"] = slab_depth
 
+        if options["skip-scale-0-write"] and pyramid_depth == 0 and not options["compute-block-statistics"]:
+            raise RuntimeError("According to your config, you aren't computing block stats, "
+                               "you aren't writing scale 0, and you aren't writing pyramids.  "
+                               "What exactly are you hoping will happen here?")
+
 
     def _init_stats_file(self):
         stats_path = self.config["copysegmentation"]["block-statistics-file"]
@@ -395,6 +414,17 @@ class CopySegmentation(Workflow):
         options = self.config["copysegmentation"]
         pyramid_depth = options["pyramid-depth"]
 
+        is_supervoxels = False
+        if isinstance(self.input_service.base_service, DvidVolumeService):
+            is_supervoxels = self.input_service.base_service.supervoxels
+
+        input_mask_labels = load_body_list(options["input-mask-labels"], is_supervoxels)
+        input_mask_labels = set(input_mask_labels)
+        self.input_mask_labels = input_mask_labels
+
+        self.output_mask_labels = load_body_list(options["output-mask-labels"], is_supervoxels)
+        self.output_mask_labels = set(self.output_mask_labels)
+
         input_slab_box = output_slab_box - self.translation_offset_zyx
         input_wall = BrickWall.from_volume_service(self.input_service, 0, input_slab_box, self.client, self.target_partition_size_voxels, compression=options['brick-compression'])
         input_wall.persist_and_execute(f"Slab {slab_index}: Reading ({input_slab_box[:,::-1].tolist()})", logger)
@@ -403,81 +433,58 @@ class CopySegmentation(Workflow):
         # (which will leave the bricks in a new, offset grid)
         # This has no effect on the brick volumes themselves.
         if any(self.translation_offset_zyx):
-            translated_wall = input_wall.translate(self.translation_offset_zyx)
-        else:
-            translated_wall = input_wall # no translation needed
-        del input_wall
+            input_wall = input_wall.translate(self.translation_offset_zyx)
 
-        # For now, all output_configs are required to have identical grid alignment settings
-        # Therefore, we can save time in the loop below by aligning the input to the output grid in advance.
-        aligned_input_wall = self._consolidate_and_pad(slab_index, translated_wall, 0, self.output_service, align=True, pad=False)
-        del translated_wall
+        output_service = self.output_service
 
-        if options["compute-block-statistics"]:
-            # Compute stats on input (pre-padding), but don't write them to disk
-            # until after we've completed the download/downsampling.
-            # Note: Since this is pre-padding, the stats on the border blocks
-            #       will be wrong unless the bounding-box is block-aligned.
-            with Timer(f"Slab {slab_index}: Computing slab block statistics", logger):
-                block_shape = 3*[self.output_service.base_service.block_width]
+        # Pad internally to block-align to the OUTPUT alignment.
+        # Here, we assume that any output labelmap (if any) is idempotent,
+        # so it's okay to read pre-existing output data that will ultimately get remapped.
+        padded_wall = self._consolidate_and_pad(slab_index, input_wall, 0, output_service)
 
-                def block_stats_for_brick(brick):
-                    return block_stats_for_volume(block_shape, brick.volume, brick.physical_box)
-                
-                input_slab_block_stats_per_brick = aligned_input_wall.bricks.map(block_stats_for_brick).compute()
-                input_slab_block_stats_df = pd.concat(input_slab_block_stats_per_brick, ignore_index=True)
-                del input_slab_block_stats_per_brick
+        # Write scale 0 to DVID
+        if not options["skip-scale-0-write"]:
+            self._write_bricks( slab_index, padded_wall, 0, output_service )
 
-        if options["skip-scale-0-write"] and pyramid_depth == 0:
-            # Early break if merely computing block statistics and not writing anything.
-            logger.info(f"Slab {slab_index}: Nothing to write.")
-            if not options["compute-block-statistics"]:
-                raise RuntimeError("According to your config, you aren't computing block stats, "
-                                   "you aren't writing scale 0, and you aren't writing pyramids.  "
-                                   "What exactly are you hoping will happen here?")
-        else:
-            output_service = self.output_service
-            aligned_output_wall = aligned_input_wall
-
-            # Pad internally to block-align.
-            # Here, we assume that any output labelmaps are idempotent,
-            # so it's okay to read pre-existing output data that will ultimately get remapped.
-            padded_wall = self._consolidate_and_pad(slab_index, aligned_output_wall, 0, output_service, align=False, pad=True)
-            del aligned_output_wall
+            if options["compute-block-statistics"]:
+                with Timer(f"Slab {slab_index}: Computing slab block statistics", logger):
+                    block_shape = 3*[self.output_service.base_service.block_width]
     
-            # Write scale 0 to DVID
-            if not options["skip-scale-0-write"]:
-                self._write_bricks( slab_index, padded_wall, 0, output_service )
+                    def block_stats_for_brick(brick):
+                        return block_stats_for_volume(block_shape, brick.volume, brick.physical_box)
+                    
+                    slab_block_stats_per_brick = padded_wall.bricks.map(block_stats_for_brick).compute()
+                    slab_block_stats_df = pd.concat(slab_block_stats_per_brick, ignore_index=True)
+                    del slab_block_stats_per_brick
     
-            for new_scale in range(1, 1+pyramid_depth):
-                if options["download-pre-downsampled"] and new_scale in self.input_service.available_scales:
-                    del padded_wall
-                    downsampled_wall = BrickWall.from_volume_service(self.input_service, new_scale, input_slab_box, self.client, self.target_partition_size_voxels, compression=options["brick-compression"])
-                    downsampled_wall.persist_and_execute(f"Slab {slab_index}: Scale {new_scale}: Downloading pre-downsampled bricks", logger)
-                else:
-                    # Compute downsampled (results in smaller bricks)
-                    downsampled_wall = padded_wall.downsample( (2,2,2), method='label' )
-                    downsampled_wall.persist_and_execute(f"Slab {slab_index}: Scale {new_scale}: Downsampling", logger)
-                    del padded_wall
-
-                # Consolidate to full-size bricks and pad internally to block-align
-                consolidated_wall = self._consolidate_and_pad(slab_index, downsampled_wall, new_scale, output_service, align=True, pad=True)
-                del downsampled_wall
-
-                # Write to DVID
-                self._write_bricks( slab_index, consolidated_wall, new_scale, output_service )
-
-                padded_wall = consolidated_wall
-                del consolidated_wall
-            del padded_wall
-
-        # Now that processing is complete, commit the stats to disk.
-        if options["compute-block-statistics"]:
-            with Timer(f"Slab {slab_index}: Appending stats and overwriting stats file"):
-                self._append_slab_statistics( input_slab_block_stats_df )
+                with Timer(f"Slab {slab_index}: Appending stats and overwriting stats file"):
+                    self._append_slab_statistics( slab_block_stats_df )
 
 
-    def _consolidate_and_pad(self, slab_index, input_wall, scale, output_service, align=True, pad=True):
+        for new_scale in range(1, 1+pyramid_depth):
+            if options["download-pre-downsampled"] and new_scale in self.input_service.available_scales:
+                del padded_wall
+                downsampled_wall = BrickWall.from_volume_service(self.input_service, new_scale, input_slab_box, self.client, self.target_partition_size_voxels, compression=options["brick-compression"])
+                downsampled_wall.persist_and_execute(f"Slab {slab_index}: Scale {new_scale}: Downloading pre-downsampled bricks", logger)
+            else:
+                # Compute downsampled (results in smaller bricks)
+                downsampled_wall = padded_wall.downsample( (2,2,2), method='label' )
+                downsampled_wall.persist_and_execute(f"Slab {slab_index}: Scale {new_scale}: Downsampling", logger)
+                del padded_wall
+
+            # Consolidate to full-size bricks and pad internally to block-align
+            consolidated_wall = self._consolidate_and_pad(slab_index, downsampled_wall, new_scale, output_service)
+            del downsampled_wall
+
+            # Write to DVID
+            self._write_bricks( slab_index, consolidated_wall, new_scale, output_service )
+
+            padded_wall = consolidated_wall
+            del consolidated_wall
+        del padded_wall
+
+
+    def _consolidate_and_pad(self, slab_index, input_wall, scale, output_service):
         """
         Consolidate (align), and pad the given BrickWall
 
@@ -488,26 +495,72 @@ class CopySegmentation(Workflow):
             
             output_service: The output_service to align to and pad from
             
-            align: If False, skip the alignment step.
-                  (Only use this if the bricks are already aligned.)
-            
-            pad: If False, skip the padding step
-        
         Returns a pre-executed and persisted BrickWall.
         """
+        options = self.config["copysegmentation"]
         output_writing_grid = Grid(output_service.preferred_message_shape)
 
-        if not align or output_writing_grid.equivalent_to(input_wall.grid):
-            realigned_wall = input_wall
-            realigned_wall.persist_and_execute(f"Slab {slab_index}: Scale {scale}: Persisting pre-aligned bricks", logger)
-        else:
-            # Consolidate bricks to full-size, aligned blocks (shuffles data)
-            realigned_wall = input_wall.realign_to_new_grid( output_writing_grid )
-            del input_wall
-            realigned_wall.persist_and_execute(f"Slab {slab_index}: Scale {scale}: Shuffling bricks into alignment", logger)
-        
-        if not pad:
-            return realigned_wall
+        # Consolidate bricks to full-size, aligned blocks (shuffles data)
+        realigned_wall = input_wall.realign_to_new_grid( output_writing_grid )
+        del input_wall
+        realigned_wall.persist_and_execute(f"Slab {slab_index}: Scale {scale}: Shuffling bricks into alignment", logger)
+
+        input_mask_labels = self.input_mask_labels
+        output_mask_labels = self.output_mask_labels
+
+        # If no masks are involved, we merely need to pad the existing data on the edges.
+        # (No need to fetch the entire output.)
+        # Similarly, if scale > 0, then the masks were already applied and the input/output data was
+        # already combined, we can simply write the (padded) downsampled data.
+        if scale == 0 and (input_mask_labels or output_mask_labels):
+    
+            # If masks are involved, we must fetch the ALL the output,
+            # and select data from input or output according to the masks.
+            assert realigned_wall.bounding_box is not None
+            output_wall = BrickWall.from_volume_service( self.output_service,
+                                                         0,
+                                                         realigned_wall.bounding_box,
+                                                         self.client,
+                                                         self.target_partition_size_voxels,
+                                                         compression=options['brick-compression'] )
+    
+            output_service = self.output_service
+            translation_offset_zyx = self.translation_offset_zyx
+            def combine_with_output(input_brick):
+                output_box = input_brick.physical_box + translation_offset_zyx
+                output_vol = output_service.get_subvolume(output_box, 0)
+                output_vol = np.asarray(output_vol, order='C')
+                
+                mask = None
+                if input_mask_labels:
+                    # Input mask was already applied (above),
+                    # so any non-zero voxels are in the input mask
+                    mask = mask_for_labels(input_brick.volume, input_mask_labels)
+                
+                if output_mask_labels:
+                    output_mask = mask_for_labels(output_vol, output_mask_labels)
+                    
+                    if mask is None:
+                        mask = output_mask
+                    else:
+                        mask[:] &= output_mask
+    
+                # Start with the complete output, then
+                # change voxels that fall within both masks.
+                output_vol[mask] = input_brick.volume[mask]
+                
+                combined_brick = Brick( input_brick.logical_box,
+                                        input_brick.physical_box,
+                                        output_vol,
+                                        location_id=input_brick.location_id,
+                                        compression=input_brick.compression )
+                return combined_brick
+
+            combined_bricks = realigned_wall.bricks.map(combine_with_output)
+            combined_wall = BrickWall( output_wall.bounding_box, output_wall.grid, combined_bricks, output_wall.num_bricks )
+            combined_wall.persist_and_execute(f"Slab {slab_index}: Scale {scale}: Combining masked bricks", logger)
+            realigned_wall = combined_wall
+
 
         # Pad from previously-existing pyramid data until
         # we have full storage blocks, e.g. (64,64,64),
@@ -519,9 +572,8 @@ class CopySegmentation(Workflow):
         padded_wall = realigned_wall.fill_missing(output_accessor_func, output_padding_grid)
         del realigned_wall
         padded_wall.persist_and_execute(f"Slab {slab_index}: Scale {scale}: Padding", logger)
-
         return padded_wall
-
+        
 
     def _write_bricks(self, slab_index, brick_wall, scale, output_service):
         """

@@ -14,6 +14,7 @@ BodyListSchema = {
         {
             "description": "A list of body IDs (or supervoxel IDs) to generate meshes for.",
             "type": "array",
+            "items": {"type": "integer"},
             "default": []
         },
         {

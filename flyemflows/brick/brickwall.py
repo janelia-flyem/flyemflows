@@ -245,6 +245,10 @@ class BrickWall:
         new_grid = Grid( self.grid.block_shape, self.grid.offset + offset_zyx )
 
         def translate_brick(brick):
+            # FIXME: This is needlessly inefficient for compressed bricks,
+            #        since it uncompresses and recompresses the volume,
+            #        but currently the Brick constructor doesn't allow me to
+            #        provide the compressed form directly.
             return Brick( brick.logical_box + offset_zyx,
                           brick.physical_box + offset_zyx,
                           brick.volume,

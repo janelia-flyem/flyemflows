@@ -10,9 +10,9 @@ from dask.bag import zip as bag_zip
 from requests import HTTPError
 
 from dvid_resource_manager.client import ResourceManagerClient
-from neuclease.util import Timer, Grid, SparseBlockMask, connected_components_nonconsecutive, choose_pyramid_depth
-from neuclease.dvid import ( fetch_repo_instances, fetch_instance_info, create_labelmap_instance,
-                             fetch_sparsevol_coarse_via_labelindex, fetch_maxlabel, post_maxlabel, post_nextlabel )
+from neuclease.util import Timer, Grid, SparseBlockMask, connected_components_nonconsecutive, apply_mask_for_labels
+from neuclease.dvid import ( fetch_instance_info, fetch_sparsevol_coarse_via_labelindex, fetch_maxlabel,
+                             post_maxlabel, post_nextlabel )
 
 from dvidutils import LabelMapper
 
@@ -121,10 +121,7 @@ class ConnectedComponents(Workflow):
             orig_max = orig_vol.max()
             
             if subset_labels:
-                flatvol = orig_vol.copy('C').reshape(-1)
-                erase_points = pd.DataFrame(flatvol, columns=['label']).eval('label not in @subset_labels')
-                flatvol[erase_points.values] = 0
-                orig_vol = flatvol.reshape(brick.volume.shape)
+                apply_mask_for_labels(orig_vol.copy('C'), subset_labels, inplace=True)
             
             cc_vol = skm.label(orig_vol, background=0, connectivity=1)
             assert cc_vol.dtype == np.int64

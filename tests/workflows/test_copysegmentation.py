@@ -3,15 +3,18 @@ import tempfile
 import textwrap
 from io import StringIO
 
-import h5py
-import numpy as np
-
-from dvidutils import downsample_labels
-from neuclease.util import box_to_slicing
-from neuclease.dvid import create_labelmap_instance, post_labelarray_voxels, fetch_raw, fetch_labelarray_voxels
-
 import pytest
 from ruamel.yaml import YAML
+
+import h5py
+import numpy as np
+import pandas as pd
+
+from dvidutils import downsample_labels
+from neuclease.util import box_to_slicing, extract_subvol
+from neuclease.dvid import create_labelmap_instance, post_labelmap_voxels, fetch_raw, fetch_labelmap_voxels
+
+from flyemflows.util import upsample
 from flyemflows.bin.launchflow import launch_flow
 
 # Overridden below when running from __main__
@@ -61,7 +64,7 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
     output_segmentation_name = 'segmentation-output-from-dvid'
  
     create_labelmap_instance(dvid_address, repo_uuid, input_segmentation_name)
-    post_labelarray_voxels(dvid_address, repo_uuid, input_segmentation_name, (0,0,0), random_segmentation)
+    post_labelmap_voxels(dvid_address, repo_uuid, input_segmentation_name, (0,0,0), random_segmentation)
     
     template_dir = tempfile.mkdtemp(suffix="copysegmentation-from-dvid-template")
  
@@ -170,17 +173,20 @@ def _run_to_dvid(setup, check_scale_0=True):
     _execution_dir, workflow = launch_flow(template_dir, 1)
     final_config = workflow.config
 
-    box_xyz = np.array( final_config['input']['geometry']['bounding-box'] )
-    box_zyx = box_xyz[:,::-1]
+    input_box_xyz = np.array( final_config['input']['geometry']['bounding-box'] )
+    input_box_zyx = input_box_xyz[:,::-1]
     
-    output_vol = fetch_raw(dvid_address, repo_uuid, output_segmentation_name, box_zyx, dtype=np.uint64)
-    expected_vol = volume[box_to_slicing(*box_zyx)]
+    expected_vol = extract_subvol(volume, input_box_zyx)
+    
+    output_box_xyz = np.array( final_config['output']['geometry']['bounding-box'] )
+    output_box_zyx = output_box_xyz[:,::-1]
+    output_vol = fetch_raw(dvid_address, repo_uuid, output_segmentation_name, output_box_zyx, dtype=np.uint64)
     
     if check_scale_0:
         assert (output_vol == expected_vol).all(), \
             "Written vol does not match expected"
     
-    return box_zyx, expected_vol
+    return input_box_zyx, expected_vol
 
 
 def test_copysegmentation_from_dvid_to_dvid(setup_dvid_segmentation_input, disable_auto_retry):
@@ -190,7 +196,53 @@ def test_copysegmentation_from_dvid_to_dvid(setup_dvid_segmentation_input, disab
 def test_copysegmentation_from_hdf5_to_dvid(setup_hdf5_segmentation_input, disable_auto_retry):
     _box_zyx, _expected_vol = _run_to_dvid(setup_hdf5_segmentation_input)
  
- 
+
+def test_copysegmentation_from_hdf5_to_dvid_input_mask(setup_hdf5_segmentation_input, disable_auto_retry):
+    template_dir, config, volume, dvid_address, repo_uuid, _output_segmentation_name = setup_hdf5_segmentation_input
+    
+    # make sure we get a fresh output
+    output_segmentation_name = 'copyseg-with-input-mask'
+    config["output"]["dvid"]["segmentation-name"] = output_segmentation_name
+
+    # Select only even IDs
+    all_labels = pd.unique(volume.reshape(-1))
+    even_labels = all_labels[all_labels % 2 == 0]
+    expected_vol = np.where((volume % 2) == 0, volume, 0)
+    config["copysegmentation"]["input-mask-labels"] = even_labels.tolist()
+
+    setup = template_dir, config, expected_vol, dvid_address, repo_uuid, output_segmentation_name
+    _box_zyx, _expected_vol = _run_to_dvid(setup)
+
+def test_copysegmentation_from_hdf5_to_dvid_output_mask(setup_hdf5_segmentation_input, disable_auto_retry):
+    template_dir, config, input_volume, dvid_address, repo_uuid, _output_segmentation_name = setup_hdf5_segmentation_input
+
+    output_volume = np.zeros((256,256,256), np.uint64)
+    mask = np.zeros((256,256,256), dtype=bool)
+    
+    masked_labels = [5, 10, 15, 20]
+
+    # Start with an output that is striped (but along on block boundaries)
+    for label, (z_start, z_stop) in enumerate(zip(range(0,250, 10), range(10, 260, 10))):
+        output_volume[z_start:z_stop] = label
+        if label in masked_labels:
+            mask[z_start:z_stop] = True
+
+    # We expect the output to remain unchanged except in the masked voxels.
+    expected_vol = np.where(mask, input_volume, output_volume)
+
+    # make sure we get a fresh output
+    output_segmentation_name = 'copyseg-with-input-mask'
+    config["output"]["dvid"]["segmentation-name"] = output_segmentation_name
+    config["copysegmentation"]["output-mask-labels"] = masked_labels
+
+    max_scale = config["copysegmentation"]["pyramid-depth"]
+    create_labelmap_instance(dvid_address, repo_uuid, output_segmentation_name, max_scale=max_scale)
+    post_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, (0,0,0), output_volume)
+
+    setup = template_dir, config, expected_vol, dvid_address, repo_uuid, output_segmentation_name
+    _box_zyx, _expected_vol = _run_to_dvid(setup)
+
+
 def test_copysegmentation_from_hdf5_to_dvid_multiscale(setup_hdf5_segmentation_input, disable_auto_retry):
     template_dir, config, volume, dvid_address, repo_uuid, _ = setup_hdf5_segmentation_input
     
@@ -218,9 +270,9 @@ def test_copysegmentation_from_hdf5_to_dvid_multiscale(setup_hdf5_segmentation_i
     scale_1_vol = downsample_labels(scale_0_vol, 2, True)
     scale_2_vol = downsample_labels(scale_1_vol, 2, True)
  
-    output_0_vol = fetch_labelarray_voxels(dvid_address, repo_uuid, output_segmentation_name, box_zyx // 1, scale=0)
-    output_1_vol = fetch_labelarray_voxels(dvid_address, repo_uuid, output_segmentation_name, box_zyx // 2, scale=1)
-    output_2_vol = fetch_labelarray_voxels(dvid_address, repo_uuid, output_segmentation_name, box_zyx // 4, scale=2)
+    output_0_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, box_zyx // 1, scale=0)
+    output_1_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, box_zyx // 2, scale=1)
+    output_2_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, box_zyx // 4, scale=2)
 
 #     np.save('/tmp/expected-0.npy', scale_0_vol)
 #     np.save('/tmp/expected-1.npy', scale_1_vol)
@@ -243,7 +295,7 @@ def test_copysegmentation_from_hdf5_to_dvid_multiscale(setup_hdf5_segmentation_i
 
 
 @pytest.mark.skipif(not os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', None), reason="Skipping Brainmaps test")
-def test_copysegmentation_from_brainmaps_to_dvid(setup_dvid_repo, disable_auto_retry):
+def test_copysegmentation_from_brainmaps_to_dvid(setup_dvid_repo):
     """
     Fetch a tiny subvolume from a Brainmaps source.
     To run this test, you must have valid application credentials loaded in your bash environment,
@@ -294,7 +346,7 @@ def test_copysegmentation_from_brainmaps_to_dvid(setup_dvid_repo, disable_auto_r
           download-pre-downsampled: true
     """)
  
-    template_dir = tempfile.mkdtemp(suffix="copysegmentation-from-brainmaps") 
+    template_dir = tempfile.mkdtemp(suffix="copysegmentation-from-brainmaps")
     with open(f"{template_dir}/workflow.yaml", 'w') as f:
         f.write(config_text)
  
@@ -315,7 +367,7 @@ def test_copysegmentation_from_brainmaps_to_dvid(setup_dvid_repo, disable_auto_r
         assert expected_vol.any(), \
             f"Something is wrong with this test: The brainmaps volume at scale {scale} is all zeros!"
         
-        output_vol = fetch_labelarray_voxels(dvid_address, repo_uuid, output_segmentation_name, box_zyx // 2**scale, scale=scale)
+        output_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, box_zyx // 2**scale, scale=scale)
         assert (output_vol == expected_vol).all()
 
 
@@ -325,4 +377,6 @@ if __name__ == "__main__":
         warnings.warn("Disregarding CLUSTER_TYPE when running via __main__")
     
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
-    pytest.main(['-s', '--tb=native', '--pyargs', 'tests.workflows.test_copysegmentation'])
+    args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_copysegmentation']
+    #args = ['-k', 'copysegmentation_from_hdf5_to_dvid_output_mask'] + args
+    pytest.main(args)
