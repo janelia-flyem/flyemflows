@@ -1,6 +1,10 @@
 import unittest
 from flyemflows.util import auto_retry
 
+# Reset this in case other tests have disabled auto_retry
+import flyemflows.util._auto_retry #@UnusedImport
+flyemflows.util._auto_retry.FLYEMFLOWS_DISABLE_AUTO_RETRY = False
+
 class TestAutoRetry(unittest.TestCase):
 
     def setUp(self):

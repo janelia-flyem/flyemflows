@@ -1,6 +1,17 @@
 import functools
 import logging
 
+# The following global flag is used for testing,
+# when @auto_retry obscures/delays legitimate failures.
+# 
+# This module is named '_auto_retry' instead of 'auto_retry'
+# to make this variable accessible via:
+# 
+#   import flyemflows.util._autoretry.FLYEMFLOWS_DISABLE_AUTO_RETRY
+#   flyemflows.util._autoretry.FLYEMFLOWS_DISABLE_AUTO_RETRY = True
+#
+FLYEMFLOWS_DISABLE_AUTO_RETRY = False
+
 def auto_retry(total_tries=2, pause_between_tries=10.0, logging_name=None, predicate=None):
     """
     Returns a decorator.
@@ -35,7 +46,7 @@ def auto_retry(total_tries=2, pause_between_tries=10.0, logging_name=None, predi
                 try:
                     return func(*args, **kwargs)
                 except Exception as ex:
-                    if predicate is not None and not predicate(ex):
+                    if FLYEMFLOWS_DISABLE_AUTO_RETRY or (predicate is not None and not predicate(ex)):
                         raise
                     remaining_tries -= 1
                     if remaining_tries == 0:

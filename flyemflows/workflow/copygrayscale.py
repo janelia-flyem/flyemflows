@@ -19,7 +19,7 @@ from ..volumes import VolumeService, VolumeServiceWriter, GrayscaleVolumeSchema
 
 from . import Workflow
 
-from flyemflows.util.auto_retry import auto_retry
+from flyemflows.util import auto_retry
 from flyemflows.volumes.dvid_volume_service import DvidVolumeService
 
 logger = logging.getLogger(__name__)
