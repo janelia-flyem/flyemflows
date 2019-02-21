@@ -124,27 +124,10 @@ class CopySegmentation(Workflow):
             },
             "delay-minutes-between-slabs": {
                 "description": "Optionally introduce an artificial pause after finishing one slab before starting the next,\n"
-                               "to give DVID time to index the blocks we've sent so far.",
+                               "to give DVID time to index the blocks we've sent so far.\n"
+                               "Should not be necessary for most use-cases.",
                 "type": "integer",
                 "default": 0,
-            },
-            "instance-creation-type": {
-                "description": "What type of label instance to create.\n",
-                "type": "string",
-                "enum": ["labelarray", "labelmap"],
-                "default": "labelmap"
-            },
-            "instance-creation-tags": {
-                "description": "Arbitrary tag string to add when creating the instance.\n",
-                "type": "array",
-                "items": { "type": "string" },
-                "default": []
-            },
-            "create-with-indexing-enabled": {
-                "description": "Enable indexing on the new labelarray or labelmap instance.\n"
-                               "(Should normally be left as the default (true), except for benchmarking purposes.)",
-                "type": "boolean",
-                "default": True
             }
         }
     }
@@ -163,7 +146,6 @@ class CopySegmentation(Workflow):
 
     def execute(self):
         self._init_services()
-        self._create_output_instances_if_necessary()
         self._log_neuroglancer_links()
         self._sanitize_config()
 
@@ -201,6 +183,7 @@ class CopySegmentation(Workflow):
 
         logger.info(f"DONE copying/downsampling all slabs to {len(self.config['outputs'])} destinations.")
 
+
     def _init_services(self):
         """
         Initialize the input and output services,
@@ -212,6 +195,8 @@ class CopySegmentation(Workflow):
         output_configs = self.config["outputs"]
         mgr_options = self.config["resource-manager"]
         slab_depth = self.config["copysegmentation"]["slab-depth"]
+        pyramid_depth = self.config["copysegmentation"]["pyramid-depth"]
+        permit_inconsistent_pyramids = self.config["copysegmentation"]["permit-inconsistent-pyramid"]
 
         self.mgr_client = ResourceManagerClient( mgr_options["server"], mgr_options["port"] )
         self.input_service = VolumeService.create_from_config( input_config, None, self.mgr_client )
@@ -227,6 +212,22 @@ class CopySegmentation(Workflow):
 
         self.output_services = []
         for i, output_config in enumerate(output_configs):
+            if "dvid" in output_config:
+                if output_config["dvid"]["create-if-necessary"]:
+                    if self.config["copysegmentation"]["skip-scale-0-write"] and pyramid_depth == 0:
+                        # Nothing to write.  Maybe the user is just computing block statistics.
+                        msg = ("Since your config specifies no pyramid levels to write, no output instance will be created. "
+                               "Avoid this warning by removing 'create-if-necessary' from your config")
+                        logger.warning(msg)
+                        output_config["dvid"]["create-if-necessary"] = False
+                    else:
+                        max_scale = output_config["dvid"]["creation-settings"]["max-scale"]
+                        if max_scale not in (-1, pyramid_depth):
+                            msg = (f"Inconsistent max-scale ({max_scale}) and pyramid-depth ({pyramid_depth}). "
+                                   "Omit max-scale from your creation-settings.")
+                            raise RuntimeError(msg)
+                        output_config["dvid"]["creation-settings"]["max-scale"] = pyramid_depth
+
             # Replace 'auto' dimensions with input bounding box
             replace_default_entries(output_config["geometry"]["bounding-box"], self.input_service.bounding_box_zyx[:, ::-1])
             output_service = VolumeService.create_from_config( output_config, None, self.mgr_client )
@@ -236,6 +237,12 @@ class CopySegmentation(Workflow):
                 assert output_config["dvid"]["supervoxels"], \
                     'DVID output service config must use "supervoxels: true"'
 
+            if output_service.instance_name in fetch_repo_instances(output_service.server, output_service.uuid):
+                info = fetch_instance_info(*output_service.instance_triple)
+                existing_depth = int(info["Extended"]["MaxDownresLevel"])
+                if pyramid_depth not in (-1, existing_depth) and not permit_inconsistent_pyramids:
+                    raise Exception(f"Can't set pyramid-depth to {pyramid_depth}: "
+                                    f"Data instance '{output_service.instance_name}' already existed, with depth {existing_depth}")
 
             # These services aren't supported because we copied some geometry (bounding-box)
             # directly from the input service.
@@ -280,45 +287,6 @@ class CopySegmentation(Workflow):
                 assert output_config["apply-labelmap"]["apply-when"] == "reading-and-writing", \
                     "Labelmap will be applied to voxels during pre-write and post-read (due to block padding).\n"\
                     "You cannot use this workflow with non-idempotent labelmaps, unless your data is already perfectly block aligned."
-
-
-    def _create_output_instances_if_necessary(self):
-        """
-        If it doesn't exist yet, create it first with the user's specified
-        pyramid-depth, or with an automatically chosen depth.
-        """
-        pyramid_depth = self.config["copysegmentation"]["pyramid-depth"]
-        permit_inconsistent_pyramids = self.config["copysegmentation"]["permit-inconsistent-pyramid"]
-        
-        if self.config["copysegmentation"]["skip-scale-0-write"] and pyramid_depth == 0:
-            # Nothing to write.  Maybe the user is just computing block statistics
-            return
-
-        for output_service in self.output_services:
-            base_service = output_service.base_service
-            assert isinstance( base_service, DvidVolumeService )
-            server, uuid, instance = base_service.server, base_service.uuid, base_service.instance_name
-
-            # Create new segmentation instance first if necessary
-            if instance in fetch_repo_instances(server, uuid):
-                existing_depth = self._read_pyramid_depth()
-                if pyramid_depth not in (-1, existing_depth) and not permit_inconsistent_pyramids:
-                    raise Exception(f"Can't set pyramid-depth to {pyramid_depth}: "
-                                    f"Data instance '{instance}' already existed, with depth {existing_depth}")
-            else:
-                if pyramid_depth == -1:
-                    # if no pyramid depth is specified, determine the max, based on bb size.
-                    input_bb_zyx = self.input_service.bounding_box_zyx
-                    pyramid_depth = choose_pyramid_depth(input_bb_zyx, 512)
-        
-                # create new label array with correct number of pyramid scales
-                create_labelmap_instance( server,
-                                          uuid,
-                                          instance,
-                                          tags=self.config["copysegmentation"]["instance-creation-tags"],
-                                          block_size=base_service.block_width,
-                                          enable_index=self.config["copysegmentation"]["create-with-indexing-enabled"],
-                                          max_scale=pyramid_depth )
 
 
     def _read_pyramid_depth(self):
@@ -392,6 +360,7 @@ class CopySegmentation(Workflow):
             slab_depth = block_width * 2**pyramid_depth
         options["slab-depth"] = slab_depth
 
+
     def _init_stats_file(self):
         stats_path = self.config["copysegmentation"]["block-statistics-file"]
         if os.path.exists(stats_path):
@@ -410,6 +379,7 @@ class CopySegmentation(Workflow):
                 f.create_dataset('stats', shape=(0,), maxshape=(None,), chunks=True, dtype=list(BLOCK_STATS_DTYPES.items()))
         else:
             raise RuntimeError(f"Unknown file format: {stats_path}")
+
 
     def _append_slab_statistics(self, slab_stats_df):
         """
@@ -436,6 +406,7 @@ class CopySegmentation(Workflow):
                 f['stats'][orig_len:new_len] = slab_stats_df.to_records()
         else:
             raise RuntimeError(f"Unknown file format: {stats_path}")
+
 
     def _process_slab(self, slab_index, output_slab_box ):
         """
@@ -479,7 +450,11 @@ class CopySegmentation(Workflow):
             #       will be wrong unless the bounding-box is block-aligned.
             with Timer(f"Slab {slab_index}: Computing slab block statistics", logger):
                 block_shape = 3*[self.output_services[0].base_service.block_width]
-                input_slab_block_stats_per_brick = aligned_input_wall.bricks.map( partial(block_stats_from_brick, block_shape) ).compute()
+
+                def block_stats_for_brick(brick):
+                    return block_stats_for_volume(block_shape, brick.volume, brick.physical_box)
+                
+                input_slab_block_stats_per_brick = aligned_input_wall.bricks.map(block_stats_for_brick).compute()
                 input_slab_block_stats_df = pd.concat(input_slab_block_stats_per_brick, ignore_index=True)
                 del input_slab_block_stats_per_brick
 
@@ -535,6 +510,7 @@ class CopySegmentation(Workflow):
         if options["compute-block-statistics"]:
             with Timer(f"Slab {slab_index}: Appending stats and overwriting stats file"):
                 self._append_slab_statistics( input_slab_block_stats_df )
+
 
     def _consolidate_and_pad(self, slab_index, input_wall, scale, output_service, align=True, pad=True):
         """
@@ -669,8 +645,4 @@ class CopySegmentation(Workflow):
             brick_wall.bricks.map(write_brick).compute()
         logger.info(f"Slab {slab_index}: Scale {scale}: Writing bricks to {instance_name} took {timer.timedelta}")
 
-
-
-def block_stats_from_brick(block_shape, brick):
-    return block_stats_for_volume(block_shape, brick.volume, brick.physical_box)
 

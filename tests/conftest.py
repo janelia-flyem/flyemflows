@@ -49,11 +49,13 @@ def setup_dvid_repo():
     finally:
         print("\nTerminating DVID test server...")
         dvid_server_proc.send_signal(signal.SIGTERM)
-        stdout = dvid_server_proc.communicate(timeout=1.0)
+        stdout = None
         try:
+            stdout = dvid_server_proc.communicate(timeout=1.0)
             dvid_server_proc.wait(DVID_SHUTDOWN_TIMEOUT)
         except subprocess.TimeoutExpired:
-            print(stdout)
+            if stdout:
+                print(stdout)
             print("Force-killing dvid")
             dvid_server_proc.send_signal(signal.SIGKILL)
         print("DVID test server is terminated.")

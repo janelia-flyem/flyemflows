@@ -101,7 +101,6 @@ class ConnectedComponents(Workflow):
         #    That might be best performed via the FindAdjacencies workflow, anyhow.
 
         self.init_services()
-        self.create_output_instance_if_necessary()
 
         input_service = self.input_service
         output_service = self.output_service
@@ -357,6 +356,13 @@ class ConnectedComponents(Workflow):
         self.resource_mgr_client = ResourceManagerClient( mgr_config["server"], mgr_config["port"] )
         self.input_service = VolumeService.create_from_config( input_config, os.getcwd(), self.resource_mgr_client )
 
+        # If we need to create a dvid instance for the output,
+        # default to the same pyramid depth as the input
+        if ("dvid" in input_config) and ("dvid" in output_config) and (output_config["dvid"]["creation-settings"]["max-scale"] == -1):
+            info = fetch_instance_info(*self.input_service.instance_triple)
+            pyramid_depth = info['Extended']['MaxDownresLevel']
+            output_config["dvid"]["creation-settings"]["max-scale"] = pyramid_depth
+
         replace_default_entries(output_config["geometry"]["bounding-box"], self.input_service.bounding_box_zyx[:, ::-1])
         self.output_service = VolumeService.create_from_config( output_config, os.getcwd(), self.resource_mgr_client )
         assert isinstance( self.output_service, VolumeServiceWriter ), \
@@ -376,43 +382,6 @@ class ConnectedComponents(Workflow):
 
         logger.info(f"Output bounding box: {self.output_service.bounding_box_zyx[:,::-1].tolist()}")
         
-
-    def create_output_instance_if_necessary(self):
-        """
-        If the output is a dvid segmentation volume, but the instance doesn't exist yet,
-        create it with a appropriate default settings (copied from the input if possible).
-        
-        Non-dvid outputs are expected to already exist, or be created
-        automatically via the corresponding VolumeService.
-        """
-        output_service = self.output_service.base_service
-        if not isinstance(output_service, DvidVolumeService):
-            # Nothing to do for non-dvid outputs
-            return
-
-        output_server, output_uuid, output_name = output_service.instance_triple
-        if output_name in fetch_repo_instances(output_server, output_uuid):
-            # Instance already exists
-            return
-
-        input_service = self.input_service.base_service
-        if isinstance(input_service, DvidVolumeService):
-            info = fetch_instance_info(*input_service.instance_triple)
-            pyramid_depth = info['Extended']['MaxDownresLevel']
-            block_width = info['Extended']['BlockSize'][0]
-        else:
-            input_bb_zyx = self.input_service.bounding_box_zyx
-            pyramid_depth = choose_pyramid_depth(input_bb_zyx, 512)
-            block_width = 64
-
-        create_labelmap_instance( output_server,
-                                  output_uuid,
-                                  output_name,
-                                  block_size=block_width,
-                                  enable_index=True,         # The instance should support indexing, even though we will
-                                                             # disable indexing when we post the data.
-                                  max_scale=pyramid_depth )
-
 
     def init_brickwall(self, volume_service, subset_labels):
         halo = self.config["connectedcomponents"]["halo"]

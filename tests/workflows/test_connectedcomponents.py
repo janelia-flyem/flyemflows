@@ -20,9 +20,10 @@ from neuclease.dvid import create_labelmap_instance, post_labelmap_voxels, fetch
 # Overridden below when running from __main__
 CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'local-cluster')
 
-##
-## TODO: Add test for DVID sparse mask behavior
-##
+# For these tests, we don't expect to need retries: Fail immediately.
+import flyemflows.util._auto_retry #@UnusedImport
+flyemflows.util._auto_retry.FLYEMFLOWS_DISABLE_AUTO_RETRY = True
+
 
 @pytest.fixture
 def setup_connectedcomponents_hdf5_zarr():
@@ -84,8 +85,8 @@ def setup_connectedcomponents_hdf5_zarr():
     return template_dir, config, vol
 
 
-def test_connectedcomponents(setup_connectedcomponents):
-    template_dir, _config, input_vol = setup_connectedcomponents
+def test_connectedcomponents(setup_connectedcomponents_hdf5_zarr):
+    template_dir, _config, input_vol = setup_connectedcomponents_hdf5_zarr
 
     execution_dir, workflow = launch_flow(template_dir, 1)
     final_config = workflow.config
@@ -148,8 +149,8 @@ def test_connectedcomponents(setup_connectedcomponents):
     assert (df['final_label'] > input_vol.max()).all()
 
 
-def test_connectedcomponents_subset_labels(setup_connectedcomponents):
-    template_dir, config, input_vol = setup_connectedcomponents
+def test_connectedcomponents_subset_labels(setup_connectedcomponents_hdf5_zarr):
+    template_dir, config, input_vol = setup_connectedcomponents_hdf5_zarr
 
     config["connectedcomponents"]["subset-labels"] = [1,2,4] # Not 3
 
@@ -280,6 +281,7 @@ def setup_connectedcomponents_dvid(setup_dvid_repo):
             segmentation-name: {output_segmentation_name}
             supervoxels: true
             disable-indexing: true
+            create-if-necessary: true
            
           geometry: {{}} # Auto-set from input
  

@@ -21,6 +21,10 @@ TESTVOL_SHAPE = (256,256,256)
 CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'local-cluster')
 #CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'synchronous')
 
+# For these tests, we don't expect to need retries: Fail immediately.
+import flyemflows.util._auto_retry #@UnusedImport
+flyemflows.util._auto_retry.FLYEMFLOWS_DISABLE_AUTO_RETRY = True
+
 @pytest.fixture
 def setup_dvid_grayscale_input(setup_dvid_repo):
     dvid_address, repo_uuid = setup_dvid_repo
@@ -55,7 +59,8 @@ def setup_dvid_grayscale_input(setup_dvid_repo):
             server: {dvid_address}
             uuid: {repo_uuid}
             grayscale-name: {output_grayscale_name}
-            compression: raw
+            compression: none
+            create-if-necessary: true
            
           geometry: {{}} # Auto-set from input
  
@@ -110,7 +115,8 @@ def setup_hdf5_grayscale_input(setup_dvid_repo):
             server: {dvid_address}
             uuid: {repo_uuid}
             grayscale-name: {output_grayscale_name}
-            compression: raw
+            compression: none
+            create-if-necessary: true
           
           geometry: {{}} # Auto-set from input
         

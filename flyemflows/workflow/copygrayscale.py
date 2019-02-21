@@ -15,12 +15,11 @@ from neuclease.focused.hotknife import HEMIBRAIN_TAB_BOUNDARIES
 
 from ..util import replace_default_entries
 from ..brick import Brick, BrickWall
-from ..volumes import VolumeService, VolumeServiceWriter, GrayscaleVolumeSchema
+from ..volumes import VolumeService, VolumeServiceWriter, GrayscaleVolumeSchema, DvidVolumeService
 
 from . import Workflow
 
 from flyemflows.util import auto_retry
-from flyemflows.volumes.dvid_volume_service import DvidVolumeService
 
 logger = logging.getLogger(__name__)
 
@@ -143,12 +142,33 @@ class CopyGrayscale(Workflow):
         self.mgr_client = ResourceManagerClient( mgr_options["server"], mgr_options["port"] )
         self.input_service = VolumeService.create_from_config( input_config, os.getcwd(), self.mgr_client )
 
+        max_pyramid_scale = self.config["copygrayscale"]["max-pyramid-scale"]
+        if "dvid" in output_config and output_config["dvid"]["create-if-necessary"]:
+            max_creation_scale = output_config["dvid"]["creation-settings"]["max-scale"]
+            if max_creation_scale == -1:
+                output_config["dvid"]["creation-settings"]["max-scale"] = max_pyramid_scale
+            elif max_creation_scale < max_pyramid_scale:
+                msg = (f"Your dvid instance creation-settings specify a lower max-scale ({max_creation_scale}) "
+                       f"than your CopyGrayscale config max-pyramid-scale ({max_pyramid_scale}).\n"
+                       "Change your creation-settings max-scale or remove it from the config so a default can be chosen.")
+                raise RuntimeError(msg)
+
         replace_default_entries(output_config["geometry"]["bounding-box"], self.input_service.bounding_box_zyx[:, ::-1])
         self.output_service = VolumeService.create_from_config( output_config, os.getcwd(), self.mgr_client )
         assert isinstance( self.output_service, VolumeServiceWriter ), \
             "The output format you are attempting to use does not support writing"
 
         logger.info(f"Output bounding box: {self.output_service.bounding_box_zyx[:,::-1].tolist()}")
+
+        # We use node-local dvid servers when uploading to a gbucket backend,
+        # and the gbucket backend needs to be explicitly reloaded
+        # (TODO: Is this still true, or has it been fixed by now?)
+        if isinstance(self.output_service, DvidVolumeService) and self.output_service.server.startswith("http://127.0.0.1"):
+            server = self.output_service.server
+            @auto_retry(3, 5.0, __name__)
+            def reload_meta():
+                reload_metadata(server)
+            self.run_on_each_worker( reload_meta, once_per_machine=True )
 
 
     def _validate_config(self):
@@ -178,70 +198,10 @@ class CopyGrayscale(Workflow):
                 ("Can't use 'copy' for pyramid-source.  Not all scales are available in the input.\n"
                 f"Available scales are: {self.output_service.available_scales}")
 
-        
-
-    def _prepare_output(self):
-        """
-        Create DVID data instances (including multi-scale) and update metadata.
-        (Only DVID output special handling.  Other formats do not.)
-        """
-        output_config = self.config["output"]
-        max_scale = self.config["copygrayscale"]["max-pyramid-scale"]
-
-        if "dvid" not in output_config:
-            return
-
-        server = output_config["dvid"]["server"]
-        uuid = output_config["dvid"]["uuid"]
-        instance_name = output_config["dvid"]["grayscale-name"]
-        block_width = output_config["geometry"]["block-width"]
-
-        compression = output_config["dvid"]["compression"]
-        if compression == "raw":
-            compression = None
-
-        full_output_box_zyx = np.array(output_config["geometry"]["bounding-box"])[:, ::-1]
-
-        for scale in range(max_scale+1):
-            scaled_output_box_zyx = full_output_box_zyx // 2**scale # round down
-    
-            if scale == 0:
-                scaled_instance_name = instance_name
-            else:
-                scaled_instance_name = f"{instance_name}_{scale}"
-    
-            if scaled_instance_name in fetch_repo_instances(server, uuid):
-                logger.info(f"'{scaled_instance_name}' already exists, skipping creation")
-            else:
-                create_voxel_instance( server,
-                                       uuid,
-                                       scaled_instance_name,
-                                       typename='uint8blk',
-                                       compression=compression,
-                                       block_size=block_width )
-    
-            update_extents( server, uuid, scaled_instance_name, scaled_output_box_zyx )
-
-            # Higher-levels of the pyramid should not appear in the DVID-lite console.
-            extend_list_value(server, uuid, '.meta', 'restrictions', [scaled_instance_name])
-
-        # Bottom level of pyramid is listed as neuroglancer-compatible
-        extend_list_value(server, uuid, '.meta', 'neuroglancer', [instance_name])
-
-        # We use node-local dvid servers when uploading to a gbucket backend,
-        # and the gbucket backend needs to be explicitly reloaded
-        # (TODO: Is this still true, or has it been fixed by now?)
-        if server.startswith("http://127.0.0.1"):
-            @auto_retry(3, 5.0, __name__)
-            def reload_meta():
-                reload_metadata(server)
-            self.run_on_each_worker( reload_meta, once_per_machine=True )
-
 
     def execute(self):
         self._init_services()
         self._validate_config()
-        self._prepare_output()
         
         options = self.config["copygrayscale"]
         input_bb_zyx = self.input_service.bounding_box_zyx

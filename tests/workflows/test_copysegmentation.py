@@ -17,6 +17,10 @@ from flyemflows.bin.launchflow import launch_flow
 # Overridden below when running from __main__
 CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'local-cluster')
 
+# For these tests, we don't expect to need retries: Fail immediately.
+import flyemflows.util._auto_retry #@UnusedImport
+flyemflows.util._auto_retry.FLYEMFLOWS_DISABLE_AUTO_RETRY = True
+
 @pytest.fixture
 def random_segmentation():
     """
@@ -87,6 +91,7 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
               segmentation-name: {output_segmentation_name}
               supervoxels: true
               disable-indexing: true
+              create-if-necessary: true
            
             geometry: {{}} # Auto-set from input
  
@@ -136,6 +141,7 @@ def setup_hdf5_segmentation_input(setup_dvid_repo, random_segmentation):
               segmentation-name: {output_segmentation_name}
               supervoxels: true
               disable-indexing: true
+              create-if-necessary: true
                         
             geometry: {{}} # Auto-set from input
         
@@ -282,6 +288,7 @@ def test_copysegmentation_from_brainmaps_to_dvid(setup_dvid_repo):
               segmentation-name: {output_segmentation_name}
               supervoxels: true
               disable-indexing: true
+              create-if-necessary: true
            
             geometry: {{}} # Auto-set from input
  
