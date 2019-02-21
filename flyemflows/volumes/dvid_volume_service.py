@@ -6,13 +6,86 @@ from requests import HTTPError
 from confiddler import validate
 from dvid_resource_manager.client import ResourceManagerClient
 
-from neuclease.util import boxes_from_grid, box_to_slicing
-from neuclease.dvid import fetch_instance_info, fetch_volume_box, fetch_raw, post_raw, fetch_labelarray_voxels, post_labelmap_voxels
+from neuclease.util import choose_pyramid_depth
+from neuclease.dvid import ( fetch_repo_instances, fetch_instance_info, fetch_volume_box,
+                             fetch_raw, post_raw, fetch_labelarray_voxels, post_labelmap_voxels,
+                             update_extents, extend_list_value, create_voxel_instance, create_labelmap_instance )
 
 from ..util import auto_retry, replace_default_entries
 from . import GeometrySchema, VolumeServiceReader, VolumeServiceWriter, NewAxisOrderSchema, RescaleLevelSchema, LabelMapSchema
 
 logger = logging.getLogger(__name__)
+
+DvidInstanceCreationSettingsSchema = \
+{
+    "description": "Settings to use when creating a dvid volume (if necessary).\n"
+                   "Note: To configure the block-width of the instance, specify the\n"
+                   "      block-width setting in the volume's 'geometry' config section, below.\n",
+    "type": "object",
+    "default": {},
+    "properties": {
+        "versioned": {
+            "description": "Whether or not the volume data should be versioned in DVID,\n"
+                           "or if only a single copy of the volume will be stored\n"
+                           "(in which case any update is visible in all nodes in the DAG).\n",
+            "type": "boolean",
+            "default": True
+        },
+        "tags": {
+            "description": 'Optional "tags" to initialize the instance with, specified\n'
+                           'as strings in the format key=value, e.g. "type=mask".\n',
+            "type": "array",
+            "items": {"type": "string"},
+            "default": []
+        },
+        "enable-index": {
+            "description": "(Labelmap instances only.)\n"
+                           "Whether or not to support indexing on this labelmap instance.\n"
+                           "Should usually be True, except for benchmarking purposes.\n"
+                           "Note: This setting is distinct from the 'disable-indexing' setting \n"
+                           "      in the volume service settings (below), which can be used to temporarily\n"
+                           "      disable indexing updates that would normally be triggered after every post.\n",
+            "type": "boolean",
+            "default": True
+        },
+        "compression": {
+            "description": "(Grayscale instances only -- labelmap instances are always compressed in a custom format.)\n"
+                           "What type of compression is used by DVID to store this instance.\n"
+                           "Choices: 'none' and 'jpeg'.\n",
+            "type": "string",
+            "enum": ["none", "jpeg"],
+            "default": "none"
+        },
+        "max-scale": {
+            "description": "The maximum pyramid scale to support in a labelmap instance,\n"
+                           "or, in the case of grayscale volumes, the number of grayscale\n"
+                           "instances to create, named with the convention '{name}_{scale}' (except scale 0).\n"
+                           "If left unspecified (-1) an appropriate default will be chosen according\n"
+                           "to the size of the volume geometry's bounding-box.\n"
+                           "Note: For now, you are still requried to specify the 'available-scales'\n"
+                           "setting in the volume geometry, too.\n",
+            "type": "integer",
+            "minValue": -1,
+            "maxValue": 10, # Arbitrary max; larger than 10 is probably a sign that the user is just confused or made a typo.
+            "default": -1
+        },
+        "voxel-size": {
+            "description": "Voxel width, stored in DVID's metadata for the instance.",
+            "type": "number",
+            "default": 8.0
+        },
+        "voxel-units": {
+            "description": "Physical units of the voxel-size specification.",
+            "type": "string",
+            "default": "nanometers"
+        },
+        "background": {
+            "description": "(Grayscale only.) What pixel value should be considered 'background' (unpopulated voxels).\n",
+            "type": "integer",
+            "default": 0
+        }
+    }
+}
 
 DvidServiceSchema = \
 {
@@ -29,7 +102,16 @@ DvidServiceSchema = \
         "uuid": {
             "description": "version node for READING segmentation",
             "type": "string"
-        }
+        },
+        "create-if-necessary": {
+            "description": "Whether or not to create the instance if it doesn't already exist.\n"
+                           "If you expect the instance to exist on the server already, leave this\n"
+                           "set to False to avoid confusion in the case of typos, UUID mismatches, etc.\n"
+                           "Note: When creating grayscale instances, ",
+            "type": "boolean",
+            "default": False
+        },
+        "creation-settings": DvidInstanceCreationSettingsSchema
     }
 }
 
@@ -48,14 +130,6 @@ DvidGrayscaleServiceSchema = \
                            "Instance must be grayscale (uint8blk).",
             "type": "string",
             "minLength": 1
-        },
-        "compression": {
-            "description": "What type of compression is used to store this instance.\n"
-                           "(Only used when the instance is created for the first time.)\n"
-                           "Choices: 'raw' and 'jpeg'.\n",
-            "type": "string",
-            "enum": ["raw", "jpeg"],
-            "default": "raw"
         }
     }
 }
@@ -86,7 +160,10 @@ DvidSegmentationServiceSchema = \
         "disable-indexing": {
             "description": "Tell the server not to update the label index after POST blocks.\n"
                            "Useful during initial volume ingestion, in which label\n"
-                           "indexes will be sent by the client later on.\n",
+                           "indexes will be sent by the client later on.\n"
+                           "Note: This is different than the 'enable-index' creation setting, which specifies\n"
+                           "      whether or not indexing will be available at all for the instance when it\n"
+                           "      is created.",
             "type": "boolean",
             "default": False
         },
@@ -152,6 +229,9 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
 
         config_block_width = volume_config["geometry"]["block-width"]
 
+        assert ('segmentation-name' in volume_config["dvid"]) ^ ('grayscale-name' in volume_config["dvid"]), \
+            "Config error: Specify either segmentation-name or grayscale-name (not both)"
+
         if "segmentation-name" in volume_config["dvid"]:
             self._instance_name = volume_config["dvid"]["segmentation-name"]
             self._dtype = np.uint64
@@ -200,7 +280,6 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         # Whether or not to read the supervoxels from the labelmap instance instead of agglomerated labels.
         self.supervoxels = ("supervoxels" in volume_config["dvid"]) and (volume_config["dvid"]["supervoxels"])
 
-
         ##
         ## default block width
         ##
@@ -209,7 +288,6 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         if block_width == -1:
             # No block-width specified; choose default
             block_width = 64
-
 
         ##
         ## bounding-box
@@ -251,9 +329,6 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
         self._available_scales = available_scales
 
-        # Memoized in the node_service property.
-        self._node_service = None
-
         ##
         ## Overwrite config entries that we might have modified
         ##
@@ -263,6 +338,9 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
 
         # TODO: Check the server for available scales and overwrite in the config?
         #volume_config["geometry"]["available-scales"] = [0]
+
+        if volume_config["dvid"]["create-if-necessary"]:
+            self._create_instance(volume_config)
 
     @property
     def server(self):
@@ -299,6 +377,89 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
     @property
     def available_scales(self):
         return self._available_scales
+
+
+    def _create_instance(self, volume_config):
+        if 'segmentation-name' in volume_config["dvid"]:
+            self._create_labelmap_instance(volume_config)
+        if 'grayscale-name' in volume_config["dvid"]:
+            self._create_grayscale_instances(volume_config) 
+            
+
+    def _create_labelmap_instance(self, volume_config):
+        if self.instance_name in fetch_repo_instances(self.server, self.uuid):
+            logger.info(f"'{self.instance_name}' already exists, skipping creation")
+            return
+
+        settings = volume_config["dvid"]["creation-settings"]
+        block_width = volume_config["geometry"]["block-width"]
+
+        pyramid_depth = settings["max-scale"]
+        if pyramid_depth == -1:
+            pyramid_depth = choose_pyramid_depth(self.bounding_box_zyx, 512)
+
+        if settings["compression"] != DvidInstanceCreationSettingsSchema["properties"]["compression"]["default"]:
+            raise RuntimeError("Alternative compression methods are not permitted on labelmap instances. "
+                               "Please remove the 'compression' setting from your config.")
+
+        if settings["background"] != 0:
+            raise RuntimeError("Labelmap instances do not support custom background values. "
+                               "Please remove 'background' from your config.")
+
+        create_labelmap_instance( self.server,
+                                  self.uuid,
+                                  self.instance_name,
+                                  settings["versioned"],
+                                  settings["tags"],
+                                  block_width,
+                                  settings["voxel-size"],
+                                  settings["voxel-units"],
+                                  settings["enable-index"],
+                                  pyramid_depth )
+
+
+    def _create_grayscale_instances(self, volume_config):
+        settings = volume_config["dvid"]["creation-settings"]
+        
+        block_width = volume_config["geometry"]["block-width"]
+
+        pyramid_depth = settings["max-scale"]
+        if pyramid_depth == -1:
+            pyramid_depth = choose_pyramid_depth(self.bounding_box_zyx, 512)
+
+        repo_instances = fetch_repo_instances(self.server, self.uuid)
+
+        # Bottom level of pyramid is listed as neuroglancer-compatible
+        extend_list_value(self.server, self.uuid, '.meta', 'neuroglancer', [self.instance_name])
+        
+        for scale in range(pyramid_depth+1):
+            scaled_output_box_zyx = self.bounding_box_zyx // 2**scale # round down
+    
+            if scale == 0:
+                scaled_instance_name = self.instance_name
+            else:
+                scaled_instance_name = f"{self.instance_name}_{scale}"
+    
+            if scaled_instance_name in repo_instances:
+                logger.info(f"'{scaled_instance_name}' already exists, skipping creation")
+            else:
+                create_voxel_instance( self.server,
+                                       self.uuid,
+                                       scaled_instance_name,
+                                       'uint8blk',
+                                       settings["versioned"],
+                                       settings["compression"],
+                                       settings["tags"],
+                                       block_width,
+                                       settings["voxel-size"],
+                                       settings["voxel-units"],
+                                       settings["background"] )
+    
+            update_extents( self.server, self.uuid, scaled_instance_name, scaled_output_box_zyx )
+
+            # Higher-levels of the pyramid should not appear in the DVID console.
+            extend_list_value(self.server, self.uuid, '.meta', 'restrictions', [scaled_instance_name])
+
 
     # Two-levels of auto-retry:
     # 1. Auto-retry up to three time for any reason.
