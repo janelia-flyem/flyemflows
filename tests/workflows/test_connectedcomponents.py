@@ -20,10 +20,6 @@ from neuclease.dvid import create_labelmap_instance, post_labelmap_voxels, fetch
 # Overridden below when running from __main__
 CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'local-cluster')
 
-# For these tests, we don't expect to need retries: Fail immediately.
-import flyemflows.util._auto_retry #@UnusedImport
-flyemflows.util._auto_retry.FLYEMFLOWS_DISABLE_AUTO_RETRY = True
-
 
 @pytest.fixture
 def setup_connectedcomponents_hdf5_zarr():
@@ -85,7 +81,7 @@ def setup_connectedcomponents_hdf5_zarr():
     return template_dir, config, vol
 
 
-def test_connectedcomponents(setup_connectedcomponents_hdf5_zarr):
+def test_connectedcomponents(setup_connectedcomponents_hdf5_zarr, disable_auto_retry):
     template_dir, _config, input_vol = setup_connectedcomponents_hdf5_zarr
 
     execution_dir, workflow = launch_flow(template_dir, 1)
@@ -149,7 +145,7 @@ def test_connectedcomponents(setup_connectedcomponents_hdf5_zarr):
     assert (df['final_label'] > input_vol.max()).all()
 
 
-def test_connectedcomponents_subset_labels(setup_connectedcomponents_hdf5_zarr):
+def test_connectedcomponents_subset_labels(setup_connectedcomponents_hdf5_zarr, disable_auto_retry):
     template_dir, config, input_vol = setup_connectedcomponents_hdf5_zarr
 
     config["connectedcomponents"]["subset-labels"] = [1,2,4] # Not 3
@@ -307,7 +303,7 @@ def setup_connectedcomponents_dvid(setup_dvid_repo):
     return template_dir, config, volume, dvid_address, repo_uuid, output_segmentation_name
 
 
-def test_connectedcomponents_dvid_subset_labels(setup_connectedcomponents_dvid):
+def test_connectedcomponents_dvid_subset_labels(setup_connectedcomponents_dvid, disable_auto_retry):
     template_dir, _config, input_vol, dvid_address, repo_uuid, output_segmentation_name = setup_connectedcomponents_dvid
 
     execution_dir, workflow = launch_flow(template_dir, 1)

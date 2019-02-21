@@ -21,10 +21,6 @@ TESTVOL_SHAPE = (256,256,256)
 CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'local-cluster')
 #CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'synchronous')
 
-# For these tests, we don't expect to need retries: Fail immediately.
-import flyemflows.util._auto_retry #@UnusedImport
-flyemflows.util._auto_retry.FLYEMFLOWS_DISABLE_AUTO_RETRY = True
-
 @pytest.fixture
 def setup_dvid_grayscale_input(setup_dvid_repo):
     dvid_address, repo_uuid = setup_dvid_repo
@@ -161,15 +157,15 @@ def _run(setup, check_scale_0=True):
     return box_zyx, expected_vol
 
 
-def test_copygrayscale_from_dvid_to_dvid(setup_dvid_grayscale_input):
+def test_copygrayscale_from_dvid_to_dvid(setup_dvid_grayscale_input, disable_auto_retry):
     _box_zyx, _expected_vol = _run(setup_dvid_grayscale_input)
    
    
-def test_copygrayscale_from_hdf5_to_dvid(setup_hdf5_grayscale_input):
+def test_copygrayscale_from_hdf5_to_dvid(setup_hdf5_grayscale_input, disable_auto_retry):
     _box_zyx, _expected_vol = _run(setup_hdf5_grayscale_input)
  
  
-def test_copygrayscale_from_hdf5_to_dvid_multiscale(setup_hdf5_grayscale_input):
+def test_copygrayscale_from_hdf5_to_dvid_multiscale(setup_hdf5_grayscale_input, disable_auto_retry):
     _template_dir, config, _volume, dvid_address, repo_uuid, output_grayscale_name = setup_hdf5_grayscale_input
      
     # Modify the config from above to compute pyramid scales,
@@ -196,7 +192,7 @@ def test_copygrayscale_from_hdf5_to_dvid_multiscale(setup_hdf5_grayscale_input):
         "Scale 2: Written vol does not match expected"
 
 
-def test_copygrayscale_from_hdf5_to_dvid_with_constrast_adjustment(setup_hdf5_grayscale_input):
+def test_copygrayscale_from_hdf5_to_dvid_with_constrast_adjustment(setup_hdf5_grayscale_input, disable_auto_retry):
     """
     Use the "constrast-adjustment" setting.
     This test doesn't actually check the output, but at least it exercises the code enough to catch basic issues.
@@ -210,7 +206,7 @@ def test_copygrayscale_from_hdf5_to_dvid_with_constrast_adjustment(setup_hdf5_gr
     _box_zyx, _scale_0_vol = _run( setup_hdf5_grayscale_input, check_scale_0=False )
     
 
-def test_copygrayscale_from_hdf5_to_slices():
+def test_copygrayscale_from_hdf5_to_slices(disable_auto_retry):
     template_dir = tempfile.mkdtemp(suffix="copygrayscale-from-hdf5-template")
     
     # Create volume, write to HDF5

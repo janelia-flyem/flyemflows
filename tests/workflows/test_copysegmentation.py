@@ -17,10 +17,6 @@ from flyemflows.bin.launchflow import launch_flow
 # Overridden below when running from __main__
 CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'local-cluster')
 
-# For these tests, we don't expect to need retries: Fail immediately.
-import flyemflows.util._auto_retry #@UnusedImport
-flyemflows.util._auto_retry.FLYEMFLOWS_DISABLE_AUTO_RETRY = True
-
 @pytest.fixture
 def random_segmentation():
     """
@@ -187,15 +183,15 @@ def _run_to_dvid(setup, check_scale_0=True):
     return box_zyx, expected_vol
 
 
-def test_copysegmentation_from_dvid_to_dvid(setup_dvid_segmentation_input):
+def test_copysegmentation_from_dvid_to_dvid(setup_dvid_segmentation_input, disable_auto_retry):
     _box_zyx, _expected_vol = _run_to_dvid(setup_dvid_segmentation_input)
    
    
-def test_copysegmentation_from_hdf5_to_dvid(setup_hdf5_segmentation_input):
+def test_copysegmentation_from_hdf5_to_dvid(setup_hdf5_segmentation_input, disable_auto_retry):
     _box_zyx, _expected_vol = _run_to_dvid(setup_hdf5_segmentation_input)
  
  
-def test_copysegmentation_from_hdf5_to_dvid_multiscale(setup_hdf5_segmentation_input):
+def test_copysegmentation_from_hdf5_to_dvid_multiscale(setup_hdf5_segmentation_input, disable_auto_retry):
     template_dir, config, volume, dvid_address, repo_uuid, _ = setup_hdf5_segmentation_input
     
     # Modify the config from above to compute pyramid scales,
@@ -247,7 +243,7 @@ def test_copysegmentation_from_hdf5_to_dvid_multiscale(setup_hdf5_segmentation_i
 
 
 @pytest.mark.skipif(not os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', None), reason="Skipping Brainmaps test")
-def test_copysegmentation_from_brainmaps_to_dvid(setup_dvid_repo):
+def test_copysegmentation_from_brainmaps_to_dvid(setup_dvid_repo, disable_auto_retry):
     """
     Fetch a tiny subvolume from a Brainmaps source.
     To run this test, you must have valid application credentials loaded in your bash environment,

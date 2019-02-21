@@ -11,12 +11,8 @@ from neuclease.dvid import fetch_repo_instances
 from flyemflows.util import downsample
 from flyemflows.volumes import VolumeService
 
-# For these tests, we don't expect to need retries: Fail immediately.
-import flyemflows.util._auto_retry #@UnusedImport
-flyemflows.util._auto_retry.FLYEMFLOWS_DISABLE_AUTO_RETRY = True
 
-
-def test_dvid_volume_service_grayscale(setup_dvid_repo):
+def test_dvid_volume_service_grayscale(setup_dvid_repo, disable_auto_retry):
     server, uuid = setup_dvid_repo
     instance_name = 'test-dvs-grayscale'
 
@@ -70,7 +66,7 @@ def test_dvid_volume_service_grayscale(setup_dvid_repo):
         assert (vol == extract_subvol(scaled_volumes[scale], scaled_box)).all()
 
 
-def test_dvid_volume_service_labelmap(setup_dvid_repo):
+def test_dvid_volume_service_labelmap(setup_dvid_repo, disable_auto_retry):
     server, uuid = setup_dvid_repo
     instance_name = 'test-dvs-labelmap'
 

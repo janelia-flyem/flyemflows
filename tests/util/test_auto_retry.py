@@ -1,14 +1,14 @@
 import pytest
 from flyemflows.util import auto_retry
 
-# Reset this in case other tests have disabled auto_retry
-import flyemflows.util._auto_retry #@UnusedImport
-flyemflows.util._auto_retry.FLYEMFLOWS_DISABLE_AUTO_RETRY = False
-
 COUNTER = None
 
 @pytest.fixture
 def setup_counter():
+    # Reset this in case other tests have disabled auto_retry
+    #import flyemflows.util._auto_retry #@UnusedImport
+    #flyemflows.util._auto_retry.FLYEMFLOWS_DISABLE_AUTO_RETRY = False
+
     global COUNTER
     COUNTER = 3
 

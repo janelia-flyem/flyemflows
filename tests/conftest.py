@@ -83,3 +83,16 @@ def _init_test_repo(dvid_address, reuse_existing=True):
 
     repo_uuid = create_repo(dvid_address, TEST_REPO_ALIAS, 'Test repo for neuclease integration tests')
     return repo_uuid
+
+@pytest.fixture
+def disable_auto_retry():
+    """
+    For most tests, retries are not expected and only delay failures.
+    Tests can include this fixture to ensure timely failures.
+    """
+    try:
+        import flyemflows.util._auto_retry #@UnusedImport
+        flyemflows.util._auto_retry.FLYEMFLOWS_DISABLE_AUTO_RETRY = True
+        yield
+    finally:
+        flyemflows.util._auto_retry.FLYEMFLOWS_DISABLE_AUTO_RETRY = False
