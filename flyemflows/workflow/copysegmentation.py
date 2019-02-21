@@ -9,8 +9,8 @@ import h5py
 import numpy as np
 import pandas as pd
 
-from neuclease.util import Timer, Grid, slabs_from_box, choose_pyramid_depth, block_stats_for_volume, BLOCK_STATS_DTYPES
-from neuclease.dvid import create_labelmap_instance, fetch_repo_instances, fetch_instance_info
+from neuclease.util import Timer, Grid, slabs_from_box, block_stats_for_volume, BLOCK_STATS_DTYPES
+from neuclease.dvid import fetch_repo_instances, fetch_instance_info
 from neuclease.dvid.rle import runlength_encode_to_ranges
 
 from dvid_resource_manager.client import ResourceManagerClient
@@ -19,7 +19,7 @@ from flyemflows.util import replace_default_entries, COMPRESSION_METHODS
 from flyemflows.workflow import Workflow
 from flyemflows.brick import BrickWall
 from flyemflows.volumes import ( VolumeService, VolumeServiceWriter, SegmentationVolumeSchema,
-                                 SegmentationVolumeListSchema, TransposedVolumeService, ScaledVolumeService,
+                                 DvidSegmentationVolumeSchema, TransposedVolumeService, ScaledVolumeService,
                                  DvidVolumeService )
 
 logger = logging.getLogger(__name__)
@@ -134,8 +134,8 @@ class CopySegmentation(Workflow):
 
     Schema = copy.deepcopy(Workflow.schema())
     Schema["properties"].update({
-        "input": SegmentationVolumeSchema,
-        "outputs": SegmentationVolumeListSchema,
+        "input": SegmentationVolumeSchema,      # For now, any input source is supported,
+        "output": DvidSegmentationVolumeSchema, # but only dvid output is supported.
         "copysegmentation" : OptionsSchema
     })
 
@@ -155,7 +155,7 @@ class CopySegmentation(Workflow):
 
         # (See note in _init_services() regarding output bounding boxes)
         input_bb_zyx = self.input_service.bounding_box_zyx
-        output_bb_zyx = self.output_services[0].bounding_box_zyx
+        output_bb_zyx = self.output_service.bounding_box_zyx
         self.translation_offset_zyx = output_bb_zyx[0] - input_bb_zyx[0]
 
         pyramid_depth = self.config["copysegmentation"]["pyramid-depth"]
@@ -173,7 +173,6 @@ class CopySegmentation(Workflow):
         for slab_index, output_slab_box in enumerate( output_slab_boxes ):
             with Timer() as timer:
                 self._process_slab(slab_index, output_slab_box )
-            logger.info(f"Slab {slab_index}: Done copying to {len(self.config['outputs'])} destinations.")
             logger.info(f"Slab {slab_index}: Total processing time: {timer.timedelta}")
 
             delay_minutes = self.config["copysegmentation"]["delay-minutes-between-slabs"]
@@ -181,7 +180,7 @@ class CopySegmentation(Workflow):
                 logger.info(f"Delaying {delay_minutes} before continuing to next slab...")
                 time.sleep(delay_minutes * 60)
 
-        logger.info(f"DONE copying/downsampling all slabs to {len(self.config['outputs'])} destinations.")
+        logger.info(f"DONE copying/downsampling all slabs")
 
 
     def _init_services(self):
@@ -192,7 +191,7 @@ class CopySegmentation(Workflow):
         Also check the service configurations for errors.
         """
         input_config = self.config["input"]
-        output_configs = self.config["outputs"]
+        output_config = self.config["output"]
         mgr_options = self.config["resource-manager"]
         slab_depth = self.config["copysegmentation"]["slab-depth"]
         pyramid_depth = self.config["copysegmentation"]["pyramid-depth"]
@@ -210,100 +209,71 @@ class CopySegmentation(Workflow):
             assert input_config["dvid"]["supervoxels"], \
                 'DVID input service config must use "supervoxels: true"'
 
-        self.output_services = []
-        for i, output_config in enumerate(output_configs):
-            if "dvid" in output_config:
-                if output_config["dvid"]["create-if-necessary"]:
-                    if self.config["copysegmentation"]["skip-scale-0-write"] and pyramid_depth == 0:
-                        # Nothing to write.  Maybe the user is just computing block statistics.
-                        msg = ("Since your config specifies no pyramid levels to write, no output instance will be created. "
-                               "Avoid this warning by removing 'create-if-necessary' from your config")
-                        logger.warning(msg)
-                        output_config["dvid"]["create-if-necessary"] = False
-                    else:
-                        max_scale = output_config["dvid"]["creation-settings"]["max-scale"]
-                        if max_scale not in (-1, pyramid_depth):
-                            msg = (f"Inconsistent max-scale ({max_scale}) and pyramid-depth ({pyramid_depth}). "
-                                   "Omit max-scale from your creation-settings.")
-                            raise RuntimeError(msg)
-                        output_config["dvid"]["creation-settings"]["max-scale"] = pyramid_depth
+        if "dvid" in output_config:
+            if output_config["dvid"]["create-if-necessary"]:
+                if self.config["copysegmentation"]["skip-scale-0-write"] and pyramid_depth == 0:
+                    # Nothing to write.  Maybe the user is just computing block statistics.
+                    msg = ("Since your config specifies no pyramid levels to write, no output instance will be created. "
+                           "Avoid this warning by removing 'create-if-necessary' from your config")
+                    logger.warning(msg)
+                    output_config["dvid"]["create-if-necessary"] = False
+                else:
+                    max_scale = output_config["dvid"]["creation-settings"]["max-scale"]
+                    if max_scale not in (-1, pyramid_depth):
+                        msg = (f"Inconsistent max-scale ({max_scale}) and pyramid-depth ({pyramid_depth}). "
+                               "Omit max-scale from your creation-settings.")
+                        raise RuntimeError(msg)
+                    output_config["dvid"]["creation-settings"]["max-scale"] = pyramid_depth
 
-            # Replace 'auto' dimensions with input bounding box
-            replace_default_entries(output_config["geometry"]["bounding-box"], self.input_service.bounding_box_zyx[:, ::-1])
-            output_service = VolumeService.create_from_config( output_config, None, self.mgr_client )
-            assert isinstance( output_service, VolumeServiceWriter )
+        # Replace 'auto' dimensions with input bounding box
+        replace_default_entries(output_config["geometry"]["bounding-box"], self.input_service.bounding_box_zyx[:, ::-1])
+        self.output_service = VolumeService.create_from_config( output_config, None, self.mgr_client )
+        output_service = self.output_service
+        assert isinstance( output_service, VolumeServiceWriter )
 
-            if "dvid" in output_config:            
-                assert output_config["dvid"]["supervoxels"], \
-                    'DVID output service config must use "supervoxels: true"'
+        if "dvid" in output_config:            
+            assert output_config["dvid"]["supervoxels"], \
+                'DVID output service config must use "supervoxels: true"'
 
-            if output_service.instance_name in fetch_repo_instances(output_service.server, output_service.uuid):
-                info = fetch_instance_info(*output_service.instance_triple)
-                existing_depth = int(info["Extended"]["MaxDownresLevel"])
-                if pyramid_depth not in (-1, existing_depth) and not permit_inconsistent_pyramids:
-                    raise Exception(f"Can't set pyramid-depth to {pyramid_depth}: "
-                                    f"Data instance '{output_service.instance_name}' already existed, with depth {existing_depth}")
+        if output_service.instance_name in fetch_repo_instances(output_service.server, output_service.uuid):
+            existing_depth = self._read_pyramid_depth()
+            if pyramid_depth not in (-1, existing_depth) and not permit_inconsistent_pyramids:
+                raise Exception(f"Can't set pyramid-depth to {pyramid_depth}: "
+                                f"Data instance '{output_service.instance_name}' already existed, with depth {existing_depth}")
 
-            # These services aren't supported because we copied some geometry (bounding-box)
-            # directly from the input service.
-            assert not isinstance( output_service, TransposedVolumeService )
-            assert not isinstance( output_service, ScaledVolumeService ) or output_service.scale_delta == 0
+        # These services aren't supported because we copied some geometry (bounding-box)
+        # directly from the input service.
+        assert not isinstance( output_service, TransposedVolumeService )
+        assert not isinstance( output_service, ScaledVolumeService ) or output_service.scale_delta == 0
 
-            assert output_service.base_service.disable_indexing, \
-                "During ingestion, indexing should be disabled.\n" \
-                "Please add 'disable-indexing':true to your output dvid config."
+        assert output_service.base_service.disable_indexing, \
+            "During ingestion, indexing should be disabled.\n" \
+            "Please add 'disable-indexing':true to your output dvid config."
 
-            logger.info(f"Output {i} bounding box (xyz) is: {output_service.bounding_box_zyx[:,::-1].tolist()}")
-            self.output_services.append( output_service )
-
-        first_output_service = self.output_services[0]
+        logger.info(f"Output bounding box (xyz) is: {output_service.bounding_box_zyx[:,::-1].tolist()}")
         
         input_shape = -np.subtract(*self.input_service.bounding_box_zyx)
-        output_shape = -np.subtract(*first_output_service.bounding_box_zyx)
+        output_shape = -np.subtract(*output_service.bounding_box_zyx)
         
-        assert not any(np.array(first_output_service.preferred_message_shape) % first_output_service.block_width), \
+        assert not any(np.array(output_service.preferred_message_shape) % output_service.block_width), \
             "Output message-block-shape should be a multiple of the block size in all dimensions."
         assert (input_shape == output_shape).all(), \
             "Input bounding box and output bounding box do not have the same dimensions"
 
-        # NOTE: For now, we require that all outputs use the same bounding box and grid scheme,
-        #       to simplify the execute() function.
-        #       (We avoid re-translating and re-downsampling the input data for every new output.)
-        #       The only way in which the outputs may differ is their label mapping data.
-        for output_service in self.output_services[1:]:
-            bb_zyx = output_service.bounding_box_zyx
-            bs = output_service.preferred_message_shape
-            bw = output_service.block_width
-
-            assert (first_output_service.bounding_box_zyx == bb_zyx).all(), \
-                "For now, all output destinations must use the same bounding box and grid scheme"
-            assert (first_output_service.preferred_message_shape == bs).all(), \
-                "For now, all output destinations must use the same bounding box and grid scheme"
-            assert (first_output_service.block_width == bw), \
-                "For now, all output destinations must use the same bounding box and grid scheme"
-
-        for output_config in output_configs:
-            if ("apply-labelmap" in output_config) and (output_config["apply-labelmap"]["file-type"] != "__invalid__"):
-                assert output_config["apply-labelmap"]["apply-when"] == "reading-and-writing", \
-                    "Labelmap will be applied to voxels during pre-write and post-read (due to block padding).\n"\
-                    "You cannot use this workflow with non-idempotent labelmaps, unless your data is already perfectly block aligned."
+        if ("apply-labelmap" in output_config) and (output_config["apply-labelmap"]["file-type"] != "__invalid__"):
+            assert output_config["apply-labelmap"]["apply-when"] == "reading-and-writing", \
+                "Labelmap will be applied to voxels during pre-write and post-read (due to block padding).\n"\
+                "You cannot use this workflow with non-idempotent labelmaps, unless your data is already perfectly block aligned."
 
 
     def _read_pyramid_depth(self):
         """
-        Read the MaxDownresLevel from each output instance we'll be writing to,
+        Read the MaxDownresLevel from the output instance we'll be writing to,
         and verify that it matches our config for pyramid-depth.
-        
-        Return the max depth we found in the outputs.
-        (They should all be the same...)
         """
-        max_depth = -1
-        for svc in self.output_services:
-            info = fetch_instance_info(svc.server, svc.uuid, svc.instance_name)
-            existing_depth = int(info["Extended"]["MaxDownresLevel"])
-            max_depth = max(max_depth, existing_depth)
-
-        return max_depth
+        info = fetch_instance_info(*self.output_service.instance_triple)
+        existing_depth = int(info["Extended"]["MaxDownresLevel"])
+        return existing_depth
 
 
     def _log_neuroglancer_links(self):
@@ -311,34 +281,34 @@ class CopySegmentation(Workflow):
         Write a link to the log file for viewing the segmentation data after it is ingested.
         We assume that the output server is hosting neuroglancer at http://<server>:<port>/neuroglancer/
         """
-        for index, output_service in enumerate(self.output_services):
-            server = output_service.base_service.server # Note: Begins with http://
-            uuid = output_service.base_service.uuid
-            instance = output_service.base_service.instance_name
-            
-            output_box_xyz = np.array(output_service.bounding_box_zyx[:, :-1])
-            output_center_xyz = (output_box_xyz[0] + output_box_xyz[1]) / 2
-            
-            link_prefix = f"{server}/neuroglancer/#!"
-            link_json = \
-            {
-                "layers": {
-                    "segmentation": {
-                        "type": "segmentation",
-                        "source": f"dvid://{server}/{uuid}/{instance}"
+        output_service = self.output_service
+        server = output_service.base_service.server # Note: Begins with http://
+        uuid = output_service.base_service.uuid
+        instance = output_service.base_service.instance_name
+        
+        output_box_xyz = np.array(output_service.bounding_box_zyx[:, :-1])
+        output_center_xyz = (output_box_xyz[0] + output_box_xyz[1]) / 2
+        
+        link_prefix = f"{server}/neuroglancer/#!"
+        link_json = \
+        {
+            "layers": {
+                "segmentation": {
+                    "type": "segmentation",
+                    "source": f"dvid://{server}/{uuid}/{instance}"
+                }
+            },
+            "navigation": {
+                "pose": {
+                    "position": {
+                        "voxelSize": [8,8,8],
+                        "voxelCoordinates": output_center_xyz.tolist()
                     }
                 },
-                "navigation": {
-                    "pose": {
-                        "position": {
-                            "voxelSize": [8,8,8],
-                            "voxelCoordinates": output_center_xyz.tolist()
-                        }
-                    },
-                    "zoomFactor": 8
-                }
+                "zoomFactor": 8
             }
-            logger.info(f"Neuroglancer link to output {index}: {link_prefix}{json.dumps(link_json)}")
+        }
+        logger.info(f"Neuroglancer link to output: {link_prefix}{json.dumps(link_json)}")
 
 
     def _sanitize_config(self):
@@ -353,7 +323,7 @@ class CopySegmentation(Workflow):
             options["pyramid-depth"] = self._read_pyramid_depth()
         pyramid_depth = options["pyramid-depth"]
 
-        block_width = self.output_services[0].block_width
+        block_width = self.output_service.block_width
 
         slab_depth = options["slab-depth"]
         if slab_depth == -1:
@@ -440,7 +410,7 @@ class CopySegmentation(Workflow):
 
         # For now, all output_configs are required to have identical grid alignment settings
         # Therefore, we can save time in the loop below by aligning the input to the output grid in advance.
-        aligned_input_wall = self._consolidate_and_pad(slab_index, translated_wall, 0, self.output_services[0], align=True, pad=False)
+        aligned_input_wall = self._consolidate_and_pad(slab_index, translated_wall, 0, self.output_service, align=True, pad=False)
         del translated_wall
 
         if options["compute-block-statistics"]:
@@ -449,7 +419,7 @@ class CopySegmentation(Workflow):
             # Note: Since this is pre-padding, the stats on the border blocks
             #       will be wrong unless the bounding-box is block-aligned.
             with Timer(f"Slab {slab_index}: Computing slab block statistics", logger):
-                block_shape = 3*[self.output_services[0].base_service.block_width]
+                block_shape = 3*[self.output_service.base_service.block_width]
 
                 def block_stats_for_brick(brick):
                     return block_stats_for_volume(block_shape, brick.volume, brick.physical_box)
@@ -466,45 +436,40 @@ class CopySegmentation(Workflow):
                                    "you aren't writing scale 0, and you aren't writing pyramids.  "
                                    "What exactly are you hoping will happen here?")
         else:
-            for output_index, output_service in enumerate(self.output_services):
-                if output_index < len(self.output_services) - 1:
-                    # Copy to a new RDD so the input can be re-used for subsequent outputs
-                    aligned_output_wall = aligned_input_wall.copy()
+            output_service = self.output_service
+            aligned_output_wall = aligned_input_wall
+
+            # Pad internally to block-align.
+            # Here, we assume that any output labelmaps are idempotent,
+            # so it's okay to read pre-existing output data that will ultimately get remapped.
+            padded_wall = self._consolidate_and_pad(slab_index, aligned_output_wall, 0, output_service, align=False, pad=True)
+            del aligned_output_wall
+    
+            # Write scale 0 to DVID
+            if not options["skip-scale-0-write"]:
+                self._write_bricks( slab_index, padded_wall, 0, output_service )
+    
+            for new_scale in range(1, 1+pyramid_depth):
+                if options["download-pre-downsampled"] and new_scale in self.input_service.available_scales:
+                    del padded_wall
+                    downsampled_wall = BrickWall.from_volume_service(self.input_service, new_scale, input_slab_box, self.client, self.target_partition_size_voxels, compression=options["brick-compression"])
+                    downsampled_wall.persist_and_execute(f"Slab {slab_index}: Scale {new_scale}: Downloading pre-downsampled bricks", logger)
                 else:
-                    # No copy needed for the last one
-                    aligned_output_wall = aligned_input_wall
-    
-                # Pad internally to block-align.
-                # Here, we assume that any output labelmaps are idempotent,
-                # so it's okay to read pre-existing output data that will ultimately get remapped.
-                padded_wall = self._consolidate_and_pad(slab_index, aligned_output_wall, 0, output_service, align=False, pad=True)
-                del aligned_output_wall
-        
-                # Write scale 0 to DVID
-                if not options["skip-scale-0-write"]:
-                    self._write_bricks( slab_index, padded_wall, 0, output_service )
-        
-                for new_scale in range(1, 1+pyramid_depth):
-                    if options["download-pre-downsampled"] and new_scale in self.input_service.available_scales:
-                        del padded_wall
-                        downsampled_wall = BrickWall.from_volume_service(self.input_service, new_scale, input_slab_box, self.client, self.target_partition_size_voxels, compression=options["brick-compression"])
-                        downsampled_wall.persist_and_execute(f"Slab {slab_index}: Scale {new_scale}: Downloading pre-downsampled bricks", logger)
-                    else:
-                        # Compute downsampled (results in smaller bricks)
-                        downsampled_wall = padded_wall.downsample( (2,2,2), method='label' )
-                        downsampled_wall.persist_and_execute(f"Slab {slab_index}: Scale {new_scale}: Downsampling", logger)
-                        del padded_wall
-    
-                    # Consolidate to full-size bricks and pad internally to block-align
-                    consolidated_wall = self._consolidate_and_pad(slab_index, downsampled_wall, new_scale, output_service, align=True, pad=True)
-                    del downsampled_wall
-    
-                    # Write to DVID
-                    self._write_bricks( slab_index, consolidated_wall, new_scale, output_service )
-    
-                    padded_wall = consolidated_wall
-                    del consolidated_wall
-                del padded_wall
+                    # Compute downsampled (results in smaller bricks)
+                    downsampled_wall = padded_wall.downsample( (2,2,2), method='label' )
+                    downsampled_wall.persist_and_execute(f"Slab {slab_index}: Scale {new_scale}: Downsampling", logger)
+                    del padded_wall
+
+                # Consolidate to full-size bricks and pad internally to block-align
+                consolidated_wall = self._consolidate_and_pad(slab_index, downsampled_wall, new_scale, output_service, align=True, pad=True)
+                del downsampled_wall
+
+                # Write to DVID
+                self._write_bricks( slab_index, consolidated_wall, new_scale, output_service )
+
+                padded_wall = consolidated_wall
+                del consolidated_wall
+            del padded_wall
 
         # Now that processing is complete, commit the stats to disk.
         if options["compute-block-statistics"]:

@@ -80,16 +80,16 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
             message-block-shape: [64,64,512]
             bounding-box: [[0,0,100], [256,200,256]]
  
-        outputs:
-          - dvid:
-              server: {dvid_address}
-              uuid: {repo_uuid}
-              segmentation-name: {output_segmentation_name}
-              supervoxels: true
-              disable-indexing: true
-              create-if-necessary: true
+        output:
+          dvid:
+            server: {dvid_address}
+            uuid: {repo_uuid}
+            segmentation-name: {output_segmentation_name}
+            supervoxels: true
+            disable-indexing: true
+            create-if-necessary: true
            
-            geometry: {{}} # Auto-set from input
+          geometry: {{}} # Auto-set from input
  
         copysegmentation:
           pyramid-depth: 1
@@ -130,16 +130,16 @@ def setup_hdf5_segmentation_input(setup_dvid_repo, random_segmentation):
             message-block-shape: [64,64,256]
             bounding-box: [[0,0,100], [256,200,256]]
 
-        outputs:
-          - dvid:
-              server: {dvid_address}
-              uuid: {repo_uuid}
-              segmentation-name: {output_segmentation_name}
-              supervoxels: true
-              disable-indexing: true
-              create-if-necessary: true
+        output:
+          dvid:
+            server: {dvid_address}
+            uuid: {repo_uuid}
+            segmentation-name: {output_segmentation_name}
+            supervoxels: true
+            disable-indexing: true
+            create-if-necessary: true
                         
-            geometry: {{}} # Auto-set from input
+          geometry: {{}} # Auto-set from input
         
         copysegmentation:
           pyramid-depth: 1
@@ -203,7 +203,7 @@ def test_copysegmentation_from_hdf5_to_dvid_multiscale(setup_hdf5_segmentation_i
 
     # Change the segmentation name so it doesn't conflict with earlier tests 
     output_segmentation_name = 'segmentation-output-from-hdf5-multiscale'
-    config["outputs"][0]["dvid"]["segmentation-name"] = output_segmentation_name
+    config["output"]["dvid"]["segmentation-name"] = output_segmentation_name
 
     yaml = YAML()
     yaml.default_flow_style = False
@@ -277,16 +277,16 @@ def test_copysegmentation_from_brainmaps_to_dvid(setup_dvid_repo, disable_auto_r
             block-width: 64
             available-scales: [0,1,2]
 
-        outputs:
-          - dvid:
-              server: {dvid_address}
-              uuid: {repo_uuid}
-              segmentation-name: {output_segmentation_name}
-              supervoxels: true
-              disable-indexing: true
-              create-if-necessary: true
+        output:
+          dvid:
+            server: {dvid_address}
+            uuid: {repo_uuid}
+            segmentation-name: {output_segmentation_name}
+            supervoxels: true
+            disable-indexing: true
+            create-if-necessary: true
            
-            geometry: {{}} # Auto-set from input
+          geometry: {{}} # Auto-set from input
  
         copysegmentation:
           pyramid-depth: 2
