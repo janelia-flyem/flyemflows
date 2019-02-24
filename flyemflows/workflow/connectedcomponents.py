@@ -121,7 +121,7 @@ class ConnectedComponents(Workflow):
             orig_max = orig_vol.max()
             
             if subset_labels:
-                apply_mask_for_labels(orig_vol.copy('C'), subset_labels, inplace=True)
+                orig_vol = apply_mask_for_labels(orig_vol, subset_labels)
             
             cc_vol = skm.label(orig_vol, background=0, connectivity=1)
             assert cc_vol.dtype == np.int64
