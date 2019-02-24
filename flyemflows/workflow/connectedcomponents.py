@@ -4,15 +4,12 @@ import logging
 
 import numpy as np
 import pandas as pd
-import dask.bag as db
 import skimage.measure as skm
 from dask.bag import zip as bag_zip
-from requests import HTTPError
 
 from dvid_resource_manager.client import ResourceManagerClient
-from neuclease.util import Timer, Grid, SparseBlockMask, connected_components_nonconsecutive, apply_mask_for_labels
-from neuclease.dvid import ( fetch_instance_info, fetch_sparsevol_coarse_via_labelindex, fetch_maxlabel,
-                             post_maxlabel, post_nextlabel )
+from neuclease.util import Timer, Grid, connected_components_nonconsecutive, apply_mask_for_labels
+from neuclease.dvid import fetch_instance_info, fetch_maxlabel, post_maxlabel, post_nextlabel
 
 from dvidutils import LabelMapper
 
@@ -356,7 +353,7 @@ class ConnectedComponents(Workflow):
         # If we need to create a dvid instance for the output,
         # default to the same pyramid depth as the input
         if ("dvid" in input_config) and ("dvid" in output_config) and (output_config["dvid"]["creation-settings"]["max-scale"] == -1):
-            info = fetch_instance_info(*self.input_service.instance_triple)
+            info = fetch_instance_info(*self.input_service.base_service.instance_triple)
             pyramid_depth = info['Extended']['MaxDownresLevel']
             output_config["dvid"]["creation-settings"]["max-scale"] = pyramid_depth
 
@@ -382,8 +379,17 @@ class ConnectedComponents(Workflow):
 
     def init_brickwall(self, volume_service, subset_labels):
         halo = self.config["connectedcomponents"]["halo"]
-        sbm = self.init_sparseblockmask(volume_service, subset_labels)
-            
+
+        if not subset_labels:
+            sbm = None
+        else:
+            try:
+                sbm = volume_service.sparse_block_mask_for_labels(subset_labels)
+                if ((sbm.box[1] - sbm.box[0]) == 0).any():
+                    raise RuntimeError("Could not find sparse masks for any of the subset-labels")
+            except NotImplementedError:
+                sbm = None
+
         with Timer("Initializing BrickWall", logger):
             # Aim for 2 GB RDD partitions when loading segmentation
             GB = 2**30
@@ -397,74 +403,6 @@ class ConnectedComponents(Workflow):
             brickwall = brickwall.realign_to_new_grid(overlapping_grid)
 
         return brickwall
-
-
-    def init_sparseblockmask(self, volume_service, labels):
-        if not isinstance(volume_service.base_service, DvidVolumeService):
-            return None
-        
-        if not isinstance(volume_service, DvidVolumeService):
-            logger.warning("Fetching all bricks in the volume -- currently, sparse fetching only "
-                           "works for raw dvid volumes (not scaled or transposed ones)")
-            return None
-    
-        if len(labels) == 0:
-            return None
-
-        labels = set(labels)
-        is_supervoxels = volume_service.supervoxels
-        brick_shape = volume_service.preferred_message_shape
-        blocks_per_brick = brick_shape // 64
-
-        def fetch_coarse_and_divide(label):
-            """
-            Fetch the coarse sparsevol for the label and return a pair of
-            (label, coords), where coords is a record array
-            with columns [z,y,x,label], and z,y,x have been converted to
-            brick indices (not block indicies).
-            """
-            try:
-                mgr = volume_service.resource_manager_client
-                with mgr.access_context(volume_service.server, True, 1, 1):
-                    coords = fetch_sparsevol_coarse_via_labelindex(*volume_service.instance_triple, label, is_supervoxels)
-                    coords //= blocks_per_brick
-                    coords = pd.DataFrame(coords, columns=['z', 'y', 'x'], dtype=np.int32).drop_duplicates()
-                    coords['label'] = np.uint64(label)
-                return (label, coords.to_records(index=False))
-            except HTTPError as ex:
-                if (ex.response is not None and ex.response.status_code == 404):
-                    return (label, None)
-                raise
-
-        with Timer(f"Fetching coarse sparsevols for {len(labels)} labels", logger=logger):
-            labels = db.from_sequence(labels)
-            labels_and_coords = labels.map(fetch_coarse_and_divide).compute()
-
-        bad_labels = []
-        for label, coords in labels_and_coords:
-            if coords is None:
-                bad_labels.append(label)
-    
-        if bad_labels:
-            logger.warning(f"Could not obtain coarse sparsevol for {len(bad_labels)} labels: {bad_labels}")
-            labels_and_coords = list( filter(lambda k_v: k_v[1] is not None, labels_and_coords) )
-    
-        all_coords = np.concatenate( [kv[1] for kv in labels_and_coords] )
-        coords_df = pd.DataFrame( all_coords )
-        coords_df.drop_duplicates(['z', 'y', 'x'], inplace=True)
-        coords = coords_df[['z', 'y', 'x']].values
-        
-        min_coord = coords.min(axis=0)
-        max_coord = coords.max(axis=0)
-        mask_box = np.array((min_coord, 1+max_coord))
-        mask_shape = mask_box[1] - mask_box[0]
-        mask = np.zeros(mask_shape, dtype=bool)
-
-        coords -= mask_box[0]
-        mask[(*coords.transpose(),)] = True
-
-        sbm = SparseBlockMask(mask, brick_shape*mask_box, brick_shape)
-        return sbm
 
 
     def determine_next_label(self, num_new_labels, orig_maxes):

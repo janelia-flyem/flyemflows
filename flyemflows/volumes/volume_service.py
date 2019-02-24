@@ -51,6 +51,18 @@ class VolumeService(metaclass=ABCMeta):
             return ResourceManagerClient("", 0)
         return self.base_service.resource_manager_client
 
+    def sparse_block_mask_for_labels(self, labels):
+        """
+        Determine which bricks (each with our ``preferred_message_shape``
+        would need to be accessed download all data for the given labels,
+        and return the result as a ``SparseBlockMask`` object.
+
+        For now, only supported by DvidVolumeService and ``ScaledVolumeService``
+        when wrapping a ``DvidVolumeService``.
+        Other services will raise NotImplementedError
+        """
+        raise NotImplementedError
+
     @classmethod
     def create_from_config( cls, volume_config, config_dir=None, resource_manager_client=None ):
         from .hdf5_volume_service import Hdf5VolumeService

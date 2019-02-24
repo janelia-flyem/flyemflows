@@ -1,18 +1,22 @@
 import socket
 import logging
+
 import numpy as np
+import pandas as pd
 from requests import HTTPError
 
 from confiddler import validate
 from dvid_resource_manager.client import ResourceManagerClient
 
-from neuclease.util import choose_pyramid_depth
+from neuclease.util import Timer, choose_pyramid_depth, SparseBlockMask
 from neuclease.dvid import ( fetch_repo_instances, fetch_instance_info, fetch_volume_box,
                              fetch_raw, post_raw, fetch_labelarray_voxels, post_labelmap_voxels,
-                             update_extents, extend_list_value, create_voxel_instance, create_labelmap_instance )
+                             update_extents, extend_list_value, create_voxel_instance, create_labelmap_instance,
+                             fetch_sparsevol_coarse_via_labelindex )
 
 from ..util import auto_retry, replace_default_entries
 from . import GeometrySchema, VolumeServiceReader, VolumeServiceWriter, NewAxisOrderSchema, RescaleLevelSchema, LabelMapSchema
+from scipy.linalg._fblas import dsbmv
 
 logger = logging.getLogger(__name__)
 
@@ -565,4 +569,72 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             host = socket.gethostname()
             msg = f"Host {host}: Failed to write subvolume: offset_zyx = {offset_zyx.tolist()}, shape = {subvolume.shape}"
             raise RuntimeError(msg) from ex
+
+
+    def sparse_block_mask_for_labels(self, labels):
+        """
+        Determine which bricks (each with our ``preferred_message_shape``
+        would need to be accessed download all data for the given labels,
+        and return the result as a ``SparseBlockMask`` object.
+        """
+        labels = set(labels)
+        is_supervoxels = self.supervoxels
+        brick_shape = self.preferred_message_shape
+        blocks_per_brick = brick_shape // self.block_width
+
+        def fetch_coarse_and_divide(label):
+            """
+            Fetch the coarse sparsevol for the label and return a pair of
+            (label, coords), where coords is a record array
+            with columns [z,y,x,label], and z,y,x have been converted to
+            brick indices (not block indicies).
+            """
+            try:
+                mgr = self.resource_manager_client
+                with mgr.access_context(self.server, True, 1, 1):
+                    coords = fetch_sparsevol_coarse_via_labelindex(*self.instance_triple, label, is_supervoxels)
+                    coords //= blocks_per_brick
+                    coords = pd.DataFrame(coords, columns=['z', 'y', 'x'], dtype=np.int32).drop_duplicates()
+                    coords['label'] = np.uint64(label)
+                return (label, coords.to_records(index=False))
+            except HTTPError as ex:
+                if (ex.response is not None and ex.response.status_code == 404):
+                    return (label, None)
+                raise
+
+        with Timer(f"Fetching coarse sparsevols for {len(labels)} labels", logger=logger):
+            import dask.bag as db
+            labels = db.from_sequence(labels)
+            labels_and_coords = labels.map(fetch_coarse_and_divide).compute()
+
+        bad_labels = []
+        for label, coords in labels_and_coords:
+            if coords is None:
+                bad_labels.append(label)
+    
+        if bad_labels:
+            logger.warning(f"Could not obtain coarse sparsevol for {len(bad_labels)} labels: {bad_labels}")
+            labels_and_coords = list( filter(lambda k_v: k_v[1] is not None, labels_and_coords) )
+
+        if len(labels_and_coords) == 0:
+            empty_box = np.array([self.bounding_box_zyx[0], self.bounding_box_zyx[0]])
+            empty_mask = np.zeros((0,)*len(empty_box[0]), dtype=bool)
+            return SparseBlockMask(empty_mask, empty_box, brick_shape)
+            
+        all_coords = np.concatenate( [kv[1] for kv in labels_and_coords] )
+        coords_df = pd.DataFrame( all_coords )
+        coords_df.drop_duplicates(['z', 'y', 'x'], inplace=True)
+        coords = coords_df[['z', 'y', 'x']].values
+        
+        min_coord = coords.min(axis=0)
+        max_coord = coords.max(axis=0)
+        mask_box = np.array((min_coord, 1+max_coord))
+        mask_shape = mask_box[1] - mask_box[0]
+        mask = np.zeros(mask_shape, dtype=bool)
+
+        coords -= mask_box[0]
+        mask[(*coords.transpose(),)] = True
+
+        sbm = SparseBlockMask(mask, brick_shape*mask_box, brick_shape)
+        return sbm
 

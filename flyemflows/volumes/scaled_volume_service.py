@@ -1,9 +1,8 @@
 import numpy as np
-from skimage.util.shape import view_as_blocks
 
-from neuclease.util import box_to_slicing
+from neuclease.util import box_to_slicing, SparseBlockMask
+
 from ..util import downsample, upsample
-
 from . import VolumeServiceReader
 
 RescaleLevelSchema = \
@@ -122,6 +121,15 @@ class ScaledVolumeService(VolumeServiceReader):
 
             # Force contiguous so caller doesn't have to worry about it.
             return np.asarray(requested_data, order='C')
+
+
+    def sparse_block_mask_for_labels(self, labels):
+        sbm = self.original_volume_service.sparse_block_mask_for_labels(labels)
+        assert isinstance(sbm, SparseBlockMask)
+        orig_brick_shape = (self.preferred_message_shape * 2**self.scale)
+        assert (sbm.resolution == orig_brick_shape).all()
+        sbm.change_resolution(self.preferred_message_shape)
+        return sbm
 
 
 def downsample_box( box, block_shape ):
