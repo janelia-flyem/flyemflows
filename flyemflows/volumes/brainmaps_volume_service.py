@@ -123,6 +123,10 @@ class BrainMapsVolumeServiceReader(VolumeServiceReader):
     def available_scales(self):
         return self._available_scales
 
+    @property
+    def resource_manager_client(self):
+        return self._resource_manager_client
+
     # Two-levels of auto-retry:
     # 1. Auto-retry up to three time for any reason.
     # 2. If that fails due to 504 or 503 (probably cloud VMs warming up), wait 5 minutes and try again.

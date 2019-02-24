@@ -416,7 +416,6 @@ class ConnectedComponents(Workflow):
         brick_shape = volume_service.preferred_message_shape
         blocks_per_brick = brick_shape // 64
 
-        mgr = self.resource_mgr_client
         def fetch_coarse_and_divide(label):
             """
             Fetch the coarse sparsevol for the label and return a pair of
@@ -425,6 +424,7 @@ class ConnectedComponents(Workflow):
             brick indices (not block indicies).
             """
             try:
+                mgr = volume_service.resource_manager_client
                 with mgr.access_context(volume_service.server, True, 1, 1):
                     coords = fetch_sparsevol_coarse_via_labelindex(*volume_service.instance_triple, label, is_supervoxels)
                     coords //= blocks_per_brick

@@ -1,5 +1,6 @@
 import os
 from abc import ABCMeta, abstractmethod, abstractproperty
+from dvid_resource_manager.client import ResourceManagerClient
 
 class VolumeService(metaclass=ABCMeta):
 
@@ -36,6 +37,19 @@ class VolumeService(metaclass=ABCMeta):
         if hasattr(self, 'original_volume_service'):
             return [self] + self.original_volume_service.service_chain
         return [self]
+
+    @property
+    def resource_manager_client(self):
+        """
+        Return the base_service's resource manager client.
+        If the base service doesn't override this property,
+        the default is to return a dummy client.
+        (See dvid_resource_manager/client.py)
+        """
+        if self.base_service is self:
+            # Dummy client
+            return ResourceManagerClient("", 0)
+        return self.base_service.resource_manager_client
 
     @classmethod
     def create_from_config( cls, volume_config, config_dir=None, resource_manager_client=None ):

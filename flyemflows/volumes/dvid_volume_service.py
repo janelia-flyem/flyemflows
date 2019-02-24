@@ -378,6 +378,10 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
     def available_scales(self):
         return self._available_scales
 
+    @property
+    def resource_manager_client(self):
+        return self._resource_manager_client
+
 
     def _create_instance(self, volume_config):
         if 'segmentation-name' in volume_config["dvid"]:
