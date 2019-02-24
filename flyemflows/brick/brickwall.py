@@ -262,7 +262,26 @@ class BrickWall:
     def persist_and_execute(self, description, logger=None, optimize_graph=True):
         self.bricks = persist_and_execute(self.bricks, description, logger, optimize_graph)
     
+
+    def map_brick_volumes(self, f):
+        """
+        Given a function that accepts a Brick
+        and returns an updated volume (ndarray),
+        Return a new BrickWall with identical bricks, except for the new volume.
+        The logical_box, physical_box, location_id, and compression are copied from the original bricks.
+        """
+        def _apply_to_brick(brick):
+            assert isinstance(brick, Brick)
+            newvol = f(brick)
+            assert isinstance(newvol, np.ndarray)
+
+            return Brick( brick.logical_box, brick.physical_box, newvol,
+                          location_id=brick.location_id, compression=brick.compression )
+            
+        new_bricks = self.bricks.map(_apply_to_brick)
+        return BrickWall( self.bounding_box, self.grid, new_bricks, self.num_bricks )
     
+
     def downsample(self, block_shape, method):
         """
         See util.downsample for available methods

@@ -16,7 +16,7 @@ from neuclease.dvid.rle import runlength_encode_to_ranges
 from dvid_resource_manager.client import ResourceManagerClient
 
 from ..util import replace_default_entries, COMPRESSION_METHODS
-from ..brick import Brick, BrickWall
+from ..brick import BrickWall
 from ..volumes import ( VolumeService, VolumeServiceWriter, SegmentationVolumeSchema,
                                  DvidSegmentationVolumeSchema, TransposedVolumeService, ScaledVolumeService,
                                  DvidVolumeService )
@@ -132,7 +132,12 @@ class CopySegmentation(Workflow):
                 "default": 0,
             },
             "input-mask-labels": BodyListSchema,
-            "output-mask-labels": BodyListSchema
+            "output-mask-labels": BodyListSchema,
+            "add-offset-to-ids": {
+                "description": "If desired, add a constant offset to all input IDs before they are written to the output.",
+                "type": "integer",
+                "default": 0
+            }
         }
     }
     
@@ -419,8 +424,7 @@ class CopySegmentation(Workflow):
             is_supervoxels = self.input_service.base_service.supervoxels
 
         input_mask_labels = load_body_list(options["input-mask-labels"], is_supervoxels)
-        input_mask_labels = set(input_mask_labels)
-        self.input_mask_labels = input_mask_labels
+        self.input_mask_labels = input_mask_labels = set(input_mask_labels)
 
         self.output_mask_labels = load_body_list(options["output-mask-labels"], is_supervoxels)
         self.output_mask_labels = set(self.output_mask_labels)
@@ -434,6 +438,14 @@ class CopySegmentation(Workflow):
         # This has no effect on the brick volumes themselves.
         if any(self.translation_offset_zyx):
             input_wall = input_wall.translate(self.translation_offset_zyx)
+
+        id_offset = options["add-offset-to-ids"]
+        if id_offset != 0:
+            id_offset = options["add-offset-to-ids"]
+            input_mask_labels = np.fromiter(input_mask_labels, np.uint64)
+            input_mask_labels += id_offset
+            self.input_mask_labels = input_mask_labels = set(input_mask_labels)
+            input_wall = input_wall.map_brick_volumes(lambda b: b.volume + id_offset)
 
         output_service = self.output_service
 
@@ -488,8 +500,6 @@ class CopySegmentation(Workflow):
         """
         Consolidate (align), and pad the given BrickWall
 
-        Note: UNPERSISTS the input data and returns the new, downsampled data.
-
         Args:
             scale: The pyramid scale of the data.
             
@@ -497,7 +507,6 @@ class CopySegmentation(Workflow):
             
         Returns a pre-executed and persisted BrickWall.
         """
-        options = self.config["copysegmentation"]
         output_writing_grid = Grid(output_service.preferred_message_shape)
 
         # Consolidate bricks to full-size, aligned blocks (shuffles data)
@@ -516,14 +525,6 @@ class CopySegmentation(Workflow):
     
             # If masks are involved, we must fetch the ALL the output,
             # and select data from input or output according to the masks.
-            assert realigned_wall.bounding_box is not None
-            output_wall = BrickWall.from_volume_service( self.output_service,
-                                                         0,
-                                                         realigned_wall.bounding_box,
-                                                         self.client,
-                                                         self.target_partition_size_voxels,
-                                                         compression=options['brick-compression'] )
-    
             output_service = self.output_service
             translation_offset_zyx = self.translation_offset_zyx
             def combine_with_output(input_brick):
@@ -548,16 +549,9 @@ class CopySegmentation(Workflow):
                 # Start with the complete output, then
                 # change voxels that fall within both masks.
                 output_vol[mask] = input_brick.volume[mask]
-                
-                combined_brick = Brick( input_brick.logical_box,
-                                        input_brick.physical_box,
-                                        output_vol,
-                                        location_id=input_brick.location_id,
-                                        compression=input_brick.compression )
-                return combined_brick
+                return output_vol
 
-            combined_bricks = realigned_wall.bricks.map(combine_with_output)
-            combined_wall = BrickWall( output_wall.bounding_box, output_wall.grid, combined_bricks, output_wall.num_bricks )
+            combined_wall = realigned_wall.map_brick_volumes(combine_with_output)
             combined_wall.persist_and_execute(f"Slab {slab_index}: Scale {scale}: Combining masked bricks", logger)
             realigned_wall = combined_wall
 

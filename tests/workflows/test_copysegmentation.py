@@ -207,14 +207,23 @@ def test_copysegmentation_from_hdf5_to_dvid_input_mask(setup_hdf5_segmentation_i
     # Select only even IDs
     all_labels = pd.unique(volume.reshape(-1))
     even_labels = all_labels[all_labels % 2 == 0]
-    expected_vol = np.where((volume % 2) == 0, volume, 0)
     config["copysegmentation"]["input-mask-labels"] = even_labels.tolist()
+    
+    # Add an offset, which is added to both the input volume AND the mask labels
+    offset = 2000 
+    config["copysegmentation"]["add-offset-to-ids"] = offset
+
+    expected_vol = np.where((volume % 2) == 0, volume+offset, 0)
 
     setup = template_dir, config, expected_vol, dvid_address, repo_uuid, output_segmentation_name
     _box_zyx, _expected_vol = _run_to_dvid(setup)
 
 def test_copysegmentation_from_hdf5_to_dvid_output_mask(setup_hdf5_segmentation_input, disable_auto_retry):
     template_dir, config, input_volume, dvid_address, repo_uuid, _output_segmentation_name = setup_hdf5_segmentation_input
+
+    # make sure we get a fresh output
+    output_segmentation_name = 'copyseg-with-output-mask'
+    config["output"]["dvid"]["segmentation-name"] = output_segmentation_name
 
     output_volume = np.zeros((256,256,256), np.uint64)
     mask = np.zeros((256,256,256), dtype=bool)
@@ -231,7 +240,7 @@ def test_copysegmentation_from_hdf5_to_dvid_output_mask(setup_hdf5_segmentation_
     expected_vol = np.where(mask, input_volume, output_volume)
 
     # make sure we get a fresh output
-    output_segmentation_name = 'copyseg-with-input-mask'
+    output_segmentation_name = 'copyseg-with-output-mask'
     config["output"]["dvid"]["segmentation-name"] = output_segmentation_name
     config["copysegmentation"]["output-mask-labels"] = masked_labels
 
