@@ -104,7 +104,9 @@ class CopySegmentation(Workflow):
             "brick-compression": {
                 "description": "Internally, downloaded bricks will be stored in a compressed format.\n"
                                "This setting specifies the compression scheme to use.\n"
-                               f"Options: {COMPRESSION_METHODS}",
+                               f"Options: {COMPRESSION_METHODS}"
+                               "Note: This affects only in-memory storage while the workflow is running.\n"
+                               "      It does NOT affect the compression used in DVID.\n",
                 "type": "string",
                 "enum": COMPRESSION_METHODS,
                 "default": "lz4_2x"
