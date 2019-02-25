@@ -429,8 +429,23 @@ class CopySegmentation(Workflow):
         self.output_mask_labels = load_body_list(options["output-mask-labels"], is_supervoxels)
         self.output_mask_labels = set(self.output_mask_labels)
 
+        # Fetch a sparse set of Bricks (if possible).
+        if not self.input_mask_labels:
+            sbm = None
+        else:
+            try:
+                sbm = self.input_service.sparse_block_mask_for_labels(self.input_mask_labels)
+            except NotImplementedError:
+                sbm = None
+
         input_slab_box = output_slab_box - self.translation_offset_zyx
-        input_wall = BrickWall.from_volume_service(self.input_service, 0, input_slab_box, self.client, self.target_partition_size_voxels, compression=options['brick-compression'])
+        input_wall = BrickWall.from_volume_service( self.input_service,
+                                                    0,
+                                                    input_slab_box,
+                                                    self.client,
+                                                    self.target_partition_size_voxels,
+                                                    sparse_block_mask=sbm,
+                                                    compression=options['brick-compression'] )
         input_wall.persist_and_execute(f"Slab {slab_index}: Reading ({input_slab_box[:,::-1].tolist()})", logger)
 
         # Translate coordinates from input to output
