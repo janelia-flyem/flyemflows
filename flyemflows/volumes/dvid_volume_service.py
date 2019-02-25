@@ -16,7 +16,6 @@ from neuclease.dvid import ( fetch_repo_instances, fetch_instance_info, fetch_vo
 
 from ..util import auto_retry, replace_default_entries
 from . import GeometrySchema, VolumeServiceReader, VolumeServiceWriter, NewAxisOrderSchema, RescaleLevelSchema, LabelMapSchema
-from scipy.linalg._fblas import dsbmv
 
 logger = logging.getLogger(__name__)
 
