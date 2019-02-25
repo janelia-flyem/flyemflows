@@ -5,6 +5,7 @@ from io import StringIO
 
 import pytest
 from ruamel.yaml import YAML
+from requests import HTTPError
 
 import h5py
 import numpy as np
@@ -14,7 +15,6 @@ from dvidutils import downsample_labels
 from neuclease.util import box_to_slicing, extract_subvol, overwrite_subvol, box_intersection, mask_for_labels, apply_mask_for_labels
 from neuclease.dvid import create_labelmap_instance, post_labelmap_voxels, fetch_raw, fetch_labelmap_voxels
 
-from flyemflows.util import upsample
 from flyemflows.bin.launchflow import launch_flow
 
 # Overridden below when running from __main__
@@ -63,7 +63,12 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
     input_segmentation_name = 'segmentation-input'
     output_segmentation_name = 'segmentation-output-from-dvid'
  
-    create_labelmap_instance(dvid_address, repo_uuid, input_segmentation_name)
+    try:
+        create_labelmap_instance(dvid_address, repo_uuid, input_segmentation_name)
+    except HTTPError as ex:
+        if ex.response is not None and 'already exists' in ex.response.content.decode('utf-8'):
+            pass
+        
     post_labelmap_voxels(dvid_address, repo_uuid, input_segmentation_name, (0,0,0), random_segmentation)
     
     template_dir = tempfile.mkdtemp(suffix="copysegmentation-from-dvid-template")
@@ -191,6 +196,27 @@ def _run_to_dvid(setup, check_scale_0=True):
 
 def test_copysegmentation_from_dvid_to_dvid(setup_dvid_segmentation_input, disable_auto_retry):
     _box_zyx, _expected_vol = _run_to_dvid(setup_dvid_segmentation_input)
+
+
+def test_copysegmentation_from_dvid_to_dvid_with_labelmap(setup_dvid_segmentation_input, disable_auto_retry):
+    template_dir, config, volume, dvid_address, repo_uuid, _output_segmentation_name = setup_dvid_segmentation_input
+
+    # make sure we get a fresh output
+    output_segmentation_name = 'copyseg-with-labelmap'
+    config["output"]["dvid"]["segmentation-name"] = output_segmentation_name
+
+    orig_labels = pd.unique(volume.reshape(-1))
+    new_labels = orig_labels + 4000
+    expected_vol = volume + 4000
+
+    pd.DataFrame({'orig': orig_labels, 'new': new_labels}).to_csv(f"{template_dir}/labelmap.csv", header=True, index=False)
+    config["input"]["apply-labelmap"] = {
+        "file": "labelmap.csv",
+        "file-type": "label-to-body"
+    }
+    
+    setup = template_dir, config, expected_vol, dvid_address, repo_uuid, output_segmentation_name
+    _box_zyx, _expected_vol = _run_to_dvid(setup)
 
 
 def test_copysegmentation_from_dvid_to_dvid_input_mask(setup_dvid_segmentation_input, disable_auto_retry):
@@ -423,5 +449,5 @@ if __name__ == "__main__":
     
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_copysegmentation']
-    #args = ['-k', 'copysegmentation_from_dvid_to_dvid_input_mask'] + args
+    #args = ['-k', 'copysegmentation_from_dvid_to_dvid_with_labelmap'] + args
     pytest.main(args)
