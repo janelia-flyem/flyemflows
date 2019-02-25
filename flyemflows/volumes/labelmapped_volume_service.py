@@ -32,7 +32,7 @@ class LabelmappedVolumeService(VolumeServiceWriter):
     """
     def __init__(self, original_volume_service, labelmap_config):
         self.original_volume_service = original_volume_service # See VolumeService.service_chain
-        validate(labelmap_config, LabelMapSchema)
+        validate(labelmap_config, LabelMapSchema, inject_defaults=True)
 
         # Convert relative path to absolute
         if not labelmap_config["file"].startswith('gs://') and not labelmap_config["file"].startswith("/"):
@@ -55,8 +55,8 @@ class LabelmappedVolumeService(VolumeServiceWriter):
     def __getstate__(self):
         if self._compressed_mapping_pairs is None:
             # Load the labelmapping and then compress 
-            mapping_pairs = self.mapping_pairs
-            self._compressed_mapping_pairs = (mapping_pairs.shape, mapping_pairs.dtype, lz4.compress(self.mapping_pairs)) #@UndefinedVariable
+            mapping_pairs = np.asarray(self.mapping_pairs, order='C')
+            self._compressed_mapping_pairs = (mapping_pairs.shape, mapping_pairs.dtype, lz4.compress(mapping_pairs)) #@UndefinedVariable
 
         d = self.__dict__.copy()
         
@@ -114,6 +114,8 @@ class LabelmappedVolumeService(VolumeServiceWriter):
 
     def get_subvolume(self, box_zyx, scale=0):
         volume = self.original_volume_service.get_subvolume(box_zyx, scale)
+        assert np.issubdtype(volume.dtype, np.unsignedinteger), \
+            f"LabelmappedVolumeService supports only unsigned integer types, not {volume.dtype}"
 
         if self.apply_when_reading:
             # TODO: Apparently LabelMapper can't handle non-contiguous arrays right now.
