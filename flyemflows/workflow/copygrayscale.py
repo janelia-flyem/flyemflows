@@ -140,7 +140,7 @@ class CopyGrayscale(Workflow):
         mgr_options = self.config["resource-manager"]
 
         self.mgr_client = ResourceManagerClient( mgr_options["server"], mgr_options["port"] )
-        self.input_service = VolumeService.create_from_config( input_config, os.getcwd(), self.mgr_client )
+        self.input_service = VolumeService.create_from_config( input_config, self.mgr_client )
 
         max_pyramid_scale = self.config["copygrayscale"]["max-pyramid-scale"]
         if "dvid" in output_config and output_config["dvid"]["create-if-necessary"]:
@@ -154,7 +154,7 @@ class CopyGrayscale(Workflow):
                 raise RuntimeError(msg)
 
         replace_default_entries(output_config["geometry"]["bounding-box"], self.input_service.bounding_box_zyx[:, ::-1])
-        self.output_service = VolumeService.create_from_config( output_config, os.getcwd(), self.mgr_client )
+        self.output_service = VolumeService.create_from_config( output_config, self.mgr_client )
         assert isinstance( self.output_service, VolumeServiceWriter ), \
             "The output format you are attempting to use does not support writing"
 

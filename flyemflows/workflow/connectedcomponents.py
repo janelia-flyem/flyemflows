@@ -348,7 +348,7 @@ class ConnectedComponents(Workflow):
         mgr_config = self.config["resource-manager"]
 
         self.resource_mgr_client = ResourceManagerClient( mgr_config["server"], mgr_config["port"] )
-        self.input_service = VolumeService.create_from_config( input_config, os.getcwd(), self.resource_mgr_client )
+        self.input_service = VolumeService.create_from_config( input_config, self.resource_mgr_client )
 
         # If we need to create a dvid instance for the output,
         # default to the same pyramid depth as the input
@@ -358,7 +358,7 @@ class ConnectedComponents(Workflow):
             output_config["dvid"]["creation-settings"]["max-scale"] = pyramid_depth
 
         replace_default_entries(output_config["geometry"]["bounding-box"], self.input_service.bounding_box_zyx[:, ::-1])
-        self.output_service = VolumeService.create_from_config( output_config, os.getcwd(), self.resource_mgr_client )
+        self.output_service = VolumeService.create_from_config( output_config, self.resource_mgr_client )
         assert isinstance( self.output_service, VolumeServiceWriter ), \
             "The output format you are attempting to use does not support writing"
 

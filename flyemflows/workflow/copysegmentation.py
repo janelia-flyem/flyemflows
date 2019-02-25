@@ -219,7 +219,7 @@ class CopySegmentation(Workflow):
         permit_inconsistent_pyramids = options["permit-inconsistent-pyramid"]
 
         self.mgr_client = ResourceManagerClient( mgr_options["server"], mgr_options["port"] )
-        self.input_service = VolumeService.create_from_config( input_config, None, self.mgr_client )
+        self.input_service = VolumeService.create_from_config( input_config, self.mgr_client )
         
         brick_shape = self.input_service.preferred_message_shape
         if slab_depth % brick_shape[0] != 0:
@@ -248,7 +248,7 @@ class CopySegmentation(Workflow):
 
         # Replace 'auto' dimensions with input bounding box
         replace_default_entries(output_config["geometry"]["bounding-box"], self.input_service.bounding_box_zyx[:, ::-1])
-        self.output_service = VolumeService.create_from_config( output_config, None, self.mgr_client )
+        self.output_service = VolumeService.create_from_config( output_config, self.mgr_client )
         output_service = self.output_service
         assert isinstance( output_service, VolumeServiceWriter )
 

@@ -30,17 +30,16 @@ class LabelmappedVolumeService(VolumeServiceWriter):
               This is typically true of FlyEM supervoxels (A) and body IDs (B),
               since bodies always contain a supervoxel with matching ID.
     """
-    def __init__(self, original_volume_service, labelmap_config, config_dir):
+    def __init__(self, original_volume_service, labelmap_config):
         self.original_volume_service = original_volume_service # See VolumeService.service_chain
         validate(labelmap_config, LabelMapSchema)
 
         # Convert relative path to absolute
         if not labelmap_config["file"].startswith('gs://') and not labelmap_config["file"].startswith("/"):
-            abspath = os.path.normpath( os.path.join(config_dir, labelmap_config["file"]) )
+            abspath = os.path.abspath(labelmap_config["file"])
             labelmap_config["file"] = abspath
         
         self.labelmap_config = labelmap_config
-        self.config_dir = config_dir
         
         # These are computed on-demand and memoized for the sake of pickling support.
         # See __getstate__()
@@ -57,7 +56,7 @@ class LabelmappedVolumeService(VolumeServiceWriter):
         if self._compressed_mapping_pairs is None:
             # Load the labelmapping and then compress 
             mapping_pairs = self.mapping_pairs
-            self._compressed_mapping_pairs = (mapping_pairs.shape, mapping_pairs.dtype, lz4.compress(self.mapping_pairs))
+            self._compressed_mapping_pairs = (mapping_pairs.shape, mapping_pairs.dtype, lz4.compress(self.mapping_pairs)) #@UndefinedVariable
 
         d = self.__dict__.copy()
         
@@ -73,9 +72,9 @@ class LabelmappedVolumeService(VolumeServiceWriter):
         if self._mapping_pairs is None:
             if self._compressed_mapping_pairs is not None:
                 shape, dtype, compressed = self._compressed_mapping_pairs
-                self._mapping_pairs = np.frombuffer(lz4.uncompress(compressed), dtype).reshape(shape)
+                self._mapping_pairs = np.frombuffer(lz4.uncompress(compressed), dtype).reshape(shape) #@UndefinedVariable
             else:
-                self._mapping_pairs = load_labelmap(self.labelmap_config, self.config_dir)
+                self._mapping_pairs = load_labelmap(self.labelmap_config, '.')
                 
                 # Save RAM by converting to uint32 if possible (usually possible)
                 if self._mapping_pairs.max() <= np.iinfo(np.uint32).max:

@@ -137,7 +137,7 @@ class StitchedMeshes(Workflow):
         mgr_options = self.config["resource-manager"]
 
         self.mgr_client = ResourceManagerClient( mgr_options["server"], mgr_options["port"] )
-        self.input_service = VolumeService.create_from_config( input_config, os.getcwd(), self.mgr_client )
+        self.input_service = VolumeService.create_from_config( input_config, self.mgr_client )
         assert isinstance(self.input_service, DvidVolumeService), \
             "Input must be plain dvid source, not scaled, transposed, etc."
         

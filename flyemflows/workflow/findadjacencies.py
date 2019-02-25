@@ -110,7 +110,7 @@ class FindAdjacencies(Workflow):
         subset_requirement = options["subset-labels-requirement"]
 
         self.resource_mgr_client = ResourceManagerClient(resource_config["server"], resource_config["port"])
-        volume_service = VolumeService.create_from_config(input_config, os.getcwd(), self.resource_mgr_client)
+        volume_service = VolumeService.create_from_config(input_config, self.resource_mgr_client)
 
         is_supervoxels = False
         if isinstance(volume_service.base_service, DvidVolumeService):

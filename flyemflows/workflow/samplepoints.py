@@ -110,7 +110,7 @@ class SamplePoints(Workflow):
         resource_config = self.config["resource-manager"]
 
         resource_mgr_client = ResourceManagerClient(resource_config["server"], resource_config["port"])
-        volume_service = VolumeService.create_from_config(input_config, os.getcwd(), resource_mgr_client)
+        volume_service = VolumeService.create_from_config(input_config, resource_mgr_client)
 
         input_csv = options["input-table"]
         with Timer(f"Reading {input_csv}", logger):

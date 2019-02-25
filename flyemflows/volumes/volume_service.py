@@ -64,16 +64,13 @@ class VolumeService(metaclass=ABCMeta):
         raise NotImplementedError
 
     @classmethod
-    def create_from_config( cls, volume_config, config_dir=None, resource_manager_client=None ):
+    def create_from_config( cls, volume_config, resource_manager_client=None ):
         from .hdf5_volume_service import Hdf5VolumeService
         from .dvid_volume_service import DvidVolumeService
         from .brainmaps_volume_service import BrainMapsVolumeServiceReader
         from .n5_volume_service import N5VolumeServiceReader
         from .zarr_volume_service import ZarrVolumeService
         from .slice_files_volume_service import SliceFilesVolumeService
-
-        if config_dir is None:
-            config_dir = os.getcwd()
 
         VolumeService._remove_default_service_configs(volume_config)
 
@@ -103,7 +100,7 @@ class VolumeService(metaclass=ABCMeta):
         # Wrap with labelmap service
         from . import LabelmappedVolumeService
         if ("apply-labelmap" in volume_config) and (volume_config["apply-labelmap"]["file-type"] != "__invalid__"):
-            service = LabelmappedVolumeService(service, volume_config["apply-labelmap"], config_dir)
+            service = LabelmappedVolumeService(service, volume_config["apply-labelmap"])
 
         # Wrap with transpose service
         from . import TransposedVolumeService

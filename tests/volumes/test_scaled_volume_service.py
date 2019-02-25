@@ -74,7 +74,7 @@ def test_full_volume_downsample_1(setup_hdf5_service):
     # Scale 1
     scaled_config = copy.deepcopy(volume_config)
     scaled_config["rescale-level"] = 1
-    scaled_reader = VolumeService.create_from_config(scaled_config, '.')
+    scaled_reader = VolumeService.create_from_config(scaled_config)
     
     assert (scaled_reader.bounding_box_zyx == h5_reader.bounding_box_zyx // 2).all()
     assert (scaled_reader.preferred_message_shape == h5_reader.preferred_message_shape // 2).all()
