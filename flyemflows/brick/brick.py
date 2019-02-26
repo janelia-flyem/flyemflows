@@ -202,7 +202,8 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
     if sparse_boxes is None:
         # Generate boxes from densely populated grid
         logical_boxes = boxes_from_grid(bounding_box, grid, include_halos=False)
-        physical_boxes = clipped_boxes_from_grid(bounding_box, grid)
+        physical_boxes = boxes_from_grid(bounding_box, grid, include_halos=True, clipped=True)
+        assert len(logical_boxes) == len(physical_boxes)
         logical_and_physical_boxes = zip( logical_boxes, physical_boxes )
     else:
         # User provided list of physical boxes.
