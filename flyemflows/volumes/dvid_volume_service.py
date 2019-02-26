@@ -600,6 +600,10 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
                 if (ex.response is not None and ex.response.status_code == 404):
                     return (label, None)
                 raise
+            except RuntimeError as ex:
+                if 'does not map to any body' in str(ex):
+                    return (label, None)
+                raise
 
         with Timer(f"Fetching coarse sparsevols for {len(labels)} labels", logger=logger):
             import dask.bag as db
