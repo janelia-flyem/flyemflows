@@ -232,7 +232,7 @@ def ingest_mapping( server,
     if subset_labels is not None:
         segment_to_body_df = segment_to_body_df.query('body_id in @subset_labels')
     
-    mappings = segment_to_body_df.set_index('segment_id')
+    mappings = segment_to_body_df.set_index('segment_id')['body_id']
     post_mappings(server, uuid, instance, mappings, mutid, batch_size=batch_size)
 
 
