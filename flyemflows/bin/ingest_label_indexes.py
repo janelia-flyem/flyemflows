@@ -7,29 +7,21 @@ import multiprocessing
 from itertools import chain
     
 import requests
-from tqdm import tqdm
 
 import h5py
 import numpy as np
 import pandas as pd
 from numba import jit
 
-from neuclease.dvid import fetch_labelindex, fetch_complete_mappings
+from neuclease.dvid import fetch_instance_info, fetch_repo_instances, post_labelindex_batch, fetch_labelindex, fetch_complete_mappings, post_mappings
+from neuclease.dvid.labelmap.labelops_pb2 import LabelIndex
 
 from dvidutils import LabelMapper # Fast label mapping in C++
 
-import DVIDSparkServices # We implicitly rely on initialize_excepthook()
-
-from neuclease.util import Timer, groupby_presorted, groupby_spans_presorted
-from DVIDSparkServices.util import default_dvid_session
-from DVIDSparkServices.io_util.labelmap_utils import load_edge_csv
-from DVIDSparkServices.dvid.metadata import DataInstance
-
-# The labelops_pb2 file was generated with the following commands:
-# $ cd DVIDSparkServices/dvid
-# $ protoc --python_out=. labelops.proto
-# $ sed -i '' s/labelops_pb2/DVIDSparkServices.dvid.labelops_pb2/g labelops_pb2.py
-from DVIDSparkServices.dvid.labelops_pb2 import LabelIndex, LabelIndices, MappingOps, MappingOp
+from neuclease import configure_default_logging
+from neuclease.util import Timer, groupby_presorted, groupby_spans_presorted, tqdm_proxy
+from neuclease.logging_setup import initialize_excepthook
+from neuclease.merge_table import load_edge_csv
 
 logger = logging.getLogger(__name__)
 
@@ -48,11 +40,9 @@ def main():
     """
     Command-line wrapper interface for ingest_label_indexes(), and/or ingest_mapping(), below.
     """
+    configure_default_logging()
+    initialize_excepthook()
     logger.setLevel(logging.INFO)
-    
-    # No need to add a handler -- root logger already has a handler via DVIDSparkServices.__init__
-    #handler = logging.StreamHandler(sys.stdout)
-    #logger.addHandler(handler)
     
     parser = argparse.ArgumentParser()
     parser.add_argument('--last-mutid', '-i', required=False, type=int)
@@ -69,7 +59,6 @@ def main():
                         help='How many threads to use when ingesting label indexes (does not currently apply to mappings)')
     parser.add_argument('--batch-size', '-b', default=20_000, type=int,
                         help='Data is grouped in batches to the server. This is the batch size, as measured in ROWS of data to be processed for each batch.')
-    parser.add_argument('--no-progress-bar', action='store_true')
     parser.add_argument('server')
     parser.add_argument('uuid')
     parser.add_argument('labelmap_instance')
@@ -147,7 +136,6 @@ def main_impl(args):
                                   args.tombstones,
                                   batch_rows=args.batch_size,
                                   num_threads=args.num_threads,
-                                  show_progress_bar=not args.no_progress_bar,
                                   check_mismatches=args.check_mismatches )
 
     # Upload mappings
@@ -161,8 +149,7 @@ def main_impl(args):
                             args.labelmap_instance,
                             args.last_mutid,
                             segment_to_body_df,
-                            args.batch_size,
-                            show_progress_bar=not args.no_progress_bar )
+                            args.batch_size )
 
 def sort_block_stats(block_sv_stats, segment_to_body_df=None, output_path=None, agglo_mapping_path=None):
     """
@@ -206,12 +193,10 @@ def sort_block_stats(block_sv_stats, segment_to_body_df=None, output_path=None, 
 
 def ingest_mapping( server,
                     uuid,
-                    instance_name,
+                    instance,
                     mutid,
                     segment_to_body_df,
-                    batch_size=100_000,
-                    show_progress_bar=True,
-                    session=None ):
+                    batch_size=100_000 ):
     """
     Ingest the forward-map (supervoxel-to-body) into DVID via the .../mappings endpoint
     
@@ -227,65 +212,15 @@ def ingest_mapping( server,
         
         batch_size:
             Approximately how many mapping pairs to pack into a single REST call.
-        
-        show_progress_bar:
-            Show progress information as an animated bar on the console.
-            Otherwise, progress log messages are printed to the console.
     
     """
     assert list(segment_to_body_df.columns) == AGGLO_MAP_COLUMNS
-    instance_info = DataInstance(server, uuid, instance_name)
-    if instance_info.datatype != 'labelmap':
-        raise RuntimeError(f"DVID instance is not a labelmap: {instance_name}")
+    if fetch_repo_instances(server, uuid)[instance] != 'labelmap':
+        raise RuntimeError(f"DVID instance is not a labelmap: {instance}")
 
     segment_to_body_df.sort_values(['body_id', 'segment_id'], inplace=True)
-
-    
-    if not server.startswith('http://'):
-        server = 'http://' + server
-
-    if session is None:
-        session = requests.Session()
-
-    def send_mapping_ops(mappings):
-        ops = MappingOps()
-        ops.mappings.extend(mappings)
-        payload = ops.SerializeToString()
-        r = session.post(f'{server}/api/node/{uuid}/{instance_name}/mappings', data=payload)
-        r.raise_for_status()
-
-    if show_progress_bar:
-        # Console-based progress bar
-        progress_bar = tqdm(total=len(segment_to_body_df), disable=not show_progress_bar)
-    else:
-        # Progress shown as log messages
-        progress_bar = LoggedProgressIndicator(len(segment_to_body_df), logger)
-
-    with progress_bar:
-        batch_ops_so_far = 0
-        mappings = []
-        for body_id, body_df in segment_to_body_df.groupby('body_id'):
-            op = MappingOp()
-            op.mutid = mutid
-            op.mapped = body_id
-            op.original.extend(body_df['segment_id'])
-
-            # Add to this chunk of ops
-            mappings.append(op)
-
-            # Send if chunk is full
-            if batch_ops_so_far >= batch_size:
-                send_mapping_ops(mappings)
-                progress_bar.update(batch_ops_so_far)
-                mappings = [] # reset
-                batch_ops_so_far = 0
-
-            batch_ops_so_far += len(op.original)
-        
-        # send last chunk
-        if mappings:
-            send_mapping_ops(mappings)
-            progress_bar.update(batch_ops_so_far)
+    mappings = segment_to_body_df.set_index('segment_id')
+    post_mappings(server, uuid, instance, mappings, mutid, batch_size=batch_size)
 
 
 def ingest_label_indexes( server,
@@ -296,7 +231,6 @@ def ingest_label_indexes( server,
                           tombstone_mode='include',
                           batch_rows=1_000_000,
                           num_threads=1,
-                          show_progress_bar=True,
                           check_mismatches=False ):
     """
     Ingest the label indexes for a particular agglomeration.
@@ -321,10 +255,6 @@ def ingest_label_indexes( server,
         
         num_threads:
             How many threads to use, for parallel loading.
-        
-        show_progress_bar:
-            Show progress information as an animated bar on the console.
-            Otherwise, progress log messages are printed to the console.
     """
     _check_instance(server, uuid, instance_name)
     block_sv_stats = sorted_block_sv_stats
@@ -337,12 +267,7 @@ def ingest_label_indexes( server,
 
     gen = generate_stats_batches(block_sv_stats, batch_rows)
 
-    if show_progress_bar:
-        # Console-based progress bar
-        progress_bar = tqdm(total=len(block_sv_stats), disable=not show_progress_bar)
-    else:
-        # Progress shown as log messages
-        progress_bar = LoggedProgressIndicator(len(block_sv_stats), logger)
+    progress_bar = tqdm_proxy(total=len(block_sv_stats), logger=logger)
 
     all_mismatch_ids = []
     all_missing_ids = []
@@ -365,15 +290,15 @@ def ingest_label_indexes( server,
         logger.info(f"Missing LabelIndex count: {len(all_missing_ids)}")
 
 
-def _check_instance(server, uuid, instance_name):
+def _check_instance(server, uuid, instance):
     """
     Verify that the instance is a valid destination for the LabelIndices we're about to ingest.
     """
-    instance_info = DataInstance(server, uuid, instance_name)
-    if instance_info.datatype != 'labelmap':
-        raise RuntimeError(f"DVID instance is not a labelmap: {instance_name}")
+    if fetch_repo_instances(server, uuid)[instance] != 'labelmap':
+        raise RuntimeError(f"DVID instance is not a labelmap: {instance}")
 
-    bz, by, bx = instance_info.blockshape_zyx
+    info = fetch_instance_info(server, uuid, instance)
+    bz, by, bx = info["Extended"]["BlockSize"]
     assert bz == by == bx == 64, \
         "The code below makes the hard-coded assumption that the instance block width is 64."
 
@@ -480,14 +405,6 @@ class StatsBatchProcessor:
             instance_info = (server, uuid, instance)
         self.instance_info = instance_info
 
-        self._session = None # Created lazily, after pickling
-
-    @property
-    def session(self):
-        if self._session is None:
-            self._session = default_dvid_session('ingest_label_indexes')
-        return self._session
-    
     def process_batch(self, batch_and_rowcount):
         """
         Takes a batch of grouped stats rows and sends it to dvid in the appropriate protobuf format.
@@ -498,7 +415,7 @@ class StatsBatchProcessor:
         labelindex_batch = chain(*map(self.label_indexes_for_body, next_stats_batch))
 
         if not self.check_mismatches:
-            self.post_labelindex_batch(labelindex_batch)
+            post_labelindex_batch(*self.instance_info, labelindex_batch)
             return next_stats_batch_total_rows, [], []
 
         # Check for mismatches
@@ -518,7 +435,7 @@ class StatsBatchProcessor:
                     mismatch_batch.append(labelindex)
 
         # Post mismatches (only)
-        self.post_labelindex_batch(mismatch_batch + missing_batch)
+        post_labelindex_batch(*self.instance_info, mismatch_batch + missing_batch)
 
         # Return mismatch IDs
         mismatch_labels = [labelindex.label for labelindex in mismatch_batch]
@@ -577,24 +494,6 @@ class StatsBatchProcessor:
                 label_indexes.append(tombstone_index)
 
         return label_indexes
-
-
-    def post_labelindex_batch(self, batch_indexes):
-        """
-        Send a batch (list) of LabelIndex objects to dvid.
-        """
-        label_indices = LabelIndices()
-        label_indices.indices.extend(batch_indexes)
-        if len(label_indices.indices) == 0:
-            # This can happen when tombstone_mode == 'only'
-            # and a label contained only one supervoxel.
-            return
-        payload = label_indices.SerializeToString()
-    
-        server, uuid, instance_name = self.instance_info    
-        endpoint = f'{server}/api/node/{uuid}/{instance_name}/indices'
-        r = self.session.post(endpoint, data=payload)
-        r.raise_for_status()
 
 
 @jit(nopython=True)
@@ -712,34 +611,10 @@ def group_sums_presorted(a, sorted_cols):
     return _agg(a, sorted_cols, groups, agg_results)
 
 
-class LoggedProgressIndicator:
-    """
-    Bare-bones drop-in replacement for tqdm that logs periodic progress messages,
-    for when you don't want tqdm's animated progress bar. 
-    """
-    def __init__(self, total, logger, step_percent=5):
-        self.total = total
-        self.milestones = list(np.arange(0.0, 1.001, step_percent/100))
-        self.progress = 0
-        self.logger = logger
-    
-    def update(self, increment):
-        self.progress += increment
-        while self.milestones and self.progress >= self.milestones[0] * self.total:
-            self.logger.info(f"Progress: {int(self.milestones[0] * 100):02d}%")
-            self.milestones = self.milestones[1:]
-
-    def __enter__(self):
-        self.update(0)
-        return self
-    
-    def __exit__(self, *args):
-        pass
-
-
 if __name__ == "__main__":
     DEBUG = False
     if DEBUG:
+        import DVIDSparkServices
         os.chdir(os.path.dirname(DVIDSparkServices.__file__) + '/..')
         
         import yaml
@@ -766,7 +641,6 @@ if __name__ == "__main__":
                      f" --batch-size=1000"
                      f" --tombstones=exclude"
                      f" --check-mismatches"
-                     #f" --no-progress-bar"
                      f" {dvid_config['server']}"
                      f" {dvid_config['uuid']}"
                      f" {dvid_config['segmentation-name']}"
