@@ -23,6 +23,8 @@ from neuclease.util import Timer, groupby_presorted, groupby_spans_presorted, tq
 from neuclease.logging_setup import initialize_excepthook
 from neuclease.merge_table import load_edge_csv
 
+from flyemflows.workflow.util.config_helpers import load_body_list
+
 logger = logging.getLogger(__name__)
 
 
@@ -52,6 +54,10 @@ def main():
                         help='Either a UUID to pull the mapping from, or a CSV file with two columns, mapping supervoxels to agglomerated bodies. Any missing entries implicitly identity-mapped.')
     parser.add_argument('--operation', default='indexes', choices=['indexes', 'mappings', 'both', 'sort-only'],
                         help='Whether to load the LabelIndices, MappingOps, or both. If sort-only, sort/save the stats and exit.')
+    parser.add_argument('--subset-labels', required=False,
+                        help='CSV file with a single column of label IDs to write LabelIndexes for.'
+                             'Other labels found in the mapping and or block stats h5 file will be ignored. '
+                             'NOTE: Whether or not the label ids are interpreted as supervoxels or bodies depends on whether or not --agglomeration-mapping was provided.')
     parser.add_argument('--tombstones', default='include', choices=['include', 'exclude', 'only'],
                         help="Whether to include 'tombstones' in the labelindexes (i.e. explicitly send empty labelindexes for all supervoxels in a body that don't match the body-id). "
                              "Options are 'include', 'exclude', or 'only' (i.e. send only the tombstones and not the actual labelindices)")
@@ -90,6 +96,11 @@ def main_impl(args):
                 segment_to_body_df = pd.DataFrame( {'segment_id': mapping_series.index.values} )
                 segment_to_body_df['body_id'] = mapping_series.values
                 assert (segment_to_body_df.columns == AGGLO_MAP_COLUMNS).all()
+
+    subset_labels = None
+    if args.subset_labels:
+        is_supervoxels = (args.agglomeration_mapping is None)
+        subset_labels = load_body_list(args.subset_labels, is_supervoxels)
 
     if args.last_mutid is None:
         # By default, use 0 if we're ingesting
@@ -133,6 +144,7 @@ def main_impl(args):
                                   args.labelmap_instance,
                                   args.last_mutid,
                                   block_sv_stats,
+                                  subset_labels,
                                   args.tombstones,
                                   batch_rows=args.batch_size,
                                   num_threads=args.num_threads,
@@ -149,6 +161,7 @@ def main_impl(args):
                             args.labelmap_instance,
                             args.last_mutid,
                             segment_to_body_df,
+                            subset_labels,
                             args.batch_size )
 
 def sort_block_stats(block_sv_stats, segment_to_body_df=None, output_path=None, agglo_mapping_path=None):
@@ -196,6 +209,7 @@ def ingest_mapping( server,
                     instance,
                     mutid,
                     segment_to_body_df,
+                    subset_labels=None,
                     batch_size=100_000 ):
     """
     Ingest the forward-map (supervoxel-to-body) into DVID via the .../mappings endpoint
@@ -219,6 +233,10 @@ def ingest_mapping( server,
         raise RuntimeError(f"DVID instance is not a labelmap: {instance}")
 
     segment_to_body_df.sort_values(['body_id', 'segment_id'], inplace=True)
+    
+    if subset_labels is not None:
+        segment_to_body_df = segment_to_body_df.query('body_id in @subset_labels')
+    
     mappings = segment_to_body_df.set_index('segment_id')
     post_mappings(server, uuid, instance, mappings, mutid, batch_size=batch_size)
 
@@ -228,6 +246,7 @@ def ingest_label_indexes( server,
                           instance_name,
                           last_mutid,
                           sorted_block_sv_stats,
+                          subset_labels=None,
                           tombstone_mode='include',
                           batch_rows=1_000_000,
                           num_threads=1,
@@ -263,7 +282,7 @@ def ingest_label_indexes( server,
     # subprocesses quickly via implicit memory sharing via after fork()
     global processor
     instance_info = (server, uuid, instance_name)
-    processor = StatsBatchProcessor(last_mutid, instance_info, tombstone_mode, block_sv_stats, check_mismatches)
+    processor = StatsBatchProcessor(last_mutid, instance_info, tombstone_mode, block_sv_stats, subset_labels, check_mismatches)
 
     gen = generate_stats_batches(block_sv_stats, batch_rows)
 
@@ -389,12 +408,13 @@ class StatsBatchProcessor:
     Defined here as a class instead of a simple function to enable
     pickling (for multiprocessing), even when this file is run as __main__.
     """
-    def __init__(self, last_mutid, instance_info, tombstone_mode, block_sv_stats, check_mismatches=False):
+    def __init__(self, last_mutid, instance_info, tombstone_mode, block_sv_stats, subset_labels=None, check_mismatches=False):
         assert tombstone_mode in ('include', 'exclude', 'only')
         self.last_mutid = last_mutid
         self.tombstone_mode = tombstone_mode
         self.block_sv_stats = block_sv_stats
         self.check_mismatches = check_mismatches
+        self.subset_labels = subset_labels
 
         self.user = os.environ["USER"]
         self.mod_time = datetime.datetime.now().isoformat()
@@ -404,6 +424,7 @@ class StatsBatchProcessor:
             server = 'http://' + server
             instance_info = (server, uuid, instance)
         self.instance_info = instance_info
+
 
     def process_batch(self, batch_and_rowcount):
         """
@@ -443,6 +464,7 @@ class StatsBatchProcessor:
         
         return next_stats_batch_total_rows, mismatch_labels, missing_labels
 
+
     def label_indexes_for_body(self, body_group_span):
         """
         Load body_group (a subarray with dtype=STATS_DTYPE
@@ -453,6 +475,9 @@ class StatsBatchProcessor:
         body_group_start, body_group_stop = body_group_span
         body_group = self.block_sv_stats[body_group_start:body_group_stop]
         body_id = body_group[0]['body_id']
+        
+        if (self.subset_labels is not None) and (body_id not in self.subset_labels):
+            return []
 
         if self.tombstone_mode != 'only':
             label_index = LabelIndex()
