@@ -23,7 +23,7 @@ CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'local-cluster')
 
 @pytest.fixture
 def setup_connectedcomponents_hdf5_zarr():
-    template_dir = tempfile.mkdtemp(suffix="samplepoints-template")
+    template_dir = tempfile.mkdtemp(suffix="connectedcomponents-template")
     
     _ = 0
     vol = [[_,_,_,_ ,_,_,_,_],
@@ -287,7 +287,7 @@ def setup_connectedcomponents_dvid(setup_dvid_repo):
           compute-block-statistics: true
     """)
  
-    template_dir = tempfile.mkdtemp(suffix="samplepoints-template")
+    template_dir = tempfile.mkdtemp(suffix="connectedcomponents-template")
 
     with open(f"{template_dir}/workflow.yaml", 'w') as f:
         f.write(config_text)
