@@ -14,7 +14,7 @@ from neuclease.util import ndrange
 
 from flyemflows.util import upsample
 from flyemflows.bin.launchflow import launch_flow
-from neuclease.util.box import extract_subvol
+from neuclease.util import extract_subvol, BLOCK_STATS_DTYPES
 from neuclease.dvid import create_labelmap_instance, post_labelmap_voxels, fetch_labelmap_voxels
 
 # Overridden below when running from __main__
@@ -284,6 +284,7 @@ def setup_connectedcomponents_dvid(setup_dvid_repo):
         connectedcomponents:
           halo: 1
           subset-labels: [1,2,4] # Not 3
+          compute-block-statistics: true
     """)
  
     template_dir = tempfile.mkdtemp(suffix="samplepoints-template")
@@ -353,7 +354,9 @@ def test_connectedcomponents_dvid_subset_labels(setup_connectedcomponents_dvid, 
                 assert (output_block[positions] == output_block[positions][0]).all(), \
                     f"original label {orig_label} ended up over-segmentated"
 
+    #
     # Check CSV output
+    #
     df = pd.read_csv(f'{execution_dir}/relabeled-objects.csv')
     
     assert len(df.query('orig_label == 0')) == 0
@@ -365,6 +368,17 @@ def test_connectedcomponents_dvid_subset_labels(setup_connectedcomponents_dvid, 
     assert not df['final_label'].duplicated().any()
     assert (df['final_label'] > input_vol.max()).all()
 
+    #
+    # Check block stats
+    #
+    with h5py.File(f'{execution_dir}/block-statistics.h5', 'r') as f:
+        stats_df = pd.DataFrame(f['stats'][:])
+    
+    for row in stats_df.itertuples():
+        corner = np.array((row.z, row.y, row.x))
+        block_box = np.array([corner, corner+64])
+        block = extract_subvol(output_vol, block_box)
+        assert (block == row.segment_id).sum() == row.count
 
 if __name__ == "__main__":
     if 'CLUSTER_TYPE' in os.environ:

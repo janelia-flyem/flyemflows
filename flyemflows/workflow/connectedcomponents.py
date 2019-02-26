@@ -2,13 +2,14 @@ import os
 import copy
 import logging
 
+import h5py
 import numpy as np
 import pandas as pd
 import skimage.measure as skm
 from dask.bag import zip as bag_zip
 
 from dvid_resource_manager.client import ResourceManagerClient
-from neuclease.util import Timer, Grid, connected_components_nonconsecutive, apply_mask_for_labels
+from neuclease.util import Timer, Grid, connected_components_nonconsecutive, apply_mask_for_labels, block_stats_for_volume, BLOCK_STATS_DTYPES
 from neuclease.dvid import fetch_instance_info, fetch_maxlabel, post_maxlabel, post_nextlabel
 
 from dvidutils import LabelMapper
@@ -51,6 +52,18 @@ class ConnectedComponents(Workflow):
                                "to ensure that the necessary labels are reserved in advance.",
                 "type": "integer",
                 "default": 0
+            },
+            "compute-block-statistics": {
+                "description": "Whether or not to compute block statistics on the output blocks.\n"
+                               "Usually you'll need the statistics file to load labelindexes afterwards.\n",
+                "type": "boolean",
+                "default": True
+            },
+            "block-statistics-file": {
+                "description": "Where to store block statistics for the output segmentation\n"
+                               "Supported formats: .csv and .h5\n",
+                "type": "string",
+                "default": "block-statistics.h5"
             }
         }
     }
@@ -329,13 +342,24 @@ class ConnectedComponents(Workflow):
                                  compression=orig_brick.compression )
             return final_brick        
 
+        block_shape = 3*[self.output_service.base_service.block_width]
+        collect_stats = options["compute-block-statistics"]
+         
         def write_brick(brick):
             brick = clip_to_logical(brick, False)
             output_service.write_subvolume(brick.volume, brick.physical_box[0], 0)
+            if collect_stats:
+                stats = block_stats_for_volume(block_shape, brick.volume, brick.physical_box)
+                return stats
 
         with Timer("Relabeling bricks and writing to output", logger):
             final_bricks = bag_zip(input_wall.bricks, cc_bricks).map(remap_cc_to_final)
-            final_bricks.map(write_brick).compute()
+            all_stats = final_bricks.map(write_brick).compute()
+
+        if collect_stats:
+            with Timer("Writing block stats"):
+                stats_df = pd.concat(all_stats, ignore_index=True)
+                self.write_block_stats(stats_df)
 
 
     def init_services(self):
@@ -441,4 +465,47 @@ class ConnectedComponents(Workflow):
             next_label = orig_maxes.max().compute() + 1
 
         return np.uint64(next_label)
+
+
+    def init_block_stats_file(self):
+        stats_path = self.config["connectedcomponents"]["block-statistics-file"]
+        if os.path.exists(stats_path):
+            logger.warning(f"Block statistics already exists: {stats_path}")
+            logger.warning(f"Will APPEND to the pre-existing statistics file.")
+        elif stats_path.endswith('.csv'):
+            # Initialize (just the header)
+            template_df = pd.DataFrame(columns=list(BLOCK_STATS_DTYPES.keys()))
+            template_df.to_csv(stats_path, index=False, header=True)
+        elif stats_path.endswith('.h5'):
+            # Initialize a 0-entry 1D array with the correct (structured) dtype
+            with h5py.File(stats_path, 'w') as f:
+                f.create_dataset('stats', shape=(0,), maxshape=(None,), chunks=True, dtype=list(BLOCK_STATS_DTYPES.items()))
+        else:
+            raise RuntimeError(f"Unknown file format: {stats_path}")
+        
+
+    def write_block_stats(self, stats_df):
+        """
+        Write the block stats.
+
+        Args:
+            slab_stats_df: DataFrame to be appended to the stats file,
+                           with columns and dtypes matching BLOCK_STATS_DTYPES
+        """
+        self.init_block_stats_file()
+        assert list(stats_df.columns) == list(BLOCK_STATS_DTYPES.keys())
+        stats_path = self.config["connectedcomponents"]["block-statistics-file"]
+
+        if stats_path.endswith('.csv'):
+            stats_df.to_csv(stats_path, header=False, index=False, mode='a')
+
+        elif stats_path.endswith('.h5'):
+            with h5py.File(stats_path, 'a') as f:
+                orig_len = len(f['stats'])
+                new_len = orig_len + len(stats_df)
+                f['stats'].resize((new_len,))
+                f['stats'][orig_len:new_len] = stats_df.to_records()
+        else:
+            raise RuntimeError(f"Unknown file format: {stats_path}")
+
 
