@@ -402,8 +402,6 @@ class ConnectedComponents(Workflow):
         
 
     def init_brickwall(self, volume_service, subset_labels):
-        halo = self.config["connectedcomponents"]["halo"]
-
         if not subset_labels:
             sbm = None
         else:
@@ -418,13 +416,12 @@ class ConnectedComponents(Workflow):
             # Aim for 2 GB RDD partitions when loading segmentation
             GB = 2**30
             target_partition_size_voxels = 2 * GB // np.uint64().nbytes
-            brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.client, target_partition_size_voxels, 0, sbm)
 
-            # Apply halo after downloading the data.
+            # Apply halo WHILE downloading the data.
             # TODO: Allow the user to configure whether or not the halo should
             #       be fetched from the outset, or added after the blocks are loaded.
-            overlapping_grid = Grid(brickwall.grid.block_shape, halo=halo)
-            brickwall = brickwall.realign_to_new_grid(overlapping_grid)
+            halo = self.config["connectedcomponents"]["halo"]
+            brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.client, target_partition_size_voxels, halo, sbm, compression='lz4_2x')
 
         return brickwall
 
