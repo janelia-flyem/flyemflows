@@ -165,6 +165,7 @@ class CopySegmentation(Workflow):
 
     def execute(self):
         self._init_services()
+        self._init_masks()
         self._log_neuroglancer_links()
         self._sanitize_config()
 
@@ -286,6 +287,33 @@ class CopySegmentation(Workflow):
                 "Labelmap will be applied to voxels during pre-write and post-read (due to block padding).\n"\
                 "You cannot use this workflow with non-idempotent labelmaps, unless your data is already perfectly block aligned."
 
+
+    def _init_masks(self):
+        options = self.config["copysegmentation"]
+
+        is_supervoxels = False
+        if isinstance(self.input_service.base_service, DvidVolumeService):
+            is_supervoxels = self.input_service.base_service.supervoxels
+
+        output_mask_labels = load_body_list(options["output-mask-labels"], is_supervoxels)
+        self.output_mask_labels = set(output_mask_labels)
+
+        input_mask_labels = load_body_list(options["input-mask-labels"], is_supervoxels)
+        if len(input_mask_labels) == 0:
+            self.sbm = None
+        else:
+            try:
+                self.sbm = self.input_service.sparse_block_mask_for_labels(input_mask_labels)
+            except NotImplementedError:
+                self.sbm = None
+
+        id_offset = options["add-offset-to-ids"]
+        if id_offset != 0:
+            id_offset = options["add-offset-to-ids"]
+            input_mask_labels = np.asarray(input_mask_labels, np.uint64)
+            input_mask_labels += id_offset
+        self.input_mask_labels = set(input_mask_labels)
+        
 
     def _read_pyramid_depth(self):
         """
@@ -421,32 +449,13 @@ class CopySegmentation(Workflow):
         options = self.config["copysegmentation"]
         pyramid_depth = options["pyramid-depth"]
 
-        is_supervoxels = False
-        if isinstance(self.input_service.base_service, DvidVolumeService):
-            is_supervoxels = self.input_service.base_service.supervoxels
-
-        input_mask_labels = load_body_list(options["input-mask-labels"], is_supervoxels)
-        self.input_mask_labels = input_mask_labels = set(input_mask_labels)
-
-        self.output_mask_labels = load_body_list(options["output-mask-labels"], is_supervoxels)
-        self.output_mask_labels = set(self.output_mask_labels)
-
-        # Fetch a sparse set of Bricks (if possible).
-        if not self.input_mask_labels:
-            sbm = None
-        else:
-            try:
-                sbm = self.input_service.sparse_block_mask_for_labels(self.input_mask_labels)
-            except NotImplementedError:
-                sbm = None
-
         input_slab_box = output_slab_box - self.translation_offset_zyx
         input_wall = BrickWall.from_volume_service( self.input_service,
                                                     0,
                                                     input_slab_box,
                                                     self.client,
                                                     self.target_partition_size_voxels,
-                                                    sparse_block_mask=sbm,
+                                                    sparse_block_mask=self.sbm,
                                                     compression=options['brick-compression'] )
         input_wall.persist_and_execute(f"Slab {slab_index}: Reading ({input_slab_box[:,::-1].tolist()})", logger)
 
@@ -458,10 +467,6 @@ class CopySegmentation(Workflow):
 
         id_offset = options["add-offset-to-ids"]
         if id_offset != 0:
-            id_offset = options["add-offset-to-ids"]
-            input_mask_labels = np.fromiter(input_mask_labels, np.uint64)
-            input_mask_labels += id_offset
-            self.input_mask_labels = input_mask_labels = set(input_mask_labels)
             input_wall = input_wall.map_brick_volumes(lambda b: b.volume + id_offset)
 
         output_service = self.output_service

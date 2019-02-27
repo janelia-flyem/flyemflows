@@ -595,6 +595,9 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
                 mgr = self.resource_manager_client
                 with mgr.access_context(self.server, True, 1, 1):
                     coords = fetch_sparsevol_coarse_via_labelindex(*self.instance_triple, label, is_supervoxels)
+                    if len(coords) == 0:
+                        return (label, None)
+                    
                     coords //= blocks_per_brick
                     coords = pd.DataFrame(coords, columns=['z', 'y', 'x'], dtype=np.int32).drop_duplicates()
                     coords['label'] = np.uint64(label)
