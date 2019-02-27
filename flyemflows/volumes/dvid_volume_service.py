@@ -581,6 +581,9 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         brick_shape = self.preferred_message_shape
         blocks_per_brick = brick_shape // self.block_width
 
+        # FIXME: In the case of supervoxels, we should ideally group them by body
+        #        before passing to fetch_sparsevol_coarse_via_labelindex()
+
         def fetch_coarse_and_divide(label):
             """
             Fetch the coarse sparsevol for the label and return a pair of
