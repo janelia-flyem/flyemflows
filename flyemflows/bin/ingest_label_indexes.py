@@ -101,6 +101,7 @@ def main_impl(args):
     if args.subset_labels:
         is_supervoxels = (args.agglomeration_mapping is None)
         subset_labels = load_body_list(args.subset_labels, is_supervoxels)
+        subset_labels = set(subset_labels)
 
     if args.last_mutid is None:
         args.last_mutid = fetch_repo_info(args.server, args.uuid)['MutationID']
