@@ -54,8 +54,7 @@ class ConnectedComponents(Workflow):
                 "default": 0
             },
             "compute-block-statistics": {
-                "description": "Whether or not to compute block statistics on the output blocks.\n"
-                               "Usually you'll need the statistics file to load labelindexes afterwards.\n",
+                "description": "Whether or not to compute block statistics on the output blocks.\n",
                 "type": "boolean",
                 "default": True
             },
