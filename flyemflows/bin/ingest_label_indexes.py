@@ -232,6 +232,8 @@ def ingest_mapping( server,
     
     if subset_labels is not None:
         segment_to_body_df = segment_to_body_df.query('body_id in @subset_labels')
+        if len(segment_to_body_df) == 0:
+            raise RuntimeError("None of the selected bodies have any mappings to post!")
     
     mappings = segment_to_body_df.set_index('segment_id')['body_id']
     post_mappings(server, uuid, instance, mappings, mutid, batch_size=batch_size)
@@ -635,6 +637,21 @@ def group_sums_presorted(a, sorted_cols):
 if __name__ == "__main__":
     DEBUG = False
     if DEBUG:
+        print("Starting with debug arguments")
+        os.chdir('/tmp/compute-frankenbody-blockstats-20190227.013919')
+        sys.argv += """
+              --operation=mappings \
+              --agglomeration-mapping=frankenbody-mapping-after-cc.csv \
+              --subset-labels=frankenbody-label.csv \
+              --tombstones=include \
+              --num-threads=4 \
+              emdata1:8900 \
+              c6591f6368eb4e96b255e11087781e6b \
+              segmentation \
+              block-statistics.h5 \
+            """.split()
+        
+    if False:
         import DVIDSparkServices
         os.chdir(os.path.dirname(DVIDSparkServices.__file__) + '/..')
         
