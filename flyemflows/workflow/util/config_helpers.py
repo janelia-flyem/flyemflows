@@ -28,7 +28,7 @@ BodyListSchema = {
 
 def load_body_list(config_data, is_supervoxels):
     if isinstance(config_data, list):
-        return config_data
+        return np.array(config_data, dtype=np.uint64)
 
     bodies_csv = config_data
     del config_data
@@ -48,4 +48,4 @@ def load_body_list(config_data, is_supervoxels):
         logger.warning(f"No column named {col}, so reading first column instead")
         bodies = read_csv_col(bodies_csv, 0, np.uint64).drop_duplicates()
 
-    return bodies
+    return bodies.values.astype(np.uint64)
