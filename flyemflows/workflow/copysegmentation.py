@@ -399,6 +399,9 @@ class CopySegmentation(Workflow):
             slab_depth = block_width * 2**pyramid_depth
         options["slab-depth"] = slab_depth
 
+        if options["download-pre-downsampled"] and (options["input-mask-labels"] or options["output-mask-labels"]):
+            raise RuntimeError("You aren't allow to use download-pre-downsampled if you're using a mask.")
+
         if options["skip-scale-0-write"] and pyramid_depth == 0 and not options["compute-block-statistics"]:
             raise RuntimeError("According to your config, you aren't computing block stats, "
                                "you aren't writing scale 0, and you aren't writing pyramids.  "
