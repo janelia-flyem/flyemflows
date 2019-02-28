@@ -12,7 +12,7 @@ from neuclease.util import Timer, choose_pyramid_depth, SparseBlockMask
 from neuclease.dvid import ( fetch_repo_instances, fetch_instance_info, fetch_volume_box,
                              fetch_raw, post_raw, fetch_labelarray_voxels, post_labelmap_voxels,
                              update_extents, extend_list_value, create_voxel_instance, create_labelmap_instance,
-                             fetch_sparsevol_coarse_via_labelindex )
+                             fetch_sparsevol_coarse_via_labelindex, fetch_mapping )
 
 from ..util import auto_retry, replace_default_entries
 from . import GeometrySchema, VolumeServiceReader, VolumeServiceWriter, NewAxisOrderSchema, RescaleLevelSchema, LabelMapSchema
@@ -575,16 +575,30 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         Determine which bricks (each with our ``preferred_message_shape``
         would need to be accessed download all data for the given labels,
         and return the result as a ``SparseBlockMask`` object.
+        
+        This function uses a dask to fetch the coarse sparsevols in parallel.
+        The sparsevols are extracted directly from the labelindex.
+        If the ``self.supervoxels`` is True, the labels are grouped
+        by body before fetching the labelindexes,
+        to avoid fetching the same labelindexes more than once.
+        (The implementation of ``fetch_sparsevol_coarse_via_labelindex()``
+        avoids fetching duplicate labelindexes when handling supervoxels
+        that belong to the same body.)
         """
         labels = set(labels)
         is_supervoxels = self.supervoxels
         brick_shape = self.preferred_message_shape
         blocks_per_brick = brick_shape // self.block_width
 
-        # FIXME: In the case of supervoxels, we should ideally group them by body
-        #        before passing to fetch_sparsevol_coarse_via_labelindex()
+        if is_supervoxels:
+            # Group by body
+            mapping = fetch_mapping(*self.instance_triple, list(labels))
+            label_groups = list(mapping.reset_index().groupby('body').agg({'sv': list})['sv'])
+        else:
+            # Each body is its own group
+            label_groups = [[label] for label in labels]
 
-        def fetch_coarse_and_divide(label):
+        def fetch_coarse_and_divide(label_group):
             """
             Fetch the coarse sparsevol for the label and return a pair of
             (label, coords), where coords is a record array
@@ -594,43 +608,50 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             try:
                 mgr = self.resource_manager_client
                 with mgr.access_context(self.server, True, 1, 1):
-                    coords = fetch_sparsevol_coarse_via_labelindex(*self.instance_triple, label, is_supervoxels)
+                    coords = fetch_sparsevol_coarse_via_labelindex(*self.instance_triple, label_group, is_supervoxels)
                     if len(coords) == 0:
-                        return (label, None)
-                    
+                        return (label_group, None)
                     coords //= blocks_per_brick
                     coords = pd.DataFrame(coords, columns=['z', 'y', 'x'], dtype=np.int32).drop_duplicates()
-                    coords['label'] = np.uint64(label)
-                return (label, coords.to_records(index=False))
+                return (label_group, coords.to_records(index=False))
             except HTTPError as ex:
                 if (ex.response is not None and ex.response.status_code == 404):
-                    return (label, None)
+                    return (label_group, None)
                 raise
             except RuntimeError as ex:
                 if 'does not map to any body' in str(ex):
-                    return (label, None)
+                    return (label_group, None)
                 raise
 
-        with Timer(f"Fetching coarse sparsevols for {len(labels)} labels", logger=logger):
+        with Timer(f"Fetching coarse sparsevols for {len(labels)} labels ({len(label_groups)} groups)", logger=logger):
             import dask.bag as db
-            labels = db.from_sequence(labels)
-            labels_and_coords = labels.map(fetch_coarse_and_divide).compute()
+            label_groups = db.from_sequence(label_groups)
+            groups_and_coords = label_groups.map(fetch_coarse_and_divide).compute()
 
         bad_labels = []
-        for label, coords in labels_and_coords:
+        for label_group, coords in groups_and_coords:
             if coords is None:
-                bad_labels.append(label)
+                bad_labels.extend(label_group)
     
         if bad_labels:
-            logger.warning(f"Could not obtain coarse sparsevol for {len(bad_labels)} labels: {bad_labels}")
-            labels_and_coords = list( filter(lambda k_v: k_v[1] is not None, labels_and_coords) )
+            name = 'sv' if is_supervoxels else 'body'
+            pd.Series(bad_labels, name=name).to_csv('labels-without-sparsevols.csv', index=False, header=True)
+            if len(bad_labels) < 100:
+                msg = f"Could not obtain coarse sparsevol for {len(bad_labels)} labels: {bad_labels}"
+            else:
+                msg = f"Could not obtain coarse sparsevol for {len(bad_labels)} labels. See labels-without-sparsevols.csv"
 
-        if len(labels_and_coords) == 0:
+            logger.warning(msg)
+
+            # Drop null groups
+            groups_and_coords = list( filter(lambda k_v: k_v[1] is not None, groups_and_coords) )
+
+        if len(groups_and_coords) == 0:
             empty_box = np.array([self.bounding_box_zyx[0], self.bounding_box_zyx[0]])
             empty_mask = np.zeros((0,)*len(empty_box[0]), dtype=bool)
             return SparseBlockMask(empty_mask, empty_box, brick_shape)
             
-        all_coords = np.concatenate( [kv[1] for kv in labels_and_coords] )
+        all_coords = np.concatenate( [kv[1] for kv in groups_and_coords] )
         coords_df = pd.DataFrame( all_coords )
         coords_df.drop_duplicates(['z', 'y', 'x'], inplace=True)
         coords = coords_df[['z', 'y', 'x']].values
