@@ -135,6 +135,17 @@ class CopySegmentation(Workflow):
             },
             "input-mask-labels": BodyListSchema,
             "output-mask-labels": BodyListSchema,
+            "skip-masking-step": {
+                "description": "When using an input mask, normally the entire output block must be fetched so it can be combined with the input.\n"
+                               "but if you know you're writing to an empty volume, or if the output happens to match the input\n"
+                               "(e.g. if you are recomputing pyramids from an existing scale-0 segmentation),\n"
+                               "then you may save time by skipping the fetch from the output.\n"
+                               "In this case, input-mask-labels are used to determine which blocks to copy,\n"
+                               "but not which voxels to copy -- all voxels in each block are directly written to the output.\n"
+                               "Note: The input will still be PADDED from the output if necessary to achieve block alignment.\n",
+                "type": "boolean",
+                "default": False
+            },
             "add-offset-to-ids": {
                 "description": "If desired, add a constant offset to all input IDs before they are written to the output.",
                 "type": "integer",
@@ -149,7 +160,10 @@ class CopySegmentation(Workflow):
 
     OptionsSchema["properties"]["output-mask-labels"]["description"] += (
         "If provided, only voxels under the given labels in the output will be modified.\n"
-        "Others will remain untouched.\n" )
+        "Others will remain untouched.\n"
+        "Note: At the time of this writing, the output mask is NOT used to enable sparse-fetching from DVID.\n"
+        "      Only the input mask is used for that, so if you're using an output mask without an input mask,\n"
+        "      you'll still fetch the entire input volume, even if most of it will be written unchanged!\n" )
 
     Schema = copy.deepcopy(Workflow.schema())
     Schema["properties"].update({
@@ -298,6 +312,11 @@ class CopySegmentation(Workflow):
         output_mask_labels = load_body_list(options["output-mask-labels"], is_supervoxels)
         self.output_mask_labels = set(output_mask_labels)
 
+        # FIXME: also fetch a sparseblock mask for the output labels,
+        #        and take the intersection of the input and output masks.
+        #        Or, if no input mask was specified, use the output mask alone
+        #        to determine which blocks to fetch.
+        #        (All of that needs to account for translation offsets, of course.) 
         input_mask_labels = load_body_list(options["input-mask-labels"], is_supervoxels)
         if len(input_mask_labels) == 0:
             self.sbm = None
@@ -306,6 +325,7 @@ class CopySegmentation(Workflow):
                 self.sbm = self.input_service.sparse_block_mask_for_labels(input_mask_labels)
             except NotImplementedError:
                 self.sbm = None
+        
 
         id_offset = options["add-offset-to-ids"]
         if id_offset != 0:
@@ -384,6 +404,8 @@ class CopySegmentation(Workflow):
                                "you aren't writing scale 0, and you aren't writing pyramids.  "
                                "What exactly are you hoping will happen here?")
 
+        if options["skip-masking-step"] and options["output-mask-labels"]:
+            raise RuntimeError("Can't skip the combine step if you are specifying specific output labels to overwrite.")
 
     def _init_stats_file(self):
         stats_path = self.config["copysegmentation"]["block-statistics-file"]
@@ -484,19 +506,19 @@ class CopySegmentation(Workflow):
         if not options["skip-scale-0-write"]:
             self._write_bricks( slab_index, padded_wall, 0, output_service )
 
-            if options["compute-block-statistics"]:
-                with Timer(f"Slab {slab_index}: Computing slab block statistics", logger):
-                    block_shape = 3*[self.output_service.base_service.block_width]
-    
-                    def block_stats_for_brick(brick):
-                        return block_stats_for_volume(block_shape, brick.volume, brick.physical_box)
-                    
-                    slab_block_stats_per_brick = padded_wall.bricks.map(block_stats_for_brick).compute()
-                    slab_block_stats_df = pd.concat(slab_block_stats_per_brick, ignore_index=True)
-                    del slab_block_stats_per_brick
-    
-                with Timer(f"Slab {slab_index}: Appending stats and overwriting stats file"):
-                    self._append_slab_statistics( slab_block_stats_df )
+        if options["compute-block-statistics"]:
+            with Timer(f"Slab {slab_index}: Computing slab block statistics", logger):
+                block_shape = 3*[self.output_service.base_service.block_width]
+
+                def block_stats_for_brick(brick):
+                    return block_stats_for_volume(block_shape, brick.volume, brick.physical_box)
+                
+                slab_block_stats_per_brick = padded_wall.bricks.map(block_stats_for_brick).compute()
+                slab_block_stats_df = pd.concat(slab_block_stats_per_brick, ignore_index=True)
+                del slab_block_stats_per_brick
+
+            with Timer(f"Slab {slab_index}: Appending stats and overwriting stats file"):
+                self._append_slab_statistics( slab_block_stats_df )
 
 
         for new_scale in range(1, 1+pyramid_depth):
@@ -533,6 +555,7 @@ class CopySegmentation(Workflow):
             
         Returns a pre-executed and persisted BrickWall.
         """
+        options = self.config["copysegmentation"]
         output_writing_grid = Grid(output_service.preferred_message_shape)
 
         # Consolidate bricks to full-size, aligned blocks (shuffles data)
@@ -547,21 +570,19 @@ class CopySegmentation(Workflow):
         # (No need to fetch the entire output.)
         # Similarly, if scale > 0, then the masks were already applied and the input/output data was
         # already combined, we can simply write the (padded) downsampled data.
-        if scale == 0 and (input_mask_labels or output_mask_labels):
-    
-            # If masks are involved, we must fetch the ALL the output,
+        if scale == 0 and (input_mask_labels or output_mask_labels) and not options["skip-masking-step"]:
+            # If masks are involved, we must fetch the ALL the output
+            # (unless skip-masking-step was given),
             # and select data from input or output according to the masks.
             output_service = self.output_service
             translation_offset_zyx = self.translation_offset_zyx
             def combine_with_output(input_brick):
                 output_box = input_brick.physical_box + translation_offset_zyx
-                output_vol = output_service.get_subvolume(output_box, 0)
+                output_vol = output_service.get_subvolume(output_box, scale=0)
                 output_vol = np.asarray(output_vol, order='C')
-                
+
                 mask = None
                 if input_mask_labels:
-                    # Input mask was already applied (above),
-                    # so any non-zero voxels are in the input mask
                     mask = mask_for_labels(input_brick.volume, input_mask_labels)
                 
                 if output_mask_labels:
