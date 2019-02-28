@@ -160,6 +160,13 @@ class BrickWall:
 
         sparse_boxes = None
         if sparse_block_mask is not None:
+            # FIXME:
+            # 
+            #   It would save a lot of time in generate_bricks_from_volume_source() if we implemented
+            #   a faster way to filter boxes in SparseBlockMask,
+            #   and called it here.  Right now, workflows that process data in "slabs"
+            #   end up passing the same SparseBlockMask for every slab, which gets processed from
+            #   scratch in generate_bricks_from_volume_source() to filter boxes for each slab's bounding box.
             assert isinstance(sparse_block_mask, SparseBlockMask)
             assert scale == 0, "FIXME: I don't think the sparse feature works with scales other than 0."
             sparse_boxes = sparse_block_mask.sparse_boxes(grid)

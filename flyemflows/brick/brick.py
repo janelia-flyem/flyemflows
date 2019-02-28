@@ -6,7 +6,7 @@ import cloudpickle
 import numpy as np
 import dask.bag
 
-from neuclease.util import Timer, Grid, boxes_from_grid, clipped_boxes_from_grid, box_intersection, box_to_slicing, overwrite_subvol, extract_subvol
+from neuclease.util import Timer, Grid, boxes_from_grid, box_intersection, box_to_slicing, overwrite_subvol, extract_subvol
 from ..util import compress_volume, uncompress_volume, DebugClient
 
 logger = logging.getLogger(__name__)
