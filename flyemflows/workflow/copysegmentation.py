@@ -457,6 +457,10 @@ class CopySegmentation(Workflow):
                                                     self.target_partition_size_voxels,
                                                     sparse_block_mask=self.sbm,
                                                     compression=options['brick-compression'] )
+        if input_wall.num_bricks == 0:
+            logger.info(f"Slab: {slab_index}: No bricks to process.  Skipping.")
+            return
+        
         input_wall.persist_and_execute(f"Slab {slab_index}: Reading ({input_slab_box[:,::-1].tolist()})", logger)
 
         # Translate coordinates from input to output

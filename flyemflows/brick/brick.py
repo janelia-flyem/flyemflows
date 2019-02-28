@@ -234,6 +234,8 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
         logical_and_physical_boxes = list(logical_and_physical_boxes) # need len()
 
     num_bricks = len(logical_and_physical_boxes)
+    if num_bricks == 0:
+        return dask.bag.from_sequence([]), num_bricks
 
     if partition_size is None:
         partition_size = 1
