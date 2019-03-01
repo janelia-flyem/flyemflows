@@ -70,9 +70,12 @@ class BrainMapsVolumeServiceReader(VolumeServiceReader):
                                                   volume_config["brainmaps"]["dataset"],
                                                   volume_config["brainmaps"]["volume-id"],
                                                   volume_config["brainmaps"]["change-stack-id"],
-                                                  dtype=np.uint64,
+                                                  dtype=None,
                                                   use_gzip=volume_config["brainmaps"]["use-gzip"] )
 
+        # Force client to fetch dtype now, so it isn't fetched after pickling.
+        self._brainmaps_client.dtype
+        
         block_width = volume_config["geometry"]["block-width"]
         if block_width == -1:
             # FIXME: I don't actually know what BrainMap's internal block size is...
