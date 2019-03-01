@@ -292,17 +292,25 @@ class BrainMapsVolume:
         """
         Return the bounding box [start, stop] in zyx order.
         """
-        corner = geometry['boundingBox'][0]['corner']
-        size = geometry['boundingBox'][0]['size']
+        if 'boundingBox' in geometry:
+            corner = geometry['boundingBox'][0]['corner']
+            size = geometry['boundingBox'][0]['size']
+        
+            shape = [int(size[k]) for k in 'zyx']
+            if not corner:
+                offset = (0,)*len(size)
+            else:
+                offset = [int(corner[k]) for k in 'zyx']
 
-        shape = [int(size[k]) for k in 'zyx']
-        if not corner:
-            offset = (0,)*len(size)
+            box = np.array((offset, offset))
+            box[1] += shape
         else:
-            offset = [int(corner[k]) for k in 'zyx']
+            size = geometry['volumeSize']
+            shape = [int(size[k]) for k in 'zyx']
 
-        box = np.array((offset, offset))
-        box[1] += shape
+            box = np.zeros((2,3), int)
+            box[1] = shape
+            
         return box
 
 
