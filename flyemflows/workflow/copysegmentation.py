@@ -99,7 +99,7 @@ class CopySegmentation(Workflow):
                 "description": "Instead of downsampling the data, just download the pyramid from the server (if it's available).\n"
                                "Will not work unless you add the 'available-scales' setting to the input service's geometry config.",
                 "type": "boolean",
-                "default": True
+                "default": False
             },
             "brick-compression": {
                 "description": "Internally, downloaded bricks will be stored in a compressed format.\n"
