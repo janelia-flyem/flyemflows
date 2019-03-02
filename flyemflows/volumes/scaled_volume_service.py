@@ -106,7 +106,11 @@ class ScaledVolumeService(VolumeServiceReader):
 
             if self.dtype == np.uint64:
                 # Assume that uint64 means labels.
-                downsampled_data = downsample( orig_data, 2**delta_from_best, 'labels' )
+                
+                ## FIXME: Our C++ method for downsampling ('labels')
+                ##        seems to have a bad build at the moment (it segfaults and/or produces zeros)
+                ##        For now, we use the 'labels-numba' method
+                downsampled_data = downsample( orig_data, 2**delta_from_best, 'labels-numba' )
             else:
                 downsampled_data = downsample( orig_data, 2**delta_from_best, 'grayscale' )
             return downsampled_data

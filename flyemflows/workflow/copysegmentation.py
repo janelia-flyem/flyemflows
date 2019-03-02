@@ -531,7 +531,11 @@ class CopySegmentation(Workflow):
                 downsampled_wall.persist_and_execute(f"Slab {slab_index}: Scale {new_scale}: Downloading pre-downsampled bricks", logger)
             else:
                 # Compute downsampled (results in smaller bricks)
-                downsampled_wall = padded_wall.downsample( (2,2,2), method='label' )
+
+                ## FIXME: Our C++ method for downsampling ('labels')
+                ##        seems to have a bad build at the moment (it segfaults and/or produces zeros)
+                ##        For now, we use the 'labels-numba' method
+                downsampled_wall = padded_wall.downsample( (2,2,2), method='labels-numba' )
                 downsampled_wall.persist_and_execute(f"Slab {slab_index}: Scale {new_scale}: Downsampling", logger)
                 del padded_wall
 

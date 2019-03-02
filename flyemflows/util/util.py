@@ -20,7 +20,7 @@ import numpy as np
 from skimage.util import view_as_blocks
 
 from dvidutils import downsample_labels
-from neuclease.util import Timer, parse_timestamp
+from neuclease.util import Timer, parse_timestamp, downsample_labels_3d_suppress_zero
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ def replace_default_entries(array, default_array, marker=-1):
     else:
         raise RuntimeError("This function supports arrays and lists, nothing else.")
 
-DOWNSAMPLE_METHODS = ('subsample', 'zoom', 'grayscale', 'mode', 'labels', 'label')
+DOWNSAMPLE_METHODS = ('subsample', 'zoom', 'grayscale', 'mode', 'labels', 'label', 'labels-numba')
 def downsample(volume, factor, method):
     assert method in DOWNSAMPLE_METHODS
     assert (np.array(volume.shape) % factor == 0).all(), \
@@ -68,6 +68,9 @@ def downsample(volume, factor, method):
         return downsample_labels(volume, factor, False)
     if method in ('labels', 'label'): # synonyms
         return downsample_labels(volume, factor, True)
+    if method == 'labels-numba':
+        reduced_output, _reduced_box = downsample_labels_3d_suppress_zero(volume, factor)
+        return reduced_output
 
     raise AssertionError("Shouldn't get here.")
 
