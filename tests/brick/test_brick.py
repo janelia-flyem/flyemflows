@@ -153,6 +153,29 @@ def test_realign_bricks_to_new_grid():
         assert (brick.volume == extract_subvol( volume, brick.physical_box )).all()
 
 
+def test_realign_bricks_to_same_grid():
+    """
+    The realign function has a special optimization to
+    avoid realigning bricks that are already aligned.
+    """
+    grid = Grid( (10,20), (12,3) )
+    bounding_box = np.array([(15,30), (95,290)])
+    def assert_if_called(box):
+        assert False, ("Shouldn't get here, since the bricks were generated with lazy=True "
+                       "and realignment shouldn't have attempted to split any bricks.")
+
+    original_bricks, _num_bricks = generate_bricks_from_volume_source( bounding_box, grid, assert_if_called, DebugClient(), lazy=True )
+    new_bricks = realign_bricks_to_new_grid(grid, original_bricks)
+    
+    import dask.bag
+    assert isinstance(new_bricks, dask.bag.Bag)
+    
+    # If we attempt to realign to a different grid,
+    # we'll get an assertion because it will have to call create_brick_volume, above.
+    with pytest.raises(AssertionError):
+        realign_bricks_to_new_grid(Grid((20,10)), original_bricks).compute()
+        
+
 def test_pad_brick_data_from_volume_source():
     source_volume = np.random.randint(0,10, (100,300) )
     logical_box = [(1,0), (11,20)]
@@ -413,4 +436,6 @@ def test_extract_halos_subsets():
 if __name__ == "__main__":
     import dask.config
     dask.config.set(scheduler="synchronous")
-    pytest.main(['-s', '--tb=native', '--pyargs', 'tests.brick.test_brick'])
+    args = ['-s', '--tb=native', '--pyargs', 'tests.brick.test_brick']
+    #args = ['-k', 'realign_bricks_to_same_grid'] + args
+    pytest.main(args)

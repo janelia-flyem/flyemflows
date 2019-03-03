@@ -4,6 +4,7 @@ from functools import partial
 
 import cloudpickle
 import numpy as np
+import pandas as pd
 import dask.bag
 
 from neuclease.util import Timer, Grid, boxes_from_grid, box_intersection, box_to_slicing, overwrite_subvol, extract_subvol
@@ -452,6 +453,19 @@ def realign_bricks_to_new_grid(new_grid, original_bricks):
     
     Returns: dask.Bag of Bricks
     """
+    def check_aligned(brick):
+        aligned = ((brick.logical_box - new_grid.offset) % new_grid.block_shape == 0).all()
+        aligned &= (brick.physical_box[0] >= brick.logical_box[0]).all()
+        aligned &= (brick.physical_box[1] <= brick.logical_box[1]).all()
+        return (aligned, brick.logical_box[0])
+    
+    # Special optimization:
+    # If the bricks are already aligned, return immediately
+    flags_and_corners = original_bricks.persist().map(check_aligned).compute()
+    flags, corners = zip(*flags_and_corners)
+    if all(flags) and pd.DataFrame(np.array(corners)).duplicated().sum() == 0:
+        return original_bricks
+    
     # For each original brick, split it up according
     # to the new logical box destinations it will map to.
     brick_fragments = original_bricks.map( partial(split_brick, new_grid) ).flatten()
