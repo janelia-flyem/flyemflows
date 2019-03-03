@@ -6,6 +6,7 @@ import multiprocessing
 from collections import defaultdict
 
 import dask
+import dask.bag
 from dask.bag import Bag
 from distributed.utils import parse_bytes
 
@@ -94,6 +95,37 @@ def persist_and_execute(bag, description, logger=None, optimize_graph=True):
         logger.info(f"{description} (N={count}, P={parts}, P_hist={histogram}) took {timer.timedelta}")
     
     return bag
+
+
+def drop_empty_partitions(bag):
+    """
+    When bags are created by filtering or grouping from a different bag,
+    it retains the original bag's partition count, even if a lot of the
+    partitions become empty.
+    Those extra partitions add overhead, so it's nice to discard them.
+    This function drops the empty partitions.
+    Inspired by: https://stackoverflow.com/questions/47812785/remove-empty-partitions-in-dask
+    """
+    def get_len(partition):
+        # If the bag is the result of bag.filter(),
+        # then each partition is actually a 'filter' object,
+        # which has no __len__.
+        # In that case, we must convert it to a list first.
+        if hasattr(partition, '__len__'):
+            return len(partition)
+        return len(list(partition))
+    partition_lengths = bag.map_partitions(get_len).compute()
+    
+    # Convert bag partitions into a list of 'delayed' objects
+    lengths_and_partitions = zip(partition_lengths, bag.to_delayed())
+    
+    # Drop the ones with empty partitions
+    lengths_and_partitions = filter(lambda l_p: l_p[0], lengths_and_partitions)
+    _lengths, partitions = zip(*lengths_and_partitions)
+    
+    # Convert from list of delayed objects back into a Bag.
+    return dask.bag.from_delayed(partitions)
+    
 
 class as_completed_synchronous:
     """

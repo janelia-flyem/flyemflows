@@ -9,6 +9,7 @@ import dask.bag
 
 from neuclease.util import Timer, Grid, boxes_from_grid, box_intersection, box_to_slicing, overwrite_subvol, extract_subvol
 from ..util import compress_volume, uncompress_volume, DebugClient
+from ..util.dask_util import drop_empty_partitions
 
 logger = logging.getLogger(__name__)
 
@@ -476,6 +477,7 @@ def realign_bricks_to_new_grid(new_grid, original_bricks):
     # Re-assemble fragments into the new grid structure.
     realigned_bricks = grouped_brick_fragments.map(lambda k_v: k_v[1]).map(assemble_brick_fragments)
     realigned_bricks = realigned_bricks.filter( lambda brick: brick is not None )
+    realigned_bricks = drop_empty_partitions(realigned_bricks)
     return realigned_bricks
 
 
