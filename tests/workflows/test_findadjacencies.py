@@ -94,6 +94,13 @@ def test_findadjacencies(setup_findadjacencies):
     assert (output_df.query('label_a == 3')[['ya', 'yb']].values[0] == (6,5)).all() # not 'forward'
     assert (output_df.query('label_a == 3')[['xa', 'xb']].values[0] == 2).all()
 
+    # Check CC groups
+    cc_sets = set()
+    for _cc, cc_df in output_df.groupby('cc'):
+        cc_set = frozenset(cc_df[['label_a', 'label_b']].values.flat)
+        cc_sets.add(cc_set)
+    assert set(cc_sets) == { frozenset({1,2,8}), frozenset({4,3}) }
+
 
 def test_findadjacencies_subset_bodies(setup_findadjacencies):
     template_dir, config, _volume = setup_findadjacencies
@@ -121,6 +128,13 @@ def test_findadjacencies_subset_bodies(setup_findadjacencies):
     assert (output_df.query('label_a == 3')[['za', 'zb']].values[0] == 0).all()
     assert (output_df.query('label_a == 3')[['ya', 'yb']].values[0] == (6,5)).all() # not 'forward'
     assert (output_df.query('label_a == 3')[['xa', 'xb']].values[0] == 2).all()
+
+    # Check CC groups
+    cc_sets = set()
+    for _cc, cc_df in output_df.groupby('cc'):
+        cc_set = frozenset(cc_df[['label_a', 'label_b']].values.flat)
+        cc_sets.add(cc_set)
+    assert set(cc_sets) == { frozenset({4,3}) }
 
 
 def test_findadjacencies_subset_edges(setup_findadjacencies):
@@ -151,6 +165,14 @@ def test_findadjacencies_subset_edges(setup_findadjacencies):
     assert (output_df.query('label_a == 3')[['za', 'zb']].values[0] == 0).all()
     assert (output_df.query('label_a == 3')[['ya', 'yb']].values[0] == (6,5)).all() # not 'forward'
     assert (output_df.query('label_a == 3')[['xa', 'xb']].values[0] == 2).all()
+
+    # Check CC groups
+    cc_sets = set()
+    for _cc, cc_df in output_df.groupby('cc'):
+        cc_set = frozenset(cc_df[['label_a', 'label_b']].values.flat)
+        cc_sets.add(cc_set)
+        
+    assert set(cc_sets) == { frozenset({3,4}) }
 
 
 def test_findadjacencies_solid_volume():
@@ -203,7 +225,16 @@ def test_findadjacencies_closest_approach_subset_edges(setup_findadjacencies):
     config["findadjacencies"]["subset-edges"] = 'subset-edges.csv'
     config["findadjacencies"]["find-closest"] = True
 
-    _impl_test_findadjacencies_closest_approach(template_dir, config)
+    output_df = _impl_test_findadjacencies_closest_approach(template_dir, config)
+
+    # Check CC groups
+    cc_sets = set()
+    for _cc, cc_df in output_df.groupby('cc'):
+        cc_set = frozenset(cc_df[['label_a', 'label_b']].values.flat)
+        cc_sets.add(cc_set)
+    
+    assert set(cc_sets) == { frozenset(s) for s in [{3,4}, {6,7}] }
+
 
 
 def test_findadjacencies_closest_approach_subset_labels(setup_findadjacencies):
@@ -214,7 +245,15 @@ def test_findadjacencies_closest_approach_subset_labels(setup_findadjacencies):
     config["findadjacencies"]["subset-labels"] = [3,4,6,7]
     config["findadjacencies"]["find-closest"] = True
 
-    _impl_test_findadjacencies_closest_approach(template_dir, config)
+    output_df = _impl_test_findadjacencies_closest_approach(template_dir, config)
+    
+    # Check CC groups
+    cc_sets = set()
+    for _cc, cc_df in output_df.groupby('cc'):
+        cc_set = frozenset(cc_df[['label_a', 'label_b']].values.flat)
+        cc_sets.add(cc_set)
+    
+    assert set(cc_sets) == { frozenset(s) for s in [{6,7}, {3,4}] }
 
 
 def _impl_test_findadjacencies_closest_approach(template_dir, config):
@@ -242,6 +281,7 @@ def _impl_test_findadjacencies_closest_approach(template_dir, config):
     assert (output_df.query('label_a == 6')[['ya', 'yb']].values[0] == (1,3)).all() # not 'forward'
     assert (output_df.query('label_a == 6')[['xa', 'xb']].values[0] == 6).all()
 
+    return output_df
 
 @pytest.fixture(scope="module")
 def setup_dvid_segmentation_input(setup_dvid_repo):
@@ -399,4 +439,6 @@ def _impl_findadjacencies_different_dvid_blocks_sparse_edges(template_dir, confi
 
 if __name__ == "__main__":
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
-    pytest.main(['-s', '--tb=native', '--pyargs', 'tests.workflows.test_findadjacencies'])
+    args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_findadjacencies']
+    #args = ['-x', '-k', 'findadjacencies_closest_approach_subset_labels'] + args
+    pytest.main(args)

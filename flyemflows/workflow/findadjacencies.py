@@ -10,7 +10,7 @@ import dask.bag as db
 from requests import HTTPError
 
 from dvid_resource_manager.client import ResourceManagerClient
-from neuclease.util import Timer, Grid, swap_df_cols, closest_approach, SparseBlockMask, ndrange
+from neuclease.util import Timer, Grid, swap_df_cols, closest_approach, SparseBlockMask, connected_components_nonconsecutive
 from neuclease.dvid import fetch_sparsevol_coarse_via_labelindex
 
 from ilastikrag import Rag
@@ -73,6 +73,19 @@ class FindAdjacencies(Workflow):
                                "Only permitted when using subset-labels or subset-edges.\n",
                 "type": "boolean",
                 "default": False
+            },
+            "compute-cc": {
+                "description": "Once the edges have been found, run connected components on the\n"
+                               "resulting graph, and export the component ID in the results.\n",
+                "type": "boolean",
+                "default": True
+            },
+            "cc-distance-threshold": {
+                "description": "When computing the connected components, don't use edges that exceed this distance threshold.\n"
+                               "A threshold of 1.0 indicates that only direct adjacencies should be used.\n"
+                               "Edges above this threshold will still be included in the results, but they will be marked with a 'cc' column of -1.\n",
+                "type": "number",
+                "default": 1.0
             },
             "output-table": {
                 "description": "Results file.  Must be .csv for now, and must contain at least columns x,y,z",
@@ -180,6 +193,21 @@ class FindAdjacencies(Workflow):
             # This sort isn't strictly necessary, but makes it
             # easier to diff results of one execution vs another.
             best_edges_df.sort_values(list(best_edges_df.columns), inplace=True)
+
+        if options["compute-cc"]:
+            max_distance = options["cc-distance-threshold"]
+            nodes = pd.unique(best_edges_df[['label_a', 'label_b']].values.reshape(-1))
+            
+            thresholded_edges_df = best_edges_df.query('distance <= @max_distance')
+            edges = thresholded_edges_df[['label_a', 'label_b']].values
+            
+            cc = 1 + connected_components_nonconsecutive(edges, nodes)
+            cc_df = pd.DataFrame({ 'label_a': nodes, 'cc': cc.astype(np.int32) })
+            best_edges_df = best_edges_df.merge(cc_df, 'left', 'label_a')
+            best_edges_df['cc'] = best_edges_df['cc'].astype(np.int32)
+
+            # Edges that were not used might be part of two different components.
+            best_edges_df.loc[best_edges_df['cc'] > max_distance] = np.int32(-1)
 
         with Timer("Writing edges", logger):
             best_edges_df.to_csv(options["output-table"], header=True, index=False)
