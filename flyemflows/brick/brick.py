@@ -508,6 +508,12 @@ def split_brick(new_grid, original_brick):
     assert ((original_brick.physical_box[0] >= original_brick.logical_box[0]).all() and
             (original_brick.physical_box[1] <= original_brick.logical_box[1]).all())
     
+    ## FIXME:
+    ## If the brick lies completely within a single grid square for the destination block,
+    ## Then boxes_from_grid() will only return a single box and the brick's volume will remain unchanged.
+    ## In that case, it's probably best not to uncompress/recompress the brick.
+    ## Just create a new brick with the same compressed data and a different logical_box.
+    
     # Iterate over the new boxes that intersect with the original brick
     for destination_box in boxes_from_grid(original_brick.physical_box, new_grid, include_halos=True):
         # Physical intersection of original with new
