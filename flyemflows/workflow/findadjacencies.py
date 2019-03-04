@@ -43,13 +43,15 @@ class FindAdjacencies(Workflow):
         "default": {},
         "additionalProperties": False,
         "properties": {
-            "use-halo": {
-                "description": "Whether or not to construct overlapping bricks before checking for adjacencies,\n"
-                               "to catch possible inter-block adjacencies that might have been missed if no halo were used.\n"
-                               "(This incurs a significant performance penalty, introduces an extra job boundary (with associated RAM overhead),\n"
-                               "and is unlikely to change the results much.)\n",
-                "type": "boolean",
-                "default": False
+            "halo": {
+                "description": "How much overlapping context between bricks in the grid (in voxels)\n"
+                               "If you leave it as 0, then even direct adjacencies can be missed at the brick boundaries.\n"
+                               "If you set it to 1, all direct adjacencies will be found.\n"
+                               "Bigger halos than 1 are only useful if you are using 'find-closest'.\n"
+                               "(But even then, you may not capture everything you're looking for.)\n",
+                "type": "integer",
+                "minValue": 0,
+                "default": 0
             },
             "subset-labels": BodyListSchema,
             "subset-labels-requirement": {
@@ -138,7 +140,7 @@ class FindAdjacencies(Workflow):
         if find_closest and subset_requirement != 2:
             raise RuntimeError("Can't use find-closest unless subset-requirement == 2")
 
-        brickwall = self.init_brickwall(volume_service, subset_labels, subset_edges, options["use-halo"])
+        brickwall = self.init_brickwall(volume_service, subset_labels, subset_edges)
 
         with Timer("Finding adjacencies in bricks", logger):
             def find_adj(brick):
@@ -183,7 +185,7 @@ class FindAdjacencies(Workflow):
             best_edges_df.to_csv(options["output-table"], header=True, index=False)
 
 
-    def init_brickwall(self, volume_service, subset_labels, subset_edges, use_halo):
+    def init_brickwall(self, volume_service, subset_labels, subset_edges):
         sbm = self.init_sparseblockmask(volume_service, subset_labels, subset_edges)
             
         with Timer("Initializing BrickWall", logger):
@@ -191,13 +193,14 @@ class FindAdjacencies(Workflow):
             GB = 2**30
             target_partition_size_voxels = 2 * GB // np.uint64().nbytes
             
-            brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.client, target_partition_size_voxels, 0, sbm)
-
-            if use_halo:
-                overlapping_grid = Grid(brickwall.grid.block_shape, halo=1)
-                brickwall = brickwall.realign_to_new_grid(overlapping_grid)
+            # Apply halo WHILE downloading the data.
+            # TODO: Allow the user to configure whether or not the halo should
+            #       be fetched from the outset, or added after the blocks are loaded.
+            halo = self.config["findadjacencies"]["halo"]
+            brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.client, target_partition_size_voxels, halo, sbm)
 
         return brickwall
+
 
     def init_sparseblockmask(self, volume_service, subset_labels, subset_edges):
         if not isinstance(volume_service.base_service, DvidVolumeService):
@@ -299,6 +302,7 @@ class FindAdjacencies(Workflow):
 
             sbm = SparseBlockMask(mask, brick_shape*mask_box, brick_shape)
             return sbm
+
 
 def find_adjacencies_in_brick(brick, subset_bodies=[], subset_requirement=1, subset_edges=[], find_closest=False):
     """
