@@ -250,6 +250,14 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             if ex.response.status_code != 400:
                 raise
 
+
+            if not volume_config["dvid"]["create-if-necessary"]:
+                existing_instances = fetch_repo_instances(self._server, self._uuid)
+                if self._instance_name not in existing_instances:
+                    raise RuntimeError("Instance '{self._instance_name}' does not exist in {self._server} / {self._uuid}."
+                                       "Add 'create-if-necessary: true' to your config if you want it to be created.'")
+                raise
+
             # Instance doesn't exist yet -- we are going to create it.
             if "segmentation-name" in volume_config["dvid"]:
                 self._instance_type = 'labelmap' # get_voxels doesn't really care if it's labelarray or labelmap...
@@ -344,6 +352,7 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
 
         if volume_config["dvid"]["create-if-necessary"]:
             self._create_instance(volume_config)
+
 
     @property
     def server(self):
