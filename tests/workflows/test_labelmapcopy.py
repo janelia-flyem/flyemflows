@@ -8,6 +8,7 @@ from ruamel.yaml import YAML
 from requests import HTTPError
 
 import numpy as np
+import pandas as pd
 
 from neuclease.dvid import create_labelmap_instance, post_labelmap_voxels, fetch_labelmap_voxels
 
@@ -84,7 +85,7 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
 def test_labelmapcopy(setup_dvid_segmentation_input, disable_auto_retry):
     template_dir, _config, expected_vols, dvid_address, repo_uuid, output_segmentation_name = setup_dvid_segmentation_input
     
-    _execution_dir, workflow = launch_flow(template_dir, 1)
+    execution_dir, workflow = launch_flow(template_dir, 1)
     final_config = workflow.config
 
     output_box_xyz = np.array( final_config['output']['geometry']['bounding-box'] )
@@ -96,6 +97,9 @@ def test_labelmapcopy(setup_dvid_segmentation_input, disable_auto_retry):
         output_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, scaled_box, scale=scale)
         assert (output_vol == expected_vols[scale]).all(), \
             f"Written vol does not match expected for scale {scale}"
+
+    svs = pd.read_csv(f'{execution_dir}/recorded-labels.csv')['sv']
+    assert set(svs) == set(np.unique(expected_vols[0].reshape(-1)))
 
 
 if __name__ == "__main__":

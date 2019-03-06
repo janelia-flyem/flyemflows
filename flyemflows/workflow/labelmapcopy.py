@@ -1,11 +1,13 @@
 import copy
 import logging
+from itertools import chain
 
 import numpy as np
+import pandas as pd
 import dask.bag as db
 
-from neuclease.util import Timer, Grid, clipped_boxes_from_grid, slabs_from_box
-from neuclease.dvid import fetch_instance_info, fetch_repo_instances, fetch_labelmap_voxels, post_labelmap_blocks
+from neuclease.util import Timer, Grid, clipped_boxes_from_grid
+from neuclease.dvid import fetch_instance_info, fetch_repo_instances, fetch_labelmap_voxels, post_labelmap_blocks, parse_labelarray_data
 
 from dvid_resource_manager.client import ResourceManagerClient
 
@@ -53,7 +55,13 @@ class LabelmapCopy(Workflow):
                 "type": "array",
                 "items": {"type": "integer"},
                 "default": [-1,-1,-1]
-            }
+            },
+            "record-label-sets": {
+                "description": "Whether or not to record the list of all labels contained in the copied blocks.\n"
+                               "(For scale 0 only.)  Exported to CSV.\n",
+                "type": "boolean",
+                "default": True
+            },
         }
     }
 
@@ -78,16 +86,26 @@ class LabelmapCopy(Workflow):
         output_service = self.output_service
         mgr_client = self.mgr_client
 
+        record_labels = options["record-label-sets"]
+        
         def copy_box(box, scale):
             box_shape = (box[1] - box[0])
             with mgr_client.access_context(input_service.server, True, 1, np.prod(box_shape)):
                 raw_blocks = fetch_labelmap_voxels(*input_service.instance_triple, box, scale,
                                                    False, input_service.supervoxels, format='raw-response')
 
+            labels = []
+            if scale == 0 and record_labels:
+                block_fields = parse_labelarray_data(raw_blocks)
+                block_ids, labels, spans = zip(*block_fields)
+                
             with mgr_client.access_context(output_service.server, False, 1, np.prod(box_shape)):
                 post_labelmap_blocks(*output_service.instance_triple, None, raw_blocks, scale,
                                      output_service.enable_downres, output_service.disable_indexing, False, is_raw=True)
+            
+            return list(set(chain(*labels)))
 
+        all_labels = set()
         for scale in range(options["min-scale"], 1+options["max-scale"]):
             scaled_bounding_box = input_service.bounding_box_zyx // (2**scale)
             slab_boxes = clipped_boxes_from_grid(scaled_bounding_box, options["slab-shape"][::-1])
@@ -95,7 +113,13 @@ class LabelmapCopy(Workflow):
             for slab_index, slab_box in enumerate(slab_boxes):
                 brick_boxes = clipped_boxes_from_grid(slab_box, Grid(self.input_service.preferred_message_shape) )
                 with Timer(f"Scale {scale} slab {slab_index}: Copying {slab_box[:,::-1].tolist()} ({len(brick_boxes)} bricks)", logger):
-                    db.from_sequence(brick_boxes).map(lambda box: copy_box(box, scale)).compute()
+                    brick_labels = db.from_sequence(brick_boxes).map(lambda box: copy_box(box, scale)).compute()
+                    slab_labels = chain(*brick_labels)
+                    all_labels |= set(slab_labels)
+
+        if record_labels:
+            name = 'sv' if input_service.supervoxels else 'body'
+            pd.Series(sorted(all_labels), name=name).to_csv('recorded-labels.csv', index=False, header=True)
 
 
     def _init_services(self):
