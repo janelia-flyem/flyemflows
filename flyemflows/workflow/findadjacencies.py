@@ -294,12 +294,27 @@ class FindAdjacencies(Workflow):
                 with Timer(f"Generating combinations", logger):
                     label_pairs = []
                     coord_list = []
-                    for coord, df in coords_df.groupby(['z', 'y', 'x'], sort=False):
-                        if len(df) > 1:
-                            coord_labels = sorted(df['label'])
-                            for pair in combinations(coord_labels, 2):
-                                label_pairs.append(pair)
-                                coord_list.append(coord)
+                    
+                    # We need to compute the set of all possible
+                    # label (sorted) pairs from every block we found.
+                    # Start by computing the (sorted) list of labels in every block.
+                    coords_df = coords_df.sort_values(['z', 'y', 'x', 'label'])
+                    label_sets = coords_df.groupby(['z', 'y', 'x'], sort=False).agg({'label': [tuple, 'size']})
+                    label_sets.columns = ['labels', 'size']
+                    
+                    # In cases where there are only two labels in the block,
+                    # we're done for those blocks.
+                    pair_groups = label_sets.query('size == 2')
+                    label_pairs.extend( pair_groups['labels'].values )
+                    coord_list.extend( pair_groups.index )
+                    
+                    # We are now only interested in blocks that contain more than two labels.
+                    # Compute all combinations of (sorted) label pairs from the list.
+                    label_sets = label_sets.query('size > 2')
+                    for row in label_sets.itertuples():
+                        for pair in combinations(row.labels, 2):
+                            label_pairs.append(pair)
+                            coord_list.append(row.Index)
         
                     label_pairs = np.array(label_pairs, np.uint64)
                     comb_df = pd.DataFrame(coord_list, columns=['z', 'y', 'x'], dtype=np.int32)
