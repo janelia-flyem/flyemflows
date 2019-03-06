@@ -505,7 +505,7 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
                                                          scale,
                                                          throttle,
                                                          supervoxels=self.supervoxels,
-                                                         inflate=False )
+                                                         format='lazy-array' )
                 # Inflate
                 return vol_proxy()
             else:

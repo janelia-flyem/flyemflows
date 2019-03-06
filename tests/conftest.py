@@ -5,6 +5,7 @@ import signal
 import subprocess
 
 import pytest
+import numpy as np
 
 import flyemflows
 from neuclease.dvid import create_repo, fetch_repos_info
@@ -96,3 +97,40 @@ def disable_auto_retry():
         yield
     finally:
         flyemflows.util._auto_retry.FLYEMFLOWS_DISABLE_AUTO_RETRY = False
+
+@pytest.fixture
+def random_segmentation():
+    """
+    Generate a small 'segmentation' with random-ish segment shapes.
+    Since this takes a minute to run, we store the results in /tmp
+    and only regenerate it if necessary.
+    """
+    if os.environ.get('TRAVIS', '') == 'true':
+        # On Travis-CI, store this test data in a place that gets cached.
+        path = '/home/travis/miniconda/test-data/random-test-segmentation.npy'
+    else:
+        path = '/tmp/random-test-segmentation.npy'
+
+    if os.path.exists(path):
+        return np.load(path)
+
+    print("Generating new test segmentation")
+    
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    
+    shape = (256,256,256)
+    num_seeds = 1000
+    seed_coords = tuple(np.random.randint(shape[0], size=(3,num_seeds)))
+    seed_vol = np.zeros(shape, dtype=np.uint32)
+    seed_vol[seed_coords] = np.arange(1, num_seeds+1)
+    
+    from vigra.filters import distanceTransform
+    from vigra.analysis import watersheds
+    
+    dt = distanceTransform(seed_vol)
+    seg, _maxlabel = watersheds(dt, seeds=seed_vol)
+
+    seg = seg.astype(np.uint64)
+    np.save(path, seg)
+    return seg
+
