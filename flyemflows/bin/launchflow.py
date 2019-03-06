@@ -238,7 +238,15 @@ def _load_and_overwrite_dask_config(execution_dir):
     # Load dask config, inject defaults for (selected) missing entries, and overwrite in-place.
     dask_config_path = os.path.abspath(f'{execution_dir}/dask-config.yaml')
     if os.path.exists(dask_config_path):
-        dask_config = load_config(dask_config_path, DaskConfigSchema)
+        # Check for completely empty dask config file
+        from ruamel.yaml import YAML
+        yaml = YAML()
+        config = yaml.load(open(dask_config_path, 'r'))
+        if not config:
+            dask_config = {}
+            validate(dask_config, DaskConfigSchema, inject_defaults=True)
+        else:
+            dask_config = load_config(dask_config_path, DaskConfigSchema)
     else:
         dask_config = {}
         validate(dask_config, DaskConfigSchema, inject_defaults=True)

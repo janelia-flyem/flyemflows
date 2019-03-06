@@ -76,6 +76,27 @@ def test_workflow_class_discovery():
     assert workflow.execute.didrun
 
 
+def test_empty_dask_config():
+    config = {
+        "workflow-name": "workflow",
+        "cluster-type": CLUSTER_TYPE
+    }
+ 
+    template_dir = tempfile.mkdtemp(suffix="test-workflow-environment-template")
+    with open(f"{template_dir}/workflow.yaml", 'w') as f:
+        yaml.dump(config, f)
+    
+    with open(f"{template_dir}/dask-config.yaml", 'w') as f:
+        f.write('')
+    
+    @checkrun
+    def execute(workflow_inst):
+        pass
+
+    execution_dir, _workflow = launch_flow(template_dir, 1, _custom_execute_fn=execute)
+    assert execute.didrun
+    
+
 def test_workflow_environment():
     """
     Users can specify environment variables in their config
@@ -325,4 +346,6 @@ if __name__ == "__main__":
         warnings.warn("Disregarding CLUSTER_TYPE when running via __main__")
 
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
-    pytest.main(['-s', '--tb=native', '--pyargs', 'tests.workflows.test_workflow'])
+    args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_workflow']
+    #args = args + ['-k', 'empty_dask_confi']
+    pytest.main(args)
