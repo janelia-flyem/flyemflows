@@ -66,6 +66,9 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
             supervoxels: true
             disable-indexing: true
             create-if-necessary: true
+        
+        labelmapcopy:
+          slab-shape: [512,128,64]
     """)
  
     with open(f"{template_dir}/workflow.yaml", 'w') as f:

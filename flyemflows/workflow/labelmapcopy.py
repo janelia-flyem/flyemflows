@@ -48,10 +48,11 @@ class LabelmapCopy(Workflow):
                 "maxValue": 10,
                 "default": -1
             },
-            "slab-depth": {
-                "description": "The data will be processed in slabs (cut across Z), at this depth. By default, the brick depth is used.",
-                "type": "integer",
-                "default": -1
+            "slab-shape": {
+                "description": "The data will be processed in 'slabs' of this shape. By default, the slabs comprise an entire Z-layer of bricks.",
+                "type": "array",
+                "items": {"type": "integer"},
+                "default": [-1,-1,-1]
             }
         }
     }
@@ -89,10 +90,11 @@ class LabelmapCopy(Workflow):
 
         for scale in range(options["min-scale"], 1+options["max-scale"]):
             scaled_bounding_box = input_service.bounding_box_zyx // (2**scale)
-            slab_boxes = list( slabs_from_box(scaled_bounding_box, options["slab-depth"]) )
+            slab_boxes = clipped_boxes_from_grid(scaled_bounding_box, options["slab-shape"][::-1])
+            logger.info(f"Scale {scale}: Copying {len(slab_boxes)} slabs")
             for slab_index, slab_box in enumerate(slab_boxes):
                 brick_boxes = clipped_boxes_from_grid(slab_box, Grid(self.input_service.preferred_message_shape) )
-                with Timer(f"Copying scale {scale} slab {slab_index}: {slab_box[:,::-1].tolist()} ({len(brick_boxes)} bricks)", logger):
+                with Timer(f"Scale {scale} slab {slab_index}: Copying {slab_box[:,::-1].tolist()} ({len(brick_boxes)} bricks)", logger):
                     db.from_sequence(brick_boxes).map(lambda box: copy_box(box, scale)).compute()
 
 
@@ -185,8 +187,10 @@ class LabelmapCopy(Workflow):
         assert not (output_service.preferred_message_shape % output_service.block_width).any(), \
             "Output message-block-shape should be a multiple of the block size in all dimensions."
         
-        if options["slab-depth"] == -1:
-            options["slab-depth"] = input_service.preferred_message_shape[0]
+        assert len(options["slab-shape"]) == 3
+        slab_shape_zyx = np.array(options["slab-shape"][::-1])
+        replace_default_entries(slab_shape_zyx, input_service.preferred_message_shape)
+        options["slab-shape"] = slab_shape_zyx[::-1].tolist()
         
-        assert options["slab-depth"] % input_service.preferred_message_shape[0] == 0, \
-            "slab-depth must be divisible by the brick Z-dimension"
+        assert (slab_shape_zyx % input_service.preferred_message_shape[0] == 0).all(), \
+            "slab-shape must be divisible by the brick shape"
