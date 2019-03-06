@@ -39,6 +39,19 @@ class SamplePoints(Workflow):
     
     All columns from the original CSV file are preserved, but the rows will not necessarily
     be in the same order as the input file.  They will be sorted by coordinate.
+    
+    Note:
+        DVID now has optimized routines for reading labels from a list of point queries,
+        so this cluster-based workflow is rarely needed, if ever.
+        To extract the labels from millions of coordinates, simply fetch them from DVID:
+        
+        .. code-block:: python
+        
+            from neuclease.dvid import fetch_labels_batched
+            labels = fetch_labels_batched(server, uuid, instance, coords_zyx, threads=32)
+        
+        Assuming DVID is running on a fast machine, the above line can fetch
+        labels from DVID at a rate of about 65k/second (4M/minute).
     """
     SamplePointsOptionsSchema = \
     {
