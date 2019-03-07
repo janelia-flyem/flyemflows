@@ -70,6 +70,7 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
         
         labelmapcopy:
           slab-shape: [512,128,64]
+          dont-overwrite-identical-blocks: true
     """)
  
     with open(f"{template_dir}/workflow.yaml", 'w') as f:

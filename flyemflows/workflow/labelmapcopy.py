@@ -62,6 +62,13 @@ class LabelmapCopy(Workflow):
                 "type": "boolean",
                 "default": True
             },
+            "dont-overwrite-identical-blocks": {
+                "description": "Before writing each block, read the existing segmentation from DVID\n"
+                               "and check to see if it already matches what will be written.\n"
+                               "If our write would be a no-op, don't write it.\n",
+                "type": "boolean",
+                "default": False
+            },
         }
     }
 
@@ -87,23 +94,64 @@ class LabelmapCopy(Workflow):
         mgr_client = self.mgr_client
 
         record_labels = options["record-label-sets"]
+        check_existing = options["dont-overwrite-identical-blocks"]
         
         def copy_box(box, scale):
             box_shape = (box[1] - box[0])
             with mgr_client.access_context(input_service.server, True, 1, np.prod(box_shape)):
-                raw_blocks = fetch_labelmap_voxels(*input_service.instance_triple, box, scale,
+                input_raw_blocks = fetch_labelmap_voxels(*input_service.instance_triple, box, scale,
                                                    False, input_service.supervoxels, format='raw-response')
+            input_labels = {}
+            input_spans = {}
 
-            labels = []
             if scale == 0 and record_labels:
-                block_fields = parse_labelarray_data(raw_blocks)
-                block_ids, labels, spans = zip(*block_fields)
-                
-            with mgr_client.access_context(output_service.server, False, 1, np.prod(box_shape)):
-                post_labelmap_blocks(*output_service.instance_triple, None, raw_blocks, scale,
-                                     output_service.enable_downres, output_service.disable_indexing, False, is_raw=True)
+                input_spans, input_labels = parse_labelarray_data(input_raw_blocks)
             
-            return list(set(chain(*labels)))
+            if not check_existing:
+                with mgr_client.access_context(output_service.server, False, 1, np.prod(box_shape)):
+                    post_labelmap_blocks(*output_service.instance_triple, None, input_raw_blocks, scale,
+                                         output_service.enable_downres, output_service.disable_indexing, False, is_raw=True)
+            else:
+                # Read from output
+                with mgr_client.access_context(output_service.server, True, 1, np.prod(box_shape)):
+                    output_raw_blocks = fetch_labelmap_voxels(*output_service.instance_triple, box, scale,
+                                                              False, output_service.supervoxels, format='raw-response')
+
+                # Figure out which blocks are different, if any.
+                if input_raw_blocks != output_raw_blocks:
+                    output_spans = parse_labelarray_data(output_raw_blocks, extract_labels=False)
+
+                    if not input_spans:
+                        input_spans = parse_labelarray_data(input_raw_blocks, extract_labels=False)
+                    
+                    input_ids = set(input_spans.keys())
+                    output_ids = set(output_spans.keys())
+                    
+                    missing_from_output = input_ids - output_ids
+                    missing_from_input = output_ids - input_ids
+                    common_ids = input_ids & output_ids
+                    
+                    filtered_raw_list = []
+                    for block_id in missing_from_output:
+                        start, stop = input_spans[block_id]
+                        filtered_raw_list.append( input_raw_blocks[start:stop] )
+
+                    for block_id in missing_from_input:
+                        # FIXME: We should pass this in the result so it can be logged in the client, not the worker.
+                        logger.error(f"Not overwriting block-id: {block_id}.  It doesn't exist in the input.")
+                    
+                    for block_id in common_ids:
+                        in_start, in_stop = input_spans[block_id]
+                        out_start, out_stop = output_spans[block_id]
+                        if input_raw_blocks[in_start:in_stop] != output_raw_blocks[out_start:out_stop]:
+                            filtered_raw_list.append( input_raw_blocks[start:stop] )
+                        
+                    filtered_raw_blocks = b''.join(filtered_raw_list)
+                    with mgr_client.access_context(output_service.server, False, 1, np.prod(box_shape)):
+                        post_labelmap_blocks(*output_service.instance_triple, None, filtered_raw_blocks, scale,
+                                             output_service.enable_downres, output_service.disable_indexing, False, is_raw=True)
+            
+            return list(set(chain(*input_labels.values())))
 
         all_labels = set()
         for scale in range(options["min-scale"], 1+options["max-scale"]):
