@@ -207,7 +207,7 @@ class FindAdjacencies(Workflow):
             best_edges_df['cc'] = best_edges_df['cc'].astype(np.int32)
 
             # Edges that were not used might be part of two different components.
-            best_edges_df.loc[best_edges_df['cc'] > max_distance] = np.int32(-1)
+            best_edges_df.loc[best_edges_df['distance'] > max_distance, 'cc'] = np.int32(-1)
 
         with Timer("Writing edges", logger):
             best_edges_df.to_csv(options["output-table"], header=True, index=False)

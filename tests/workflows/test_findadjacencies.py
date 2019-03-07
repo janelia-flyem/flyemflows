@@ -217,7 +217,7 @@ def test_findadjacencies_solid_volume():
 def test_findadjacencies_closest_approach_subset_edges(setup_findadjacencies):
     template_dir, config, _volume = setup_findadjacencies
 
-    subset_edges = pd.DataFrame([[4,3], [7,6]], columns=['label_a', 'label_b'])
+    subset_edges = pd.DataFrame([[4,3], [7,6], [6,8]], columns=['label_a', 'label_b'])
     subset_edges.to_csv(f'{template_dir}/subset-edges.csv', index=False, header=True)
     
     # Overwrite config with updated settings.
@@ -233,7 +233,7 @@ def test_findadjacencies_closest_approach_subset_edges(setup_findadjacencies):
         cc_set = frozenset(cc_df[['label_a', 'label_b']].values.flat)
         cc_sets.add(cc_set)
     
-    assert set(cc_sets) == { frozenset(s) for s in [{3,4}, {6,7}] }
+    assert set(cc_sets) == { frozenset(s) for s in [{3,4}, {6,7,8}] }
 
 
 
@@ -242,7 +242,7 @@ def test_findadjacencies_closest_approach_subset_labels(setup_findadjacencies):
 
     # Overwrite config with updated settings.
     config = copy.copy(config)
-    config["findadjacencies"]["subset-labels"] = [3,4,6,7]
+    config["findadjacencies"]["subset-labels"] = [3,4,6,7,8]
     config["findadjacencies"]["find-closest"] = True
 
     output_df = _impl_test_findadjacencies_closest_approach(template_dir, config)
@@ -253,7 +253,7 @@ def test_findadjacencies_closest_approach_subset_labels(setup_findadjacencies):
         cc_set = frozenset(cc_df[['label_a', 'label_b']].values.flat)
         cc_sets.add(cc_set)
     
-    assert set(cc_sets) == { frozenset(s) for s in [{6,7}, {3,4}] }
+    assert set(cc_sets) == { frozenset(s) for s in [{6,7,8}, {3,4}] }
 
 
 def _impl_test_findadjacencies_closest_approach(template_dir, config):
@@ -272,6 +272,7 @@ def _impl_test_findadjacencies_closest_approach(template_dir, config):
     assert (1,2) not in label_pairs
     assert (3,4) in label_pairs
     assert (6,7) in label_pairs
+    assert (6,7) in label_pairs
     
     assert (output_df.query('label_a == 3')[['za', 'zb']].values[0] == 0).all()
     assert (output_df.query('label_a == 3')[['ya', 'yb']].values[0] == (6,5)).all() # not 'forward'
@@ -282,6 +283,7 @@ def _impl_test_findadjacencies_closest_approach(template_dir, config):
     assert (output_df.query('label_a == 6')[['xa', 'xb']].values[0] == 6).all()
 
     return output_df
+
 
 @pytest.fixture(scope="module")
 def setup_dvid_segmentation_input(setup_dvid_repo):
@@ -354,7 +356,7 @@ def test_findadjacencies_from_dvid_sparse_labels(setup_dvid_segmentation_input):
 def test_findadjacencies_from_dvid_sparse_edges(setup_dvid_segmentation_input):
     template_dir, config, _volume, _dvid_address, _repo_uuid = setup_dvid_segmentation_input
 
-    subset_edges = pd.DataFrame([[1,2], [4,3], [7,6], [1,6]], columns=['label_a', 'label_b'])
+    subset_edges = pd.DataFrame([[1,2], [4,3], [7,6], [1,6], [2,8]], columns=['label_a', 'label_b'])
     subset_edges.to_csv(f'{template_dir}/subset-edges.csv', index=False, header=True)
     
     # Overwrite config with updated settings.
@@ -438,7 +440,10 @@ def _impl_findadjacencies_different_dvid_blocks_sparse_edges(template_dir, confi
 
 
 if __name__ == "__main__":
+    from neuclease import configure_default_logging
+    configure_default_logging()
+    
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_findadjacencies']
-    #args = ['-x', '-k', 'findadjacencies_closest_approach_subset_labels'] + args
+    #args = ['-x', '-k', 'findadjacencies_different_dvid_blocks_sparse_labels or findadjacencies_different_dvid_blocks_sparse_edges'] + args
     pytest.main(args)
