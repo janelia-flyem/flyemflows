@@ -134,7 +134,7 @@ class LabelmapCopy(Workflow):
                     filtered_raw_list = []
                     for block_id in missing_from_output:
                         start, stop = input_spans[block_id]
-                        filtered_raw_list.append( input_raw_blocks[start:stop] )
+                        filtered_raw_list.append( (block_id, input_raw_blocks[start:stop]) )
 
                     for block_id in missing_from_input:
                         # FIXME: We should pass this in the result so it can be logged in the client, not the worker.
@@ -144,9 +144,12 @@ class LabelmapCopy(Workflow):
                         in_start, in_stop = input_spans[block_id]
                         out_start, out_stop = output_spans[block_id]
                         if input_raw_blocks[in_start:in_stop] != output_raw_blocks[out_start:out_stop]:
-                            filtered_raw_list.append( input_raw_blocks[start:stop] )
-                        
-                    filtered_raw_blocks = b''.join(filtered_raw_list)
+                            filtered_raw_list.append( (block_id, input_raw_blocks[in_start:in_stop]) )
+                    
+                    # Sort filtered blocks so they appear in the same order in which we received them.
+                    filtered_raw_list = sorted(filtered_raw_list, key=lambda k_v: input_spans[k_v[0]][0])
+                    
+                    filtered_raw_blocks = b''.join([buf for (_, buf) in filtered_raw_list])
                     with mgr_client.access_context(output_service.server, False, 1, np.prod(box_shape)):
                         post_labelmap_blocks(*output_service.instance_triple, None, filtered_raw_blocks, scale,
                                              output_service.enable_downres, output_service.disable_indexing, False, is_raw=True)
