@@ -292,40 +292,24 @@ class FindAdjacencies(Workflow):
         with Timer(f"Constructing SparseBlockMask from {len(coords_df)} rows", logger=logger):
             if len(subset_edges) > 0:
                 with Timer(f"Generating combinations", logger):
-                    label_pairs = []
-                    coord_list = []
-                    
                     # We need to compute the set of all possible
                     # label (sorted) pairs from every block we found.
                     # Start by computing the (sorted) list of labels in every block.
                     coords_df = coords_df.sort_values(['z', 'y', 'x', 'label'])
-                    label_sets = coords_df.groupby(['z', 'y', 'x'], sort=False).agg({'label': [tuple, 'size']})
-                    label_sets.columns = ['labels', 'size']
-                    
-                    # In cases where there are only two labels in the block,
-                    # we're done for those blocks.
-                    pair_groups = label_sets.query('size == 2')
-                    label_pairs.extend( pair_groups['labels'].values )
-                    coord_list.extend( pair_groups.index )
-                    
-                    # We are now only interested in blocks that contain more than two labels.
-                    # Compute all combinations of (sorted) label pairs from the list.
-                    label_sets = label_sets.query('size > 2')
-                    for row in label_sets.itertuples():
-                        for pair in combinations(row.labels, 2):
-                            label_pairs.append(pair)
-                            coord_list.append(row.Index)
-        
-                    label_pairs = np.array(label_pairs, np.uint64)
-                    comb_df = pd.DataFrame(coord_list, columns=['z', 'y', 'x'], dtype=np.int32)
-                    comb_df['label_a'] = label_pairs[:, 0]
-                    comb_df['label_b'] = label_pairs[:, 1]
-    
-                with Timer(f"Filtering {len(comb_df)} pairs", logger):
+
+                    # Compute all pairwise combinations of labels within each block.
+                    # This is achieved via merging coords_df with itself, and then dropping the duplicates.
+                    coords_df = coords_df.merge(coords_df, 'inner', ['z', 'y', 'x'], suffixes=['_a', '_b'])
+                    coords_df = coords_df.query('label_a != label_b').copy()
+                    swap_df_cols(coords_df, None, coords_df.eval('label_a > label_b'), ['_a', '_b'])
+                    coords_df.drop_duplicates(['label_a', 'label_b'], inplace=True)
+
+                with Timer(f"Filtering {len(coords_df)} pairs", logger):
                     # Filter out pair combinations found in the blocks that
                     # aren't of interest (not mentioned in subset_edges)
-                    subset_pairs_df = comb_df.merge(subset_edges, 'inner', ['label_a', 'label_b'])
-                    subset_coords = subset_pairs_df[['z', 'y', 'x']].values
+                    subset_pairs_df = coords_df.merge(subset_edges, 'inner', ['label_a', 'label_b'])
+                    subset_coords = subset_pairs_df[['z', 'y', 'x']].drop_duplicates().values
+
                 logger.info(f"After filtering, {len(subset_coords)} pairs remain")
     
             elif len(subset_labels) > 0:

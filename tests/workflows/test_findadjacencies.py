@@ -365,6 +365,7 @@ def test_findadjacencies_from_dvid_sparse_edges(setup_dvid_segmentation_input):
 
     _impl_test_findadjacencies_from_dvid_sparse(template_dir, config)
 
+
 def _impl_test_findadjacencies_from_dvid_sparse(template_dir, config):
     with open(f"{template_dir}/workflow.yaml", 'w') as f:
         yaml.dump(config, f)
@@ -381,6 +382,7 @@ def _impl_test_findadjacencies_from_dvid_sparse(template_dir, config):
     assert (3,4) in label_pairs
     assert (6,7) in label_pairs
     assert (1,6) in label_pairs
+    assert (2,8) in label_pairs
     
     assert (output_df.query('label_a == 3')[['za', 'zb']].values[0] == 31).all()
     assert (output_df.query('label_a == 3')[['ya', 'yb']].values[0] == (6*16, 6*16-1)).all() # not 'forward'
@@ -440,10 +442,10 @@ def _impl_findadjacencies_different_dvid_blocks_sparse_edges(template_dir, confi
 
 
 if __name__ == "__main__":
-    from neuclease import configure_default_logging
-    configure_default_logging()
+    #from neuclease import configure_default_logging
+    #configure_default_logging()
     
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_findadjacencies']
-    #args = ['-x', '-k', 'findadjacencies_different_dvid_blocks_sparse_labels or findadjacencies_different_dvid_blocks_sparse_edges'] + args
+    #args = ['-x', '-k', 'findadjacencies_from_dvid_sparse_edges or findadjacencies_different_dvid_blocks_sparse_labels or findadjacencies_different_dvid_blocks_sparse_edges'] + args
     pytest.main(args)
