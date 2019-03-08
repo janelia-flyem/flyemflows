@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import dask.bag as db
 
-from neuclease.util import Timer, Grid, clipped_boxes_from_grid
+from neuclease.util import Timer, Grid, clipped_boxes_from_grid, round_box
 from neuclease.dvid import fetch_instance_info, fetch_repo_instances, fetch_labelmap_voxels, post_labelmap_blocks, parse_labelarray_data
 
 from dvid_resource_manager.client import ResourceManagerClient
@@ -108,6 +108,7 @@ class LabelmapCopy(Workflow):
                 "Set min-scale and max-scale to 0.")
         
         def copy_box(box, scale):
+            box = round_box(box, 64, 'out')
             box_shape = (box[1] - box[0])
             with mgr_client.access_context(input_service.server, True, 1, np.prod(box_shape)):
                 input_raw_blocks = fetch_labelmap_voxels(*input_service.instance_triple, box, scale,
@@ -214,7 +215,7 @@ class LabelmapCopy(Workflow):
             options["max-scale"] = max_scale
 
         assert self.input_service.available_scales == list(range(1+max_scale)), \
-            "Your input's available-scales must include all levels you wish to copy."
+            "Your input config's 'available-scales' must include all levels you wish to copy."
 
         if output_config["dvid"]["create-if-necessary"]:
             creation_depth = output_config["dvid"]["creation-settings"]["max-scale"]

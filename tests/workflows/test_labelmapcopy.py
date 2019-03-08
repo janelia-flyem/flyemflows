@@ -12,6 +12,7 @@ yaml = YAML()
 import numpy as np
 import pandas as pd
 
+from neuclease.util import round_box, overwrite_subvol
 from neuclease.dvid import create_labelmap_instance, post_labelmap_voxels, fetch_labelmap_voxels, post_labelmap_blocks
 
 from flyemflows.util import downsample
@@ -30,12 +31,15 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
 
     partial_output_segmentation_name = 'labelmapcopy-segmentation-partial-output'
  
-    max_scale = 2
+    max_scale = 3
+    already_exists = False
+
     try:
         create_labelmap_instance(dvid_address, repo_uuid, input_segmentation_name, max_scale=max_scale)
+        create_labelmap_instance(dvid_address, repo_uuid, partial_output_segmentation_name, max_scale=max_scale)
     except HTTPError as ex:
         if ex.response is not None and 'already exists' in ex.response.content.decode('utf-8'):
-            pass
+            already_exists = True
 
     expected_vols = {}
     for scale in range(1+max_scale):
@@ -43,23 +47,26 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
             scaled_vol = random_segmentation
         else:
             scaled_vol = downsample(scaled_vol, 2, 'labels-numba')
-        post_labelmap_voxels(dvid_address, repo_uuid, input_segmentation_name, (0,0,0), scaled_vol, scale=scale)
         expected_vols[scale] = scaled_vol
+        
+        if not already_exists:
+            scaled_box = round_box([(0,0,0), scaled_vol.shape], 64, 'out')
+            aligned_vol = np.zeros(scaled_box[1], np.uint64)
+            overwrite_subvol(aligned_vol, [(0,0,0), scaled_vol.shape], scaled_vol)
+            post_labelmap_voxels(dvid_address, repo_uuid, input_segmentation_name, (0,0,0), aligned_vol, scale=scale)
 
 
-    create_labelmap_instance(dvid_address, repo_uuid, partial_output_segmentation_name, max_scale=max_scale)
-
-    # Create a 'partial' output volume that is the same (bitwise) as the input except for some blocks.
-    scaled_box = np.array([(0,0,0), random_segmentation.shape])
-    scaled_box[1,-1] = 192
-    for scale in range(1+max_scale):
-        scaled_box = scaled_box // (2**scale)
-        scaled_box[1] = np.maximum(scaled_box[1], np.ceil(scaled_box[1] / 64) * 64)
-        raw_blocks = fetch_labelmap_voxels(dvid_address, repo_uuid, input_segmentation_name, scaled_box, scale, supervoxels=True, format='raw-response')
-        post_labelmap_blocks(dvid_address, repo_uuid, partial_output_segmentation_name, [(0,0,0)], raw_blocks, scale, is_raw=True)
-
-    block = np.random.randint(10, size=(64,64,64), dtype=np.uint64)
-    post_labelmap_voxels(dvid_address, repo_uuid, partial_output_segmentation_name, (0,128,64), block, 0, downres=True)
+    if not already_exists:
+        # Create a 'partial' output volume that is the same (bitwise) as the input except for some blocks.
+        scaled_box = np.array([(0,0,0), random_segmentation.shape])
+        scaled_box[1,-1] = 192
+        for scale in range(1+max_scale):
+            scaled_box = round_box(scaled_box // (2**scale), 64, 'out')
+            raw_blocks = fetch_labelmap_voxels(dvid_address, repo_uuid, input_segmentation_name, scaled_box, scale, supervoxels=True, format='raw-response')
+            post_labelmap_blocks(dvid_address, repo_uuid, partial_output_segmentation_name, [(0,0,0)], raw_blocks, scale, is_raw=True)
+    
+        block = np.random.randint(10, size=(64,64,64), dtype=np.uint64)
+        post_labelmap_voxels(dvid_address, repo_uuid, partial_output_segmentation_name, (0,128,64), block, 0, downres=True)
     
     template_dir = tempfile.mkdtemp(suffix="labelmapcopy-template")
  
@@ -76,7 +83,7 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
            
           geometry:
             message-block-shape: [512,64,64]
-            available-scales: [0,1,2]
+            available-scales: [0,1,2,3]
  
         output:
           dvid:
