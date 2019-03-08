@@ -62,13 +62,18 @@ class LabelmapCopy(Workflow):
                 "type": "boolean",
                 "default": True
             },
+            "record-only": {
+                "description": "If True, skip the copy operation entirely, and just read all the input data to record the set of labels in the dataset.\n",
+                "type": "boolean",
+                "default": False
+            },
             "dont-overwrite-identical-blocks": {
                 "description": "Before writing each block, read the existing segmentation from DVID\n"
                                "and check to see if it already matches what will be written.\n"
                                "If our write would be a no-op, don't write it.\n",
                 "type": "boolean",
                 "default": False
-            },
+            }
         }
     }
 
@@ -94,7 +99,13 @@ class LabelmapCopy(Workflow):
         mgr_client = self.mgr_client
 
         record_labels = options["record-label-sets"]
+        record_only = options["record-only"]
         check_existing = options["dont-overwrite-identical-blocks"]
+        
+        if record_only:
+            assert options["min-scale"] == 0 and options["max-scale"] == 0, \
+                ("In record-only mode, there is no reason to process any scales other than 0. "
+                "Set min-scale and max-scale to 0.")
         
         def copy_box(box, scale):
             box_shape = (box[1] - box[0])
@@ -106,6 +117,9 @@ class LabelmapCopy(Workflow):
 
             if scale == 0 and record_labels:
                 input_spans, input_labels = parse_labelarray_data(input_raw_blocks)
+
+            if record_only:
+                return list(set(chain(*input_labels.values())))
             
             if not check_existing:
                 with mgr_client.access_context(output_service.server, False, 1, np.prod(box_shape)):
@@ -157,20 +171,21 @@ class LabelmapCopy(Workflow):
             return list(set(chain(*input_labels.values())))
 
         all_labels = set()
-        for scale in range(options["min-scale"], 1+options["max-scale"]):
-            scaled_bounding_box = input_service.bounding_box_zyx // (2**scale)
-            slab_boxes = clipped_boxes_from_grid(scaled_bounding_box, options["slab-shape"][::-1])
-            logger.info(f"Scale {scale}: Copying {len(slab_boxes)} slabs")
-            for slab_index, slab_box in enumerate(slab_boxes):
-                brick_boxes = clipped_boxes_from_grid(slab_box, Grid(self.input_service.preferred_message_shape) )
-                with Timer(f"Scale {scale} slab {slab_index}: Copying {slab_box[:,::-1].tolist()} ({len(brick_boxes)} bricks)", logger):
-                    brick_labels = db.from_sequence(brick_boxes).map(lambda box: copy_box(box, scale)).compute()
-                    slab_labels = chain(*brick_labels)
-                    all_labels |= set(slab_labels)
-
-        if record_labels:
-            name = 'sv' if input_service.supervoxels else 'body'
-            pd.Series(sorted(all_labels), name=name).to_csv('recorded-labels.csv', index=False, header=True)
+        try:
+            for scale in range(options["min-scale"], 1+options["max-scale"]):
+                scaled_bounding_box = input_service.bounding_box_zyx // (2**scale)
+                slab_boxes = clipped_boxes_from_grid(scaled_bounding_box, options["slab-shape"][::-1])
+                logger.info(f"Scale {scale}: Copying {len(slab_boxes)} slabs")
+                for slab_index, slab_box in enumerate(slab_boxes):
+                    brick_boxes = clipped_boxes_from_grid(slab_box, Grid(self.input_service.preferred_message_shape) )
+                    with Timer(f"Scale {scale} slab {slab_index}: Copying {slab_box[:,::-1].tolist()} ({len(brick_boxes)} bricks)", logger):
+                        brick_labels = db.from_sequence(brick_boxes).map(lambda box: copy_box(box, scale)).compute()
+                        slab_labels = chain(*brick_labels)
+                        all_labels |= set(slab_labels)
+        finally:
+            if record_labels:
+                name = 'sv' if input_service.supervoxels else 'body'
+                pd.Series(sorted(all_labels), name=name).to_csv('recorded-labels.csv', index=False, header=True)
 
 
     def _init_services(self):
