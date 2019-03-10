@@ -214,7 +214,7 @@ class LabelmapCopy(Workflow):
             max_scale = int(info["Extended"]["MaxDownresLevel"])
             options["max-scale"] = max_scale
 
-        assert self.input_service.available_scales == list(range(1+max_scale)), \
+        assert not (set(range(1+max_scale)) - set(self.input_service.available_scales)), \
             "Your input config's 'available-scales' must include all levels you wish to copy."
 
         if output_config["dvid"]["create-if-necessary"]:
