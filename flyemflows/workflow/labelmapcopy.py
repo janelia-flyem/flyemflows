@@ -208,14 +208,41 @@ class LabelmapCopy(Workflow):
         assert output_config["dvid"]["supervoxels"], \
             'DVID output service config must use "supervoxels: true"'
 
+        input_service = self.input_service
+
         max_scale = options["max-scale"]
         if max_scale == -1:
-            info = fetch_instance_info(*self.input_service.instance_triple)
+            info = fetch_instance_info(*input_service.instance_triple)
             max_scale = int(info["Extended"]["MaxDownresLevel"])
             options["max-scale"] = max_scale
 
-        assert not (set(range(1+max_scale)) - set(self.input_service.available_scales)), \
+        assert not (set(range(1+max_scale)) - set(input_service.available_scales)), \
             "Your input config's 'available-scales' must include all levels you wish to copy."
+
+        assert len(options["slab-shape"]) == 3
+        slab_shape_zyx = np.array(options["slab-shape"][::-1])
+        replace_default_entries(slab_shape_zyx, input_service.preferred_message_shape)
+        options["slab-shape"] = slab_shape_zyx[::-1].tolist()
+        
+        assert (slab_shape_zyx % input_service.preferred_message_shape[0] == 0).all(), \
+            "slab-shape must be divisible by the brick shape"
+
+        # Transposed/remapped services aren't supported because we're not going to inflate the downloaded blocks.
+        assert all(not isinstance( svc, TransposedVolumeService ) for svc in input_service.service_chain)
+        assert all(not isinstance( svc, LabelmappedVolumeService ) for svc in input_service.service_chain)
+
+        assert not (input_service.bounding_box_zyx % input_service.block_width).any(), \
+            "Input bounding-box should be a multiple of the block size in all dimensions."
+        assert not (input_service.preferred_message_shape % input_service.block_width).any(), \
+            "Input message-block-shape should be a multiple of the block size in all dimensions."
+
+        assert all(not isinstance( svc, ScaledVolumeService ) or svc.scale_delta == 0 for svc in input_service.service_chain), \
+            "For now, we don't support rescaled input, though it would be possible in theory."
+
+        if options["record-only"]:
+            # Don't need to check output setting if we're not writing
+            self.output_service = None
+            return
 
         if output_config["dvid"]["create-if-necessary"]:
             creation_depth = output_config["dvid"]["creation-settings"]["max-scale"]
@@ -226,10 +253,9 @@ class LabelmapCopy(Workflow):
             output_config["dvid"]["creation-settings"]["max-scale"] = max_scale
 
         # Replace 'auto' dimensions with input bounding box
-        replace_default_entries(output_config["geometry"]["bounding-box"], self.input_service.bounding_box_zyx[:, ::-1])
+        replace_default_entries(output_config["geometry"]["bounding-box"], input_service.bounding_box_zyx[:, ::-1])
         self.output_service = VolumeService.create_from_config( output_config, self.mgr_client )
 
-        input_service = self.input_service
         output_service = self.output_service
         assert isinstance( output_service, VolumeServiceWriter )
 
@@ -242,15 +268,9 @@ class LabelmapCopy(Workflow):
                                 f"For now, you are required to populate ALL scales of the output, or create a new output instance from scratch.")
 
 
-        # Transposed/remapped services aren't supported because we're not going to inflate the downloaded blocks.
-        assert all(not isinstance( svc, TransposedVolumeService ) for svc in input_service.service_chain)
         assert all(not isinstance( svc, TransposedVolumeService ) for svc in output_service.service_chain)
-        assert all(not isinstance( svc, LabelmappedVolumeService ) for svc in input_service.service_chain)
         assert all(not isinstance( svc, LabelmappedVolumeService ) for svc in output_service.service_chain)
         assert all(not isinstance( svc, ScaledVolumeService ) or svc.scale_delta == 0 for svc in output_service.service_chain)
-
-        assert all(not isinstance( svc, ScaledVolumeService ) or svc.scale_delta == 0 for svc in input_service.service_chain), \
-            "For now, we don't support rescaled input, though it would be possible in theory."
 
         # Output can't be a scaled service because we copied some geometry (bounding-box)
         # directly from the input service.
@@ -264,24 +284,10 @@ class LabelmapCopy(Workflow):
 
         assert (input_service.bounding_box_zyx == output_service.bounding_box_zyx).all(), \
             "Input and output service bounding boxes must match exactly."
-        
         assert input_service.block_width == output_service.block_width, \
             "Input and output must use the same block-width"
-
-        assert not (input_service.bounding_box_zyx % input_service.block_width).any(), \
-            "Input bounding-box should be a multiple of the block size in all dimensions."
         assert not (output_service.bounding_box_zyx % output_service.block_width).any(), \
             "Output bounding-box should be a multiple of the block size in all dimensions."
-
-        assert not (input_service.preferred_message_shape % input_service.block_width).any(), \
-            "Input message-block-shape should be a multiple of the block size in all dimensions."
         assert not (output_service.preferred_message_shape % output_service.block_width).any(), \
             "Output message-block-shape should be a multiple of the block size in all dimensions."
         
-        assert len(options["slab-shape"]) == 3
-        slab_shape_zyx = np.array(options["slab-shape"][::-1])
-        replace_default_entries(slab_shape_zyx, input_service.preferred_message_shape)
-        options["slab-shape"] = slab_shape_zyx[::-1].tolist()
-        
-        assert (slab_shape_zyx % input_service.preferred_message_shape[0] == 0).all(), \
-            "slab-shape must be divisible by the brick shape"
