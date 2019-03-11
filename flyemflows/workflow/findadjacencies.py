@@ -306,7 +306,7 @@ class FindAdjacencies(Workflow):
                     coords_df = coords_df.merge(coords_df, 'inner', ['z', 'y', 'x'], suffixes=['_a', '_b'])
                     coords_df = coords_df.query('label_a != label_b').copy()
                     swap_df_cols(coords_df, None, coords_df.eval('label_a > label_b'), ['_a', '_b'])
-                    coords_df.drop_duplicates(['label_a', 'label_b'], inplace=True)
+                    coords_df.drop_duplicates(['z', 'y', 'x', 'label_a', 'label_b'], inplace=True)
 
                 with Timer(f"Filtering {len(coords_df)} pairs", logger):
                     # Filter out pair combinations found in the blocks that
