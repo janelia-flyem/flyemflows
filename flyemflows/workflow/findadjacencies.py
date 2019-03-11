@@ -210,6 +210,10 @@ class FindAdjacencies(Workflow):
             best_edges_df.loc[best_edges_df['distance'] > max_distance, 'cc'] = np.int32(-1)
 
         with Timer("Writing edges", logger):
+            # For debugging and analysis, write complete table of edges we found in all bricks,
+            # even though some pairs may appear more than once.
+            all_edges_df.to_csv('all-unfiltered-brick-edges-for-debug.csv', header=True, index=False)
+
             best_edges_df.to_csv(options["output-table"], header=True, index=False)
 
 
