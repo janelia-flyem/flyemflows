@@ -1,3 +1,5 @@
+import sys
+
 LsfJobSchema = \
 {
     "description": "dask-jobqueue config settings for LSF jobs.\n"
@@ -80,6 +82,64 @@ LsfJobSchema = \
     }
 }
 
+SgeJobSchema = \
+{
+    "description": "dask-jobqueue config settings for LSF jobs.\n"
+                   "https://jobqueue.dask.org/en/latest/generated/dask_jobqueue.LSFCluster.html#dask-jobqueue-lsfcluster",
+    "type": "object",
+    "additionalProperties": True,
+    "default": {},
+    "properties": {
+        "walltime": {
+            "description": "How much time to give the workers before killing them automatically.\n"
+                           "Specified in HH:MM format.\n",
+            "type": "string",
+            "default": "24:00"
+        },
+        "name": {
+            "description": "The name of the dask worker jobs when submitted to SGE.\n",
+            "type": "string",
+            "default": "dask-worker"
+        },
+        "cores": {
+            "description": "How many cores for each 'job', (typically an entire node's worth).\n"
+                           "The 'workers' (processes) in each job will share these cores amongst them.",
+            "type": "integer",
+            "minimum": 1,
+            "default": 16
+        },
+        "memory": {
+            "description": "How much memory to allot to each 'job' (e.g. an entire\n"
+                           "node's worth, if the job reserved all CPUs).\n"
+                           "This memory will be divided up amongst the workers in the job,\n"
+                           "so if you are setting 'cores' to more than one core, you should\n"
+                           "increase this setting accordingly.\n"
+                           "Specified as a string with a suffix for units, e.g. 4GB\n",
+            "type": "string",
+            "default": "15GB" # On the Janelia cluster, each slot gets 15 GB by default. 
+        },
+        "processes": {
+            "description": "How many processes ('workers') per 'job'.\n"
+                           "These processes will collectively share the 'cores' you specify for the job.\n"
+                           "https://jobqueue.dask.org/en/latest/configuration-setup.html#processes",
+            "type": "integer",
+            "minimum": 1,
+            "default": 1
+        },
+        "log-directory": {
+            "description": "Where LSF worker logs (from stdout) will be stored.",
+            "type": "string",
+            "default": "job-logs"
+        },
+        "local-directory": {
+            "description": "Where dask should store temporary files when data spills to disk.\n"
+                           "Note: Will also be used to configure Python's tempfile.tempdir",
+            "type": "string",
+            "default": ""
+        }
+    }
+}
+
 JobQueueSchema = \
 {
     "description": "dask-jobqueue config settings.",
@@ -87,7 +147,8 @@ JobQueueSchema = \
     "additionalProperties": True,
     "default": {},
     "properties": {
-        "lsf": LsfJobSchema
+        "lsf": LsfJobSchema,
+        "sge": SgeJobSchema
     }
 }
 

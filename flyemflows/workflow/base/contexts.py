@@ -226,7 +226,7 @@ class WorkerDaemons:
 
         driver_init_pid = None
         if init_options["also-run-on-driver"]:
-            if self.workflow.config["cluster-type"] != "lsf":
+            if self.workflow.config["cluster-type"] not in ("lsf", "sge"):
                 warnings.warn("Warning: You are using a local-cluster, yet your worker initialization specified 'also-run-on-driver'.")
             driver_init_pid = launch_init_script()
         
@@ -388,6 +388,12 @@ class WorkflowClusterContext:
             from dask_jobqueue import LSFCluster #@UnresolvedImport
             update_lsf_config_with_defaults()
             self.workflow.cluster = LSFCluster(ip='0.0.0.0')
+            self.workflow.cluster.scale(self.workflow.num_workers)
+        if self.config["cluster-type"] == "sge":
+            from dask_jobqueue import SGECluster #@UnresolvedImport
+            # FIXME: Do I need to do this for SGE, too?
+            #update_lsf_config_with_defaults()
+            self.workflow.cluster = SGECluster(ip='0.0.0.0')
             self.workflow.cluster.scale(self.workflow.num_workers)
         elif self.config["cluster-type"] == "local-cluster":
             self.workflow.cluster = LocalCluster(ip='0.0.0.0')
