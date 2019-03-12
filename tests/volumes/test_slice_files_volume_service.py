@@ -1,3 +1,4 @@
+import copy
 import tempfile
 
 import pytest
@@ -31,12 +32,7 @@ def read_slices_setup():
 
 def test_read_full_volume(read_slices_setup):
     volume, config = read_slices_setup
-    try:
-        reader = SliceFilesVolumeService(config)
-    except SliceFilesVolumeService.NoSlicesFoundError:
-        raise RuntimeError("Test data could not be found. "
-                           "It is supposed to be generated when you run the INTEGRATION TESTS. "
-                           "Please run (or at least start) the integration tests first.")
+    reader = SliceFilesVolumeService(config)
     
     assert (reader.bounding_box_zyx == [(0,0,0), volume.shape]).all()
     full_from_slices = reader.get_subvolume(reader.bounding_box_zyx)
@@ -61,7 +57,20 @@ def test_read_slab(read_slices_setup):
     assert (slab_from_slices == slab_from_raw).all()
 
 
-    
+def test_read_translated(read_slices_setup):
+    volume, config = read_slices_setup
+    config = copy.copy(config)
+    config["slice-files"]["slice-xy-offset"] = [50, 70]
+    expected_bb = np.array([(0,0,0), volume.shape]) + [0, 70, 50]
+
+    reader = SliceFilesVolumeService(config)
+    assert (reader.bounding_box_zyx == expected_bb).all()
+
+    full_from_slices = reader.get_subvolume(reader.bounding_box_zyx)
+    assert full_from_slices.shape == volume.shape
+    assert (full_from_slices == volume).all()
+
+
 @pytest.fixture
 def write_slices_setup():
     volume = np.random.randint(100, size=(512, 256, 128), dtype=np.uint8)
@@ -91,6 +100,7 @@ def test_write_full_volume(write_slices_setup):
     written_vol = reader.get_subvolume(writer.bounding_box_zyx)
     assert (written_vol == volume).all()
 
+
 def test_write_slab(write_slices_setup):
     volume, config = write_slices_setup
     writer = SliceFilesVolumeService(config)
@@ -105,5 +115,27 @@ def test_write_slab(write_slices_setup):
     assert (written_vol == volume[64:128]).all()
 
 
+def test_write_translated(write_slices_setup):
+    volume, config = write_slices_setup
+    config = copy.copy(config)
+    
+    xy_offset = [50, 70]
+    bbox = np.array([[0,0,0], volume.shape[::-1]])
+    bbox[:,:-1] += xy_offset
+
+    config["slice-files"]["slice-xy-offset"] = xy_offset
+    config["geometry"]["bounding-box"] = bbox.tolist()
+
+    writer = SliceFilesVolumeService(config)
+    writer.write_subvolume(volume, (0, 70, 50))
+    
+    reader = SliceFilesVolumeService(config)
+    written_vol = reader.get_subvolume(writer.bounding_box_zyx)
+    assert (written_vol == volume).all()
+
+
+
 if __name__ == "__main__":
-    pytest.main(['-s', '--tb=native', '--pyargs', 'tests.volumes.test_slice_files_volume_service'])
+    args = ['-s', '--tb=native', '--pyargs', 'tests.volumes.test_slice_files_volume_service']
+    #args += ['-k', 'test_write_translated']
+    pytest.main(args)
