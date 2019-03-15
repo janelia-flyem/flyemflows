@@ -13,46 +13,79 @@ from distributed.utils import parse_bytes
 from confiddler import dump_config
 from neuclease.util import Timer
 
-def update_lsf_config_with_defaults():
+def update_jobqueue_config_with_defaults(cluster_type):
     """
     Read the jobqueue.lsf configuration and fill in
     missing values for ncpus, mem, and local-directory.
     Also, set tempfile.tempdir according to the 'local-directory' setting.
     """
-    # Must import LSFCluster first, or else the
+    # Must import LSFCluster, SGECluster, etc. first, or else the
     # dask.config data for lsf isn't fully populated yet.
-    from dask_jobqueue import LSFCluster #@UnresolvedImport @UnusedImport
+    if cluster_type == "lsf":
+        _update_lsf_settings()
+    if cluster_type == "sge":
+        _update_sge_settings()
+    if cluster_type == "slurm":
+        _update_slurm_settings()
 
+    _set_local_directory(cluster_type)
+
+def _update_lsf_settings():
+    from dask_jobqueue import LSFCluster #@UnresolvedImport @UnusedImport
     # 'ncpus' is how many CPUs are RESERVED for the LSF job.
     # By default, set it to the number of CPUs the workers will actually use ('cores')
     ncpus = dask.config.get("jobqueue.lsf.ncpus", -1)
-    if ncpus == -1:
+    if not ncpus or ncpus == -1:
         ncpus = dask.config.get("jobqueue.lsf.cores")
         dask.config.set({"jobqueue.lsf.ncpus": ncpus})
 
     # Similar to above, the difference between 'mem' and 'memory' is that the former
     # specifies the memory to reserve in LSF, whereas the latter is actually used
     # by Dask workers to determine when they've exceeded their limits.
-    mem = dask.config.get("jobqueue.lsf.mem", None)
-    if not mem:
+    mem = dask.config.get("jobqueue.lsf.mem", -1)
+    if not mem or mem == -1:
         memory = dask.config.get("jobqueue.lsf.memory", None)
         if memory:
             mem = parse_bytes(memory)
             dask.config.set({"jobqueue.lsf.mem": mem})
 
+def _update_sge_settings():
+    # No settings to change (for now)
+    # job-cpu and job-mem are given suitable defaults if they aren't specified.
+    from dask_jobqueue import SGECluster #@UnresolvedImport @UnusedImport
+
+def _update_slurm_settings():
+    # No settings to change (for now)
+    from dask_jobqueue import SlurmCluster #@UnresolvedImport @UnusedImport
+
+
+def _set_local_directory(cluster_type):
     # This specifies where dask workers will dump cached data
-    local_dir = dask.config.get("jobqueue.lsf.local-directory", None)
-    if not local_dir:
-        user = getpass.getuser()
-        local_dir = f"/scratch/{user}"
-        dask.config.set({"jobqueue.lsf.local-directory": local_dir})
-        
-    # Set tempdir, too.
-    tempfile.tempdir = local_dir
+    local_dir = dask.config.get(f"jobqueue.{cluster_type}.local-directory", None)
+    if local_dir:
+        return
+
+    user = getpass.getuser()
+    local_dir = None
+    for d in [f"/scratch/{user}", f"/tmp/{user}"]:
+        try:
+            os.makedirs(d, exist_ok=True)
+        except OSError:
+            continue
+        else:
+            local_dir = d
+            dask.config.set({f"jobqueue.{cluster_type}.local-directory": local_dir})
+
+            # Set tempdir, too.
+            tempfile.tempdir = local_dir
+            
+            # Forked processes will use this for tempfile.tempdir
+            os.environ['TMPDIR'] = local_dir
+            break
     
-    # Forked processes will use this for tempfile.tempdir
-    os.environ['TMPDIR'] = local_dir
-    
+    if local_dir is None:
+        raise RuntimeError("Could not create a local-directory in any of the standard places.")
+
 
 def dump_dask_config(path):
     """
