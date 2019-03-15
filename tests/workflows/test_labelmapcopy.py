@@ -65,8 +65,10 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
             raw_blocks = fetch_labelmap_voxels(dvid_address, repo_uuid, input_segmentation_name, scaled_box, scale, supervoxels=True, format='raw-response')
             post_labelmap_blocks(dvid_address, repo_uuid, partial_output_segmentation_name, [(0,0,0)], raw_blocks, scale, is_raw=True)
     
-        block = np.random.randint(10, size=(64,64,64), dtype=np.uint64)
+        block = np.random.randint(1_000_000, 1_000_010, size=(64,64,64), dtype=np.uint64)
         post_labelmap_voxels(dvid_address, repo_uuid, partial_output_segmentation_name, (0,128,64), block, 0, downres=True)
+
+    partial_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, partial_output_segmentation_name, [(0,0,0), random_segmentation.shape], supervoxels=True)
     
     template_dir = tempfile.mkdtemp(suffix="labelmapcopy-template")
  
@@ -106,11 +108,11 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
     with StringIO(config_text) as f:
         config = yaml.load(f)
  
-    return template_dir, config, expected_vols, dvid_address, repo_uuid, output_segmentation_name, partial_output_segmentation_name
+    return template_dir, config, expected_vols, partial_vol, dvid_address, repo_uuid, output_segmentation_name, partial_output_segmentation_name
 
 
 def test_labelmapcopy(setup_dvid_segmentation_input, disable_auto_retry):
-    template_dir, _config, expected_vols, dvid_address, repo_uuid, output_segmentation_name, _partial_output_segmentation_name = setup_dvid_segmentation_input
+    template_dir, _config, expected_vols, partial_vol, dvid_address, repo_uuid, output_segmentation_name, _partial_output_segmentation_name = setup_dvid_segmentation_input
 
     execution_dir, workflow = launch_flow(template_dir, 1)
     final_config = workflow.config
@@ -130,7 +132,7 @@ def test_labelmapcopy(setup_dvid_segmentation_input, disable_auto_retry):
 
 
 def test_labelmapcopy_partial(setup_dvid_segmentation_input, disable_auto_retry):
-    template_dir, config, expected_vols, dvid_address, repo_uuid, _output_segmentation_name, partial_output_segmentation_name = setup_dvid_segmentation_input
+    template_dir, config, expected_vols, partial_vol, dvid_address, repo_uuid, _output_segmentation_name, partial_output_segmentation_name = setup_dvid_segmentation_input
     
     config = copy.deepcopy(config)
     config["output"]["dvid"]["segmentation-name"] = partial_output_segmentation_name
@@ -153,8 +155,13 @@ def test_labelmapcopy_partial(setup_dvid_segmentation_input, disable_auto_retry)
         assert (output_vol == expected_vols[scale]).all(), \
             f"Written vol does not match expected for scale {scale}"
 
+    # Any labels NOT in the partial vol had to be written.
+    written_labels = pd.unique(expected_vols[0][expected_vols[0] != partial_vol])
+    assert len(written_labels) > 0, \
+        "This test data was chosen poorly -- there's no difference between the partial and full labels!"
+
     svs = pd.read_csv(f'{execution_dir}/recorded-labels.csv')['sv']
-    assert set(svs) == set(np.unique(expected_vols[0].reshape(-1)))
+    assert set(svs) == set(written_labels)
 
 
 if __name__ == "__main__":
@@ -167,5 +174,5 @@ if __name__ == "__main__":
     
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_labelmapcopy']
-    #args = ['-k', 'labelmapcopy_partial'] + args
+    #args += ['-k', 'labelmapcopy_partial']
     pytest.main(args)
