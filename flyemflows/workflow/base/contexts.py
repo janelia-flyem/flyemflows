@@ -119,9 +119,12 @@ class LocalResourceManager:
             raise RuntimeError(msg)
         
         if server != "driver":
-            if cfg["config"]:
-                msg = ("The resource manager config should only be specified when resource manager 'server' is set to 'driver'."
-                       "(If the resource manager server is already running on a different machine, configure it there.)")
+            # confiddler adds an attribute 'from_default' to indicate that the section
+            # was missing from the user's config and provided from default values.
+            if not hasattr(cfg["config"], 'from_default'):
+                msg = ("The resource manager config should only be specified when resource manager 'server' is set to 'driver'.\n"
+                       "Remove the resource-manager 'config' section from your config file.\n"
+                       "(If the resource manager server is already running on a different machine, configure it there.)\n")
                 raise RuntimeError(msg)
             return None
 
