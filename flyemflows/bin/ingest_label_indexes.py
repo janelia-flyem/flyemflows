@@ -414,7 +414,7 @@ class StatsBatchProcessor:
         self.check_mismatches = check_mismatches
         self.subset_labels = subset_labels
 
-        self.user = os.environ["USER"]
+        self.user = os.environ.get("USER", "unknown")
         self.mod_time = datetime.datetime.now().isoformat()
         
         server, uuid, instance = instance_info

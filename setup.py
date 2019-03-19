@@ -22,7 +22,8 @@ setup( name='flyemflows',
        entry_points={
           'console_scripts': [
               'launchflow = flyemflows.bin.launchflow:main',
-              'init_dvid_bucket = flyemflows.bin.init_dvid_bucket:main'
+              'init_dvid_bucket = flyemflows.bin.init_dvid_bucket:main',
+              'ingest_label_indexes = flyemflows.bin.ingest_label_indexes:main',
           ]
        }
      )
