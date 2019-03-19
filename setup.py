@@ -21,7 +21,8 @@ setup( name='flyemflows',
        package_data={'flyemflows': ['scripts/*']},
        entry_points={
           'console_scripts': [
-              'launchflow = flyemflows.bin.launchflow:main'
+              'launchflow = flyemflows.bin.launchflow:main',
+              'init_dvid_bucket = flyemflows.bin.init_dvid_bucket:main'
           ]
        }
      )
