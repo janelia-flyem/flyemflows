@@ -26,7 +26,9 @@ install:
       wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh;
       bash miniconda.sh -b -p $HOME/miniconda;
     fi
-  - export PATH="$HOME/miniconda/bin:$PATH"
+  - export CONDA_DEFAULT_ENV=base
+  - export CONDA_PREFIX="${HOME}/miniconda"
+  - export PATH="${CONDA_PREFIX}/bin:${PATH}"
   - hash -r
   - conda config --set always_yes yes --set changeps1 no
   - conda config --add channels conda-forge/label/cf201901
@@ -38,4 +40,4 @@ install:
 script:
   - conda build --python=3.6 conda-recipe
   - conda install --use-local --only-deps flyemflows
-  - CONDA_DEFAULT_ENV=base PYTHONPATH=. pytest --tb=native
+  - PYTHONPATH=. pytest --tb=native
