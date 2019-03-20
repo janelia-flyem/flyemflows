@@ -71,7 +71,7 @@ requirements:
     # conda environment with gsutil (and Python 2), and then adds it to your
     # PATH so gsutil is available from the command line (or subprocess.call)
     # [1]: https://github.com/GoogleCloudPlatform/gsutil/issues/29#issuecomment-464244072
-    - gsutil-env
+    #- gsutil-env
 ##
 ## For now, we don't run the tests during the recipe build.
 ##
