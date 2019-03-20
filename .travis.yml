@@ -39,5 +39,6 @@ install:
 
 script:
   - conda build --python=3.6 conda-recipe
+  - conda install -v -v gsutil-env
   - conda install --use-local --only-deps flyemflows
   - PYTHONPATH=. pytest --tb=native
