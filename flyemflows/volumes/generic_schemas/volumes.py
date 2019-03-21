@@ -19,9 +19,7 @@ GrayscaleVolumeSchema = \
 {
     "description": "Describes a grayscale volume (service and geometry).\n"
                    "Only one of these service definitions (e.g. 'hdf5') should be\n"
-                   "listed in the config, and unused ones should be omitted.\n"
-                   "Regardless of service type, the 'geometry' section MUST be listed\n"
-                   "explicitly, even if it is empty.\n",
+                   "listed in the config, and unused ones should be omitted.\n",
     "type": "object",
     "default": {},
     "oneOf": [
@@ -46,7 +44,7 @@ GrayscaleVolumeSchema = \
 SegmentationVolumeSchema = \
 {
     "description": "Describes a segmentation volume source (or destination), \n"
-                   "extents, and preferred access pattern",
+                   "extents, and preferred access pattern.\n",
     "type": "object",
     "required": ["geometry"],
     "default": {},

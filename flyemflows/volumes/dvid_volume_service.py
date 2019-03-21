@@ -103,7 +103,7 @@ DvidServiceSchema = \
             "type": "string",
         },
         "uuid": {
-            "description": "version node for READING segmentation",
+            "description": "version node from dvid",
             "type": "string"
         },
         "create-if-necessary": {
