@@ -1,4 +1,5 @@
 import os
+import tempfile
 import pytest
 
 import zarr
@@ -10,7 +11,8 @@ from flyemflows.volumes import ZarrVolumeService
 
 @pytest.fixture(scope="module")
 def volume_setup():
-    path = "/tmp/test_zarr_service_testvol.zarr"
+    tmpdir = tempfile.mkdtemp()
+    path = f"{tmpdir}/test_zarr_service_testvol.zarr"
     dataset = "/some/volume"
     
     config = {
@@ -46,8 +48,9 @@ def test_read(volume_setup):
 
 
 def test_write(volume_setup):
+    tmpdir = tempfile.mkdtemp()
     config, volume = volume_setup
-    config["zarr"]["path"] = "/tmp/test_zarr_service_testvol_WRITE.zarr"
+    config["zarr"]["path"] = f"{tmpdir}/test_zarr_service_testvol_WRITE.zarr"
     if os.path.exists(config["zarr"]["path"]):
         os.unlink(config["zarr"]["path"])
 

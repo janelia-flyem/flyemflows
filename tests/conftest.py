@@ -98,7 +98,7 @@ def disable_auto_retry():
     finally:
         flyemflows.util._auto_retry.FLYEMFLOWS_DISABLE_AUTO_RETRY = False
 
-@pytest.fixture
+@pytest.fixture(scope='session')
 def random_segmentation():
     """
     Generate a small 'segmentation' with random-ish segment shapes.

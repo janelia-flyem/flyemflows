@@ -80,15 +80,21 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
     return template_dir, config, random_segmentation, dvid_address, repo_uuid, output_segmentation_name
 
 
-@pytest.fixture
-def setup_hdf5_segmentation_input(setup_dvid_repo, random_segmentation):
-    dvid_address, repo_uuid = setup_dvid_repo
-    template_dir = tempfile.mkdtemp(suffix="copysegmentation-from-hdf5-template")
-    
+@pytest.fixture(scope='module')
+def write_hdf5_volume(random_segmentation):
+    template_dir = tempfile.mkdtemp(suffix="copysegmentation-hdf5-volume")
     volume_path = f"{template_dir}/volume.h5"
     with h5py.File(volume_path, 'w') as f:
         f['volume'] = random_segmentation
+    return volume_path, random_segmentation
 
+
+@pytest.fixture
+def setup_hdf5_segmentation_input(setup_dvid_repo, write_hdf5_volume):
+    volume_path, random_segmentation = write_hdf5_volume
+    dvid_address, repo_uuid = setup_dvid_repo
+    template_dir = tempfile.mkdtemp(suffix="copysegmentation-from-hdf5-template")
+    
     output_segmentation_name = 'segmentation-output-from-hdf5'
     
     config_text = textwrap.dedent(f"""\
