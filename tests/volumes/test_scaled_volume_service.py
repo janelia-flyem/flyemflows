@@ -10,11 +10,12 @@ from skimage.util.shape import view_as_blocks
 
 from neuclease.util import box_to_slicing
 
-from flyemflows.volumes import VolumeService, Hdf5VolumeService, ScaledVolumeService
+from flyemflows.volumes import VolumeService, Hdf5VolumeService, ScaledVolumeService, GrayscaleVolumeSchema
+from confiddler import validate
 
 
-@pytest.fixture
-def setup_hdf5_service():
+@pytest.fixture(scope="module")
+def _setup_hdf5_service():
     test_dir = tempfile.mkdtemp()
     test_file = f'{test_dir}/scaled-volume-test.h5'
     
@@ -47,6 +48,15 @@ def setup_hdf5_service():
 
     return RAW_VOLUME_DATA, VOLUME_CONFIG, full_from_h5, h5_reader
 
+# Use the same initialization for all tests (above fixture uses module scope),
+# but pass each test a fresh copy of the config, so that injecting defaults
+# in one test doesn't affect any others.
+@pytest.fixture
+def setup_hdf5_service(_setup_hdf5_service):
+    raw_volume, volume_config, full_from_h5, h5_reader = _setup_hdf5_service
+    volume_config = copy.deepcopy(volume_config)
+    return raw_volume, volume_config, full_from_h5, h5_reader
+
 def test_api(setup_hdf5_service):
     _raw_volume, _volume_config, _full_from_h5, h5_reader = setup_hdf5_service
     scaled_reader = ScaledVolumeService(h5_reader, 0)
@@ -54,6 +64,14 @@ def test_api(setup_hdf5_service):
     assert len(scaled_reader.service_chain) == 2
     assert scaled_reader.service_chain[0] == scaled_reader
     assert scaled_reader.service_chain[1] == h5_reader
+
+def test_no_adapter(setup_hdf5_service):
+    _raw_volume, volume_config, _full_from_h5, _h5_reader = setup_hdf5_service
+    validate(volume_config, GrayscaleVolumeSchema, inject_defaults=True)
+    assert volume_config["rescale-level"] is None
+    reader = VolumeService.create_from_config(volume_config)
+    assert isinstance(reader, Hdf5VolumeService), \
+        "Should not create a ScaledVolumeService adapter at all if rescale-level is null"
 
 def test_full_volume_no_scaling(setup_hdf5_service):
     _raw_volume, _volume_config, full_from_h5, h5_reader = setup_hdf5_service
@@ -72,9 +90,8 @@ def test_full_volume_downsample_1(setup_hdf5_service):
     _raw_volume, volume_config, full_from_h5, h5_reader = setup_hdf5_service
 
     # Scale 1
-    scaled_config = copy.deepcopy(volume_config)
-    scaled_config["rescale-level"] = 1
-    scaled_reader = VolumeService.create_from_config(scaled_config)
+    volume_config["rescale-level"] = 1
+    scaled_reader = VolumeService.create_from_config(volume_config)
     
     assert (scaled_reader.bounding_box_zyx == h5_reader.bounding_box_zyx // 2).all()
     assert (scaled_reader.preferred_message_shape == h5_reader.preferred_message_shape // 2).all()
