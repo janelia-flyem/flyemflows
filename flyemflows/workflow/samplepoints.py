@@ -71,7 +71,7 @@ class SamplePoints(Workflow):
             },
             "rescale-points-to-level": {
                 "description": "Specifies a scale (power of 2) by which to divide the loaded point coordinates before beginning the analysis.\n"
-                               "Typically used if you are applying a 'rescale-level' to your input source.\n"
+                               "Typically used if you are applying a 'rescale-level' adapter to your input source.\n"
                                "Note: The points will appear rescaled in the output file.  The original points are not preserved.\n",
                 "type": "integer",
                 "default": 0

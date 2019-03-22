@@ -94,25 +94,37 @@ class VolumeService(metaclass=ABCMeta):
         else:
             raise RuntimeError( "Unknown service type." )
 
-        if 'labelmap' in volume_config:
-            raise RuntimeError("Bad key for volume service: 'labelmap' -- did you mean 'apply-labelmap'?")
+        for k in ('apply-labelmap', 'transpose-axes', 'rescale-level', 'labelmap'):
+            if k in volume_config:
+                msg = ("Sorry, the expected config schema has changed, and your config appears out-of-date.\n"
+                       "Adapter config settings should now be listed in the 'adapters' section, not at the service top-level.\n"
+                       f"Please create an 'adapters' section, and move '{k}', etc. under it.\n")
+                raise RuntimeError(msg)
 
+        if 'adapters' not in volume_config:
+            return service
+
+        adapter_config = volume_config["adapters"]
+
+        if 'labelmap' in adapter_config:
+            raise RuntimeError("Bad key for volume service: 'labelmap' -- did you mean 'apply-labelmap'?")
+        
         # Wrap with labelmap service
         from . import LabelmappedVolumeService
-        if ("apply-labelmap" in volume_config) and (volume_config["apply-labelmap"]["file-type"] != "__invalid__"):
-            service = LabelmappedVolumeService(service, volume_config["apply-labelmap"])
+        if ("apply-labelmap" in adapter_config) and (adapter_config["apply-labelmap"]["file-type"] != "__invalid__"):
+            service = LabelmappedVolumeService(service, adapter_config["apply-labelmap"])
 
         # Wrap with transpose service
         from . import TransposedVolumeService
-        if ("transpose-axes" in volume_config) and (volume_config["transpose-axes"] != TransposedVolumeService.NO_TRANSPOSE):
-            service = TransposedVolumeService(service, volume_config["transpose-axes"])
+        if ("transpose-axes" in adapter_config) and (adapter_config["transpose-axes"] != TransposedVolumeService.NO_TRANSPOSE):
+            service = TransposedVolumeService(service, adapter_config["transpose-axes"])
 
         # Even if rescale-level == 0, we still wrap in a scaled volumeservice because
         # it enables more 'available-scales'.
         # We only avoid the ScaledVolumeService adapter if rescale-level is None.
         from . import ScaledVolumeService
-        if "rescale-level" in volume_config and volume_config["rescale-level"] is not None:
-            service = ScaledVolumeService(service, volume_config["rescale-level"])
+        if "rescale-level" in adapter_config and adapter_config["rescale-level"] is not None:
+            service = ScaledVolumeService(service, adapter_config["rescale-level"])
 
         return service
 

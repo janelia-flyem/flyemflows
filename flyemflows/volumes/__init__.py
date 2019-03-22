@@ -1,10 +1,12 @@
+#
+# The order these imports is rather important...
+#
 from .generic_schemas.geometry import BoundingBoxSchema, GeometrySchema
 
 from .volume_service import VolumeService, VolumeServiceReader, VolumeServiceWriter
 
-from .transposed_volume_service import TransposedVolumeService, NewAxisOrderSchema
-from .scaled_volume_service import ScaledVolumeService, RescaleLevelSchema
-from .labelmapped_volume_service import LabelmappedVolumeService, LabelMapSchema
+from .adapters import (TransposedVolumeService, NewAxisOrderSchema, ScaledVolumeService, RescaleLevelSchema,
+                       LabelmappedVolumeService, LabelMapSchema, GrayscaleAdapters, SegmentationAdapters)
 
 from .hdf5_volume_service import Hdf5VolumeService, Hdf5ServiceSchema, Hdf5VolumeSchema
 from .brainmaps_volume_service import BrainMapsVolumeServiceReader, BrainMapsServiceSchema
@@ -13,4 +15,4 @@ from .n5_volume_service import N5VolumeServiceReader, N5ServiceSchema
 from .zarr_volume_service import ZarrVolumeService, ZarrServiceSchema, ZarrVolumeSchema
 from .slice_files_volume_service import SliceFilesVolumeService, SliceFilesServiceSchema, SliceFilesVolumeSchema
 
-from .generic_schemas.volumes import GrayscaleVolumeSchema, SegmentationVolumeSchema, SegmentationVolumeListSchema
+from .generic_schemas.volumes import (GrayscaleVolumeSchema, SegmentationVolumeSchema, SegmentationVolumeListSchema)

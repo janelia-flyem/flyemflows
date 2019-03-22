@@ -6,7 +6,7 @@ from dvidutils import LabelMapper
 from confiddler import validate
 
 from .labelmap_utils import LabelMapSchema, load_labelmap
-from . import VolumeServiceWriter
+from .. import VolumeServiceWriter
 
 
 class LabelmappedVolumeService(VolumeServiceWriter):

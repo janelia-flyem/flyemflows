@@ -51,6 +51,8 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
           geometry:
             message-block-shape: [64,64,512]
             bounding-box: [[0,0,100], [256,200,256]]
+          
+          adapters: {{}}
  
         output:
           dvid:
@@ -174,7 +176,7 @@ def test_copysegmentation_from_dvid_to_dvid_with_labelmap(setup_dvid_segmentatio
     expected_vol = volume + 4000
 
     pd.DataFrame({'orig': orig_labels, 'new': new_labels}).to_csv(f"{template_dir}/labelmap.csv", header=True, index=False)
-    config["input"]["apply-labelmap"] = {
+    config["input"]["adapters"]["apply-labelmap"] = {
         "file": "labelmap.csv",
         "file-type": "label-to-body"
     }

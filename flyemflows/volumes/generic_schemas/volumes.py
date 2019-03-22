@@ -1,19 +1,20 @@
 from .. import ( Hdf5ServiceSchema, ZarrServiceSchema,
                  DvidGrayscaleServiceSchema, SliceFilesServiceSchema, N5ServiceSchema,
                  DvidSegmentationServiceSchema, BrainMapsServiceSchema,
-                 NewAxisOrderSchema, RescaleLevelSchema, LabelMapSchema )
+                 GrayscaleAdapters, SegmentationAdapters )
 
 from .geometry import GeometrySchema
 
 # TERMINOLOGY:
 #
 # - Service: Arbitrary source (or sink) of voxels, with no defined bounding box or access pattern
-# - Geometry: Bounding box, access pattern, scale
-# - Volume: Combines both Service with a Geometry (and possibly other properties, such as a labelmap)
+# - Geometry: Bounding box, access pattern, available-scales of the BASE service (before any adapters are applied)
+# - Adatpers: Optional wrapper services to transform the base data.
+# - Volume: Combines a Service with a (base) Geometry, and (optionally) adapters. 
 
 
 #
-# Generic grayscale volume (one service + geometry)
+# Generic grayscale volume (one service + geometry + adapters)
 #
 GrayscaleVolumeSchema = \
 {
@@ -32,14 +33,13 @@ GrayscaleVolumeSchema = \
     ],
     "properties": {
         "geometry": GeometrySchema,
-        "transpose-axes": NewAxisOrderSchema,
-        "rescale-level": RescaleLevelSchema
+        "adapters": GrayscaleAdapters
     }
 }
 
 
 #
-# Generic segmentation volume (one service + geometry)
+# Generic segmentation volume (one service + geometry + geometry)
 #
 SegmentationVolumeSchema = \
 {
@@ -56,9 +56,7 @@ SegmentationVolumeSchema = \
     ],
     "properties": {
         "geometry": GeometrySchema,
-        "transpose-axes": NewAxisOrderSchema,
-        "rescale-level": RescaleLevelSchema,
-        "apply-labelmap": LabelMapSchema
+        "adapters": SegmentationAdapters
     }
 }
 

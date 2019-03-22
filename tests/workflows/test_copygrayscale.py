@@ -102,9 +102,10 @@ def setup_hdf5_grayscale_input(setup_dvid_repo):
             message-block-shape: [64,64,256]
             bounding-box: [[0,0,100], [256,200,256]]
 
-          # Enable multi-scale, since otherwise
-          # Hdf5VolumeService doesn't support it out-of-the box
-          rescale-level: 0
+          adapters:
+            # Enable multi-scale, since otherwise
+            # Hdf5VolumeService doesn't support it out-of-the box
+            rescale-level: 0
 
         output:
           dvid:
@@ -230,9 +231,10 @@ def test_copygrayscale_from_hdf5_to_slices(disable_auto_retry):
             message-block-shape: [64,64,256]
             bounding-box: [[0,0,100], [256,200,256]]
 
-          # Enable multi-scale, since otherwise
-          # Hdf5VolumeService doesn't support it out-of-the box
-          rescale-level: 0
+          adapters:
+            # Enable multi-scale, since otherwise
+            # Hdf5VolumeService doesn't support it out-of-the box
+            rescale-level: 0
 
         output:
           slice-files:

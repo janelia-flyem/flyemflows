@@ -296,8 +296,8 @@ class CopySegmentation(Workflow):
         assert (input_shape == output_shape).all(), \
             "Input bounding box and output bounding box do not have the same dimensions"
 
-        if ("apply-labelmap" in output_config) and (output_config["apply-labelmap"]["file-type"] != "__invalid__"):
-            assert output_config["apply-labelmap"]["apply-when"] == "reading-and-writing", \
+        if ("apply-labelmap" in output_config["adapters"]) and (output_config["adapters"]["apply-labelmap"]["file-type"] != "__invalid__"):
+            assert output_config["adapters"]["apply-labelmap"]["apply-when"] == "reading-and-writing", \
                 "Labelmap will be applied to voxels during pre-write and post-read (due to block padding).\n"\
                 "You cannot use this workflow with non-idempotent labelmaps, unless your data is already perfectly block aligned."
 

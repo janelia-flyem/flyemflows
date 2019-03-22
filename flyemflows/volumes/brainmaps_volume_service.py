@@ -4,7 +4,7 @@ from confiddler import validate
 from dvid_resource_manager.client import ResourceManagerClient
 
 from ..util import auto_retry, replace_default_entries
-from . import VolumeServiceReader, GeometrySchema
+from . import VolumeServiceReader, GeometrySchema, SegmentationAdapters
 from .brainmaps_volume import BrainMapsVolume
 
 BrainMapsServiceSchema = \
@@ -49,7 +49,9 @@ BrainMapsVolumeSchema = \
 #    "additionalProperties": False,
     "properties": {
         "brainmaps": BrainMapsServiceSchema,
-        "geometry": GeometrySchema
+        "geometry": GeometrySchema,
+        "adapters": SegmentationAdapters # Brainmaps supports both segmentation and grayscale.
+                                         # SegmentationAdapters is a superset of GrayscaleAdapters.
     }
 }
 

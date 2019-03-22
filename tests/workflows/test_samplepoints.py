@@ -54,6 +54,7 @@ def setup_samplepoints():
             "geometry": {
                 "message-block-shape": [64,64,256]
             },
+            "adapters": {}
         },
         
         "samplepoints": {
@@ -92,7 +93,7 @@ def test_samplepoints(setup_samplepoints):
 def test_samplepoints_rescale(setup_samplepoints):
     template_dir, config, volume, points_df = setup_samplepoints
     config = copy.copy(config)
-    config["input"]["rescale-level"] = 2
+    config["input"]["adapters"]["rescale-level"] = 2
     config["samplepoints"]["rescale-points-to-level"] = 2
 
     with open(f"{template_dir}/workflow.yaml", 'w') as f:

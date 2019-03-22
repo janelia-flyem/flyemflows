@@ -7,7 +7,7 @@ import pytest
 
 from neuclease.util import box_to_slicing
 from flyemflows.volumes import Hdf5VolumeService, TransposedVolumeService
-from flyemflows.volumes.scaled_volume_service import ScaledVolumeService
+from flyemflows.volumes.adapters.scaled_volume_service import ScaledVolumeService
 
 @pytest.fixture
 def setup_transposed_volume_service():

@@ -2,8 +2,8 @@ import numpy as np
 
 from neuclease.util import box_to_slicing, SparseBlockMask
 
-from ..util import downsample, upsample
-from . import VolumeServiceReader
+from ...util import downsample, upsample
+from .. import VolumeServiceReader
 
 RescaleLevelSchema = \
 {

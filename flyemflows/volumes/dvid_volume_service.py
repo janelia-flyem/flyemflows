@@ -15,7 +15,7 @@ from neuclease.dvid import ( fetch_repo_instances, fetch_instance_info, fetch_vo
                              fetch_sparsevol_coarse_via_labelindex, fetch_mapping )
 
 from ..util import auto_retry, replace_default_entries
-from . import GeometrySchema, VolumeServiceReader, VolumeServiceWriter, NewAxisOrderSchema, RescaleLevelSchema, LabelMapSchema
+from . import GeometrySchema, VolumeServiceReader, VolumeServiceWriter, GrayscaleAdapters, SegmentationAdapters
 
 logger = logging.getLogger(__name__)
 
@@ -187,9 +187,7 @@ DvidGenericVolumeSchema = \
     "properties": {
         "dvid": { "oneOf": [DvidGrayscaleServiceSchema, DvidSegmentationServiceSchema] },
         "geometry": GeometrySchema,
-        "transpose-axes": NewAxisOrderSchema,
-        "rescale-level": RescaleLevelSchema,
-        "apply-labelmap": LabelMapSchema
+        "adapters": GrayscaleAdapters
     }
 }
 
@@ -202,9 +200,7 @@ DvidSegmentationVolumeSchema = \
     "properties": {
         "dvid": DvidSegmentationServiceSchema,
         "geometry": GeometrySchema,
-        "transpose-axes": NewAxisOrderSchema,
-        "rescale-level": RescaleLevelSchema,
-        "apply-labelmap": LabelMapSchema
+        "adapters": SegmentationAdapters
     }
 }
 
@@ -215,7 +211,8 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         validate(volume_config, DvidGenericVolumeSchema, inject_defaults=True)
         
         assert 'apply-labelmap' not in volume_config["dvid"].keys(), \
-            "The apply-labelmap section should be parallel to 'dvid' and 'geometry', not nested within the 'dvid' section!"
+            ("The apply-labelmap section should be in the 'adapters' section, (parallel to 'dvid' and 'geometry'), "
+             "not nested within the 'dvid' section!")
 
         ##
         ## server, uuid

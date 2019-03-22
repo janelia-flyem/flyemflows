@@ -1,7 +1,7 @@
 import logging
 import numpy as np
 
-from . import VolumeServiceReader
+from .. import VolumeServiceReader
 
 from confiddler import flow_style
 

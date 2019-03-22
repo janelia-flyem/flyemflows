@@ -8,7 +8,7 @@ from confiddler import validate
 from neuclease.util import box_to_slicing
 
 from ..util import replace_default_entries
-from . import GeometrySchema, VolumeServiceReader, VolumeServiceWriter, NewAxisOrderSchema, RescaleLevelSchema, LabelMapSchema
+from . import GeometrySchema, VolumeServiceReader, VolumeServiceWriter, SegmentationAdapters
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +60,7 @@ ZarrVolumeSchema = \
     "properties": {
         "zarr": ZarrServiceSchema,
         "geometry": GeometrySchema,
-        "transpose-axes": NewAxisOrderSchema,
-        "rescale-level": RescaleLevelSchema,
-        "apply-labelmap": LabelMapSchema
+        "adapters": SegmentationAdapters
     }
 }
 
@@ -220,7 +218,7 @@ class ZarrVolumeService(VolumeServiceReader, VolumeServiceWriter):
     def get_subvolume(self, box_zyx, scale=0):
         assert scale == 0, \
             ("Zarr volume service only supports scale 0 for now.]\n"
-             "As a workaround, try wrapping in a ScaledVolumeService by adding 'rescale-level: 0' to your config.")
+             "As a workaround, try wrapping in a ScaledVolumeService by adding 'rescale-level: 0' to your 'adapters' config section.")
         return self._dataset[box_to_slicing(*box_zyx)]
     
     def write_subvolume(self, subvolume, offset_zyx, scale=0):

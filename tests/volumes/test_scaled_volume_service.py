@@ -68,7 +68,7 @@ def test_api(setup_hdf5_service):
 def test_no_adapter(setup_hdf5_service):
     _raw_volume, volume_config, _full_from_h5, _h5_reader = setup_hdf5_service
     validate(volume_config, GrayscaleVolumeSchema, inject_defaults=True)
-    assert volume_config["rescale-level"] is None
+    assert volume_config["adapters"]["rescale-level"] is None
     reader = VolumeService.create_from_config(volume_config)
     assert isinstance(reader, Hdf5VolumeService), \
         "Should not create a ScaledVolumeService adapter at all if rescale-level is null"
@@ -88,9 +88,10 @@ def test_full_volume_no_scaling(setup_hdf5_service):
 
 def test_full_volume_downsample_1(setup_hdf5_service):
     _raw_volume, volume_config, full_from_h5, h5_reader = setup_hdf5_service
+    validate(volume_config, GrayscaleVolumeSchema, inject_defaults=True)
 
     # Scale 1
-    volume_config["rescale-level"] = 1
+    volume_config["adapters"]["rescale-level"] = 1
     scaled_reader = VolumeService.create_from_config(volume_config)
     
     assert (scaled_reader.bounding_box_zyx == h5_reader.bounding_box_zyx // 2).all()
