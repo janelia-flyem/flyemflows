@@ -16,6 +16,8 @@ from neuclease.dvid import ( fetch_repo_instances, fetch_instance_info, fetch_vo
 
 from ..util import auto_retry, replace_default_entries
 from . import GeometrySchema, VolumeServiceReader, VolumeServiceWriter, GrayscaleAdapters, SegmentationAdapters
+from neuclease.dvid.labelmap._labelindex import fetch_labelindex
+from pylint.checkers.utils import is_super
 
 logger = logging.getLogger(__name__)
 
@@ -601,19 +603,16 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         If the ``self.supervoxels`` is True, the labels are grouped
         by body before fetching the labelindexes,
         to avoid fetching the same labelindexes more than once.
-        (The implementation of ``fetch_sparsevol_coarse_via_labelindex()``
-        avoids fetching duplicate labelindexes when handling supervoxels
-        that belong to the same body.)
         """
         brick_shape = self.preferred_message_shape
-        groups_and_coords = self.sparse_brick_coords_for_labels(labels)
-        if len(groups_and_coords) == 0:
+        bodies_and_coords = self.sparse_brick_indices_for_labels(labels)
+        if len(bodies_and_coords) == 0:
             empty_box = np.array([self.bounding_box_zyx[0], self.bounding_box_zyx[0]])
             empty_mask = np.zeros((0,)*len(empty_box[0]), dtype=bool)
             return SparseBlockMask(empty_mask, empty_box, brick_shape)
             
-        all_coords = np.concatenate( [kv[1] for kv in groups_and_coords] )
-        coords_df = pd.DataFrame( all_coords )
+        coords_df = pd.concat( [kv[1] for kv in bodies_and_coords] )
+        coords_df = coords_df[['z', 'y', 'x']]
         coords_df.drop_duplicates(['z', 'y', 'x'], inplace=True)
         coords = coords_df[['z', 'y', 'x']].values
         
@@ -630,56 +629,86 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         return sbm
 
 
-    def sparse_brick_coords_for_labels(self, labels):
+    def sparse_brick_indices_for_labels(self, labels):
         """
+        Return a list of ``[(body, coords_df)]`` indicating the brick
+        indices (not coordinates) that encompass the given labels.
+        
+        Args:
+            labels:
+                A list of body IDs (if ``self.supervoxels`` is False),
+                or supervoxel IDs (if ``self.supervoxels`` is True).
+        Returns:
+            list of ``[(body, coords_df), ...]``,
+            where body is a body ID (regardless of ``self.supervoxels``),
+            and coords_df is a DataFrame with columns ``[z, y, x, sv, body]``,
+            where `z,y,x` are brick indices (not coordinates).
+            There are no duplicate brick coordinates within a given ``coords_df``,
+            but there may be duplicates among different ``coords_df`` items.
         """
         labels = set(labels)
         is_supervoxels = self.supervoxels
         brick_shape = self.preferred_message_shape
-        blocks_per_brick = brick_shape // self.block_width
+        assert (brick_shape % self.block_width == 0).all(), \
+            ("Brick shape ('preferred-message-shape') must be a multiple of the "
+             f"block width ({self.block_width}) in all dimensions, not {brick_shape}")
+
+        bad_labels = []
 
         if is_supervoxels:
             # Group by body
             mapping = fetch_mapping(*self.instance_triple, list(labels))
-            label_groups = list(mapping.reset_index().groupby('body').agg({'sv': list})['sv'])
-        else:
-            # Each body is its own group
-            label_groups = [[label] for label in labels]
+            bad_svs = mapping[mapping == 0]
+            bad_labels.extend( bad_svs.index.tolist() )
 
-        def fetch_coarse_and_divide(label_group):
+            mapping = mapping[mapping != 0]
+            grouped_svs = mapping.reset_index().groupby('body').agg({'sv': list})['sv']
+            bodies_and_svs = grouped_svs.to_dict()
+        else:
+            # No supervoxel filtering
+            bodies_and_svs = {label: None for label in labels}
+
+        def fetch_brick_coords(body, supervoxel_subset):
             """
-            Fetch the coarse sparsevol for the label and return a pair of
-            (label, coords), where coords is a record array
-            with columns [z,y,x,label], and z,y,x have been converted to
-            brick indices (not block indicies).
+            Fetch the block coordinates for the given body,
+            filter them for the given supervoxels (if any),
+            and convert the block coordinates to brick coordinates.
             """
+            assert is_supervoxels or supervoxel_subset is None
+            supervoxel_subset = set(supervoxel_subset)
             try:
                 mgr = self.resource_manager_client
                 with mgr.access_context(self.server, True, 1, 1):
-                    coords = fetch_sparsevol_coarse_via_labelindex(*self.instance_triple, label_group, is_supervoxels)
-                    if len(coords) == 0:
-                        return (label_group, None)
-                    coords //= blocks_per_brick
-                    coords = pd.DataFrame(coords, columns=['z', 'y', 'x'], dtype=np.int32).drop_duplicates()
-                return (label_group, coords.to_records(index=False))
+                    coords_df = fetch_labelindex(*self.instance_triple, body, 'pandas').blocks
+                    if len(coords_df) == 0:
+                        return (body, None)
+                    
+                    if is_supervoxels:
+                        coords_df = coords_df.query('sv in @supervoxel_subset').copy()
+
+                    coords_df[['z', 'y', 'x']] //= brick_shape
+                    coords_df['body'] = np.uint64(body)
+                    coords_df.drop_duplicates(inplace=True)
+                return (body, coords_df)
             except HTTPError as ex:
                 if (ex.response is not None and ex.response.status_code == 404):
-                    return (label_group, None)
+                    return (body, None)
                 raise
             except RuntimeError as ex:
                 if 'does not map to any body' in str(ex):
-                    return (label_group, None)
+                    return (body, None)
                 raise
 
-        with Timer(f"Fetching coarse sparsevols for {len(labels)} labels ({len(label_groups)} groups)", logger=logger):
+        with Timer(f"Fetching coarse sparsevols for {len(labels)} labels ({len(bodies_and_svs)} bodies)", logger=logger):
             import dask.bag as db
-            label_groups = db.from_sequence(label_groups)
-            groups_and_coords = label_groups.map(fetch_coarse_and_divide).compute()
+            bodies_and_coords = db.from_sequence(bodies_and_svs.items()).starmap(fetch_brick_coords).compute()
 
-        bad_labels = []
-        for label_group, coords in groups_and_coords:
-            if coords is None:
-                bad_labels.extend(label_group)
+        for body, coords_df in bodies_and_coords:
+            if coords_df is None:
+                if is_supervoxels:
+                    bad_labels.extend( bodies_and_svs[body] )
+                else:
+                    bad_labels.append(body)
     
         if bad_labels:
             name = 'sv' if is_supervoxels else 'body'
@@ -692,7 +721,7 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             logger.warning(msg)
 
             # Drop null groups
-            groups_and_coords = list( filter(lambda k_v: k_v[1] is not None, groups_and_coords) )
+            bodies_and_coords = list( filter(lambda k_v: k_v[1] is not None, bodies_and_coords) )
 
-        return groups_and_coords
+        return bodies_and_coords
 
