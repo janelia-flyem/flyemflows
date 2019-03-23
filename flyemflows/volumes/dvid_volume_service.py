@@ -510,7 +510,12 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
                     return fetch_raw(self._server, self._uuid, instance_name, box_zyx, throttle)
 
         except Exception as ex:
-            # In certain cluster scenarios, the 'raise ... from ex' traceback doesn't get fully transmitted to the driver.
+            # In cluster scenarios, a chained 'raise ... from ex' traceback
+            # doesn't get fully transmitted to the driver,
+            # so we simply append this extra info to the current exception
+            # rather than using exception chaining. 
+            # Also log it now so it at least appears in the worker log.
+            # See: https://github.com/dask/dask/issues/4384
             import traceback, io
             sio = io.StringIO()
             traceback.print_exc(file=sio)
@@ -518,7 +523,9 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
 
             host = socket.gethostname()
             msg = f"Host {host}: Failed to fetch subvolume: box_zyx = {box_zyx.tolist()}"
-            raise RuntimeError(msg) from ex
+            
+            ex.args += (msg,)
+            raise
         
     # Two-levels of auto-retry:
     # 1. Auto-retry up to three time for any reason.
@@ -565,7 +572,12 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
                               throttle=throttle, mutate=not self.disable_indexing )
 
         except Exception as ex:
-            # In certain cluster scenarios, the 'raise ... from ex' traceback doesn't get fully transmitted to the driver.
+            # In cluster scenarios, a chained 'raise ... from ex' traceback
+            # doesn't get fully transmitted to the driver,
+            # so we simply append this extra info to the current exception
+            # rather than using exception chaining. 
+            # Also log it now so it at least appears in the worker log.
+            # See: https://github.com/dask/dask/issues/4384
             import traceback, io
             sio = io.StringIO()
             traceback.print_exc(file=sio)
@@ -573,7 +585,9 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
 
             host = socket.gethostname()
             msg = f"Host {host}: Failed to write subvolume: offset_zyx = {offset_zyx.tolist()}, shape = {subvolume.shape}"
-            raise RuntimeError(msg) from ex
+            
+            ex.args += (msg,)
+            raise
 
 
     def sparse_block_mask_for_labels(self, labels):
