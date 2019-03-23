@@ -605,6 +605,34 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         avoids fetching duplicate labelindexes when handling supervoxels
         that belong to the same body.)
         """
+        brick_shape = self.preferred_message_shape
+        groups_and_coords = self.sparse_brick_coords_for_labels(labels)
+        if len(groups_and_coords) == 0:
+            empty_box = np.array([self.bounding_box_zyx[0], self.bounding_box_zyx[0]])
+            empty_mask = np.zeros((0,)*len(empty_box[0]), dtype=bool)
+            return SparseBlockMask(empty_mask, empty_box, brick_shape)
+            
+        all_coords = np.concatenate( [kv[1] for kv in groups_and_coords] )
+        coords_df = pd.DataFrame( all_coords )
+        coords_df.drop_duplicates(['z', 'y', 'x'], inplace=True)
+        coords = coords_df[['z', 'y', 'x']].values
+        
+        min_coord = coords.min(axis=0)
+        max_coord = coords.max(axis=0)
+        mask_box = np.array((min_coord, 1+max_coord))
+        mask_shape = mask_box[1] - mask_box[0]
+        mask = np.zeros(mask_shape, dtype=bool)
+
+        coords -= mask_box[0]
+        mask[(*coords.transpose(),)] = True
+
+        sbm = SparseBlockMask(mask, brick_shape*mask_box, brick_shape)
+        return sbm
+
+
+    def sparse_brick_coords_for_labels(self, labels):
+        """
+        """
         labels = set(labels)
         is_supervoxels = self.supervoxels
         brick_shape = self.preferred_message_shape
@@ -666,25 +694,5 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             # Drop null groups
             groups_and_coords = list( filter(lambda k_v: k_v[1] is not None, groups_and_coords) )
 
-        if len(groups_and_coords) == 0:
-            empty_box = np.array([self.bounding_box_zyx[0], self.bounding_box_zyx[0]])
-            empty_mask = np.zeros((0,)*len(empty_box[0]), dtype=bool)
-            return SparseBlockMask(empty_mask, empty_box, brick_shape)
-            
-        all_coords = np.concatenate( [kv[1] for kv in groups_and_coords] )
-        coords_df = pd.DataFrame( all_coords )
-        coords_df.drop_duplicates(['z', 'y', 'x'], inplace=True)
-        coords = coords_df[['z', 'y', 'x']].values
-        
-        min_coord = coords.min(axis=0)
-        max_coord = coords.max(axis=0)
-        mask_box = np.array((min_coord, 1+max_coord))
-        mask_shape = mask_box[1] - mask_box[0]
-        mask = np.zeros(mask_shape, dtype=bool)
-
-        coords -= mask_box[0]
-        mask[(*coords.transpose(),)] = True
-
-        sbm = SparseBlockMask(mask, brick_shape*mask_box, brick_shape)
-        return sbm
+        return groups_and_coords
 
