@@ -629,6 +629,93 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         return sbm
 
 
+    def sparse_brick_indices_for_label_pairs(self, label_pairs):
+        """
+        Given a list of label pairs, determine which bricks in
+        the volume contain both labels from at least one of the given pairs.
+        
+        If you're interested in examining adjacencies between
+        pre-determined pairs of bodies (or supervoxels),
+        this function tells you which bricks contain both labels in the pair,
+        and thus might encompass the coordinates at which the labels are adjacent.
+        
+        Args:
+            label_pairs:
+                array of shape (N,2) listing the pairs of labels you're interested in.
+        
+        Returns:
+            DataFrame with columns ``[z, y, x, group, label]``,
+            where ``[z, y, x]`` are brick indexes, not full-scale coordinates.
+            Note that duplicate brick coordinates will be listed
+            (one for each label+pair combination present in the brick).
+        """
+        label_pairs = np.asarray(label_pairs)
+        label_groups_df = pd.DataFrame({'label': label_pairs.transpose().reshape(-1)})
+        label_groups_df['group'] = np.arange(label_pairs.size, dtype=np.int32)
+        return self.sparse_brick_indices_for_label_groups(label_groups_df, 2)
+
+
+    def sparse_brick_indices_for_label_groups(self, label_groups_df, min_subset_size=2):
+        """
+        Given a set of label groups, determine which bricks in
+        the volume contain at least N labels from any group (or groups).
+        
+        For instance, suppose you have two groups of labels [1,2,3], [4,5,6] and you're only
+        interested in those bricks which contain at least two labels from one (or both)
+        of those groups.  A brick that contains only labels [1,4] is not of interest,
+        but a brick containing [1,3] is of interest, and so is a brick containing [5,6],
+        or [1,2,4,5] etc.
+        
+        Args:
+            label_groups_df:
+                DataFrame with columns ['label', 'group'],
+                where the labels are either body IDs or supervoxel IDs
+                (depending on ``self.supervoxels``), and the group IDs
+                are arbitrary integers.
+            
+            min_subset_size:
+                The minimum number of labels (N) which must be present from any
+                single group to qualify the brick for inclusion in the results.
+        
+        Returns:
+            DataFrame with columns ``[z, y, x, group, label]``,
+            where ``[z, y, x]`` are brick indexes, not full-scale coordinates.
+            Note that duplicate brick coordinates will be listed
+            (one for each label+group combination present in the brick).
+        """
+        assert isinstance(label_groups_df, pd.DataFrame)
+        assert label_groups_df.columns.tolist() == ['label', 'group']
+        assert min_subset_size >= 1
+        all_labels = label_groups_df['label'].drop_duplicates()
+        bodies_and_coords = self.sparse_brick_indices_for_labels(all_labels)
+        if len(bodies_and_coords) == 0:
+            raise RuntimeError("Could not find bricks for any of the given labels")
+
+        coords_df = pd.concat( [kv[1] for kv in bodies_and_coords] )
+        if self.supervoxels:
+            coords_df['label'] = coords_df['body']
+        else:
+            coords_df['label'] = coords_df['sv']
+
+        coords_df = coords_df[['z', 'y', 'x', 'label']]
+        coords_df.drop_duplicates(inplace=True)
+        combined_df = coords_df.merge(label_groups_df, 'inner', 'label')
+        combined_df = combined_df[['z', 'y', 'x', 'group', 'label']]
+
+        if min_subset_size == 1:
+            return combined_df
+        
+        # Count the number of labels per group in each block
+        labelcounts = combined_df.groupby(['z', 'y', 'x', 'group'], as_index=False).agg('size')
+        labelcounts = labelcounts.rename(columns={'label', 'labelcount'})
+        
+        # Keep brick/group combinations that have enough labels.
+        brick_groups_to_keep = labelcounts.query('labelcount >= @min_subset_size')['z', 'y', 'x', 'group']
+        filtered_df = combined_df.merge(brick_groups_to_keep, 'inner', ['z', 'y', 'x', 'group'])
+        assert filtered_df.columns.tolist() == ['z', 'y', 'x', 'group', 'label']
+        return filtered_df
+        
+
     def sparse_brick_indices_for_labels(self, labels):
         """
         Return a list of ``[(body, coords_df)]`` indicating the brick
@@ -643,7 +730,7 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             where body is a body ID (regardless of ``self.supervoxels``),
             and coords_df is a DataFrame with columns ``[z, y, x, sv, body]``,
             where `z,y,x` are brick indices (not coordinates).
-            There are no duplicate brick coordinates within a given ``coords_df``,
+            There are no duplicate brick indices within a given ``coords_df``,
             but there may be duplicates among different ``coords_df`` items.
         """
         labels = set(labels)
