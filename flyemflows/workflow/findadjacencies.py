@@ -235,105 +235,23 @@ class FindAdjacencies(Workflow):
 
 
     def init_sparseblockmask(self, volume_service, subset_labels, subset_edges):
-        if not isinstance(volume_service.base_service, DvidVolumeService):
+        if len(subset_labels) == 0 and len(subset_edges) == 0:
             return None
-        
-        if not isinstance(volume_service, DvidVolumeService):
-            logger.warning("Fetching all bricks in the volume -- currently, sparse fetching only "
-                           "works for raw dvid volumes (not scaled or transposed ones)")
+
+        try:
+            if len(subset_labels) > 0:
+                sbm = volume_service.sparse_block_mask_for_labels(subset_labels)
+                return sbm
+            elif len(subset_edges) > 0:
+                brick_shape = volume_service.preferred_message_shape 
+                coords_df = volume_service.sparse_brick_coords_for_label_pairs(subset_edges)
+                lowres_coords = coords_df[['z', 'y', 'x']] // brick_shape
+                return SparseBlockMask.create_from_lowres_coords(lowres_coords.values, brick_shape)
+            else:
+                raise AssertionError("Shouldn't be here.")
+        except NotImplementedError:
+            logger.warning("The input source does not support sparse label fetching, so the entire volume will be read.")
             return None
-    
-        labels = set()
-        if len(subset_labels) != 0:
-            labels |= subset_labels
-        
-        if len(subset_edges) != 0:
-            labels |= set(pd.unique(subset_edges[['label_a', 'label_b']].values.reshape(-1)))
-    
-        if not labels:
-            return None
-    
-        is_supervoxels = volume_service.supervoxels
-        brick_shape = volume_service.preferred_message_shape
-        blocks_per_brick = brick_shape // 64
-
-        mgr = self.resource_mgr_client
-        def fetch_coarse_and_divide(label):
-            """
-            Fetch the coarse sparsevol for the label and return a pair of
-            (label, coords), where coords is a record array
-            with columns [z,y,x,label], and z,y,x have been converted to
-            brick indices (not block indicies).
-            """
-            try:
-                with mgr.access_context(volume_service.server, True, 1, 1):
-                    coords = fetch_sparsevol_coarse_via_labelindex(*volume_service.instance_triple, label, is_supervoxels)
-                    coords //= blocks_per_brick
-                    coords = pd.DataFrame(coords, columns=['z', 'y', 'x'], dtype=np.int32).drop_duplicates()
-                    coords['label'] = np.uint64(label)
-                return (label, coords.to_records(index=False))
-            except HTTPError as ex:
-                if (ex.response is not None and ex.response.status_code == 404):
-                    return (label, None)
-                raise
-
-        with Timer(f"Fetching coarse sparsevols for {len(labels)} labels", logger=logger):
-            labels = db.from_sequence(labels)
-            labels_and_coords = labels.map(fetch_coarse_and_divide).compute()
-
-        bad_labels = []
-        for label, coords in labels_and_coords:
-            if coords is None:
-                bad_labels.append(label)
-    
-        if bad_labels:
-            logger.warning(f"Could not obtain coarse sparsevol for {len(bad_labels)} labels: {bad_labels}")
-            labels_and_coords = list( filter(lambda k_v: k_v[1] is not None, labels_and_coords) )
-    
-        all_coords = np.concatenate( [kv[1] for kv in labels_and_coords] )
-        coords_df = pd.DataFrame( all_coords )
-        
-        with Timer(f"Constructing SparseBlockMask from {len(coords_df)} rows", logger=logger):
-            if len(subset_edges) > 0:
-                with Timer(f"Generating combinations", logger):
-                    # We need to compute the set of all possible
-                    # label (sorted) pairs from every block we found.
-                    # Start by computing the (sorted) list of labels in every block.
-                    coords_df = coords_df.sort_values(['z', 'y', 'x', 'label'])
-
-                    # Compute all pairwise combinations of labels within each block.
-                    # This is achieved via merging coords_df with itself, and then dropping the duplicates.
-                    coords_df = coords_df.merge(coords_df, 'inner', ['z', 'y', 'x'], suffixes=['_a', '_b'])
-                    coords_df = coords_df.query('label_a != label_b').copy()
-                    swap_df_cols(coords_df, None, coords_df.eval('label_a > label_b'), ['_a', '_b'])
-                    coords_df.drop_duplicates(['z', 'y', 'x', 'label_a', 'label_b'], inplace=True)
-
-                with Timer(f"Filtering {len(coords_df)} pairs", logger):
-                    # Filter out pair combinations found in the blocks that
-                    # aren't of interest (not mentioned in subset_edges)
-                    subset_pairs_df = coords_df.merge(subset_edges, 'inner', ['label_a', 'label_b'])
-                    subset_coords = subset_pairs_df[['z', 'y', 'x']].drop_duplicates().values
-
-                logger.info(f"After filtering, {len(subset_coords)} pairs remain")
-    
-            elif len(subset_labels) > 0:
-                sizes = coords_df.groupby(['z', 'y', 'x'], sort=False).size()
-                sizes.name = 'label_count'
-                subset_coords = sizes.reset_index().query('label_count >= 2')
-                subset_coords = subset_coords[['z', 'y', 'x']].values
-                
-            min_coord = subset_coords.min(axis=0)
-            max_coord = subset_coords.max(axis=0)
-            mask_box = np.array((min_coord, 1+max_coord))
-            mask_shape = mask_box[1] - mask_box[0]
-            mask = np.zeros(mask_shape, dtype=bool)
-
-            subset_coords -= mask_box[0]
-            mask[(*subset_coords.transpose(),)] = True
-
-            sbm = SparseBlockMask(mask, brick_shape*mask_box, brick_shape)
-            return sbm
-
 
 def find_adjacencies_in_brick(brick, subset_bodies=[], subset_requirement=1, subset_edges=[], find_closest=False):
     """
@@ -346,7 +264,7 @@ def find_adjacencies_in_brick(brick, subset_bodies=[], subset_requirement=1, sub
         If the brick contains no edges at all (other than edges to label 0), return None.
         
         Otherwise, returns pd.DataFrame with columns:
-            [label_a, label_b, forwardness, z, y, x, axis, edge_area, distance].
+            [label_a, label_b, forwardness, z, y, x, axis, edge_area, distance]. # fixme
         
         where label_a < label_b,
         'axis' indicates which axis the edge crosses at the chosen coordinate,
