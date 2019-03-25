@@ -635,8 +635,8 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             (one for each label+pair combination present in the brick).
         """
         label_pairs = np.asarray(label_pairs)
-        label_groups_df = pd.DataFrame({'label': label_pairs.transpose().reshape(-1)})
-        label_groups_df['group'] = np.arange(label_pairs.size, dtype=np.int32)
+        label_groups_df = pd.DataFrame({'label': label_pairs.reshape(-1)})
+        label_groups_df['group'] = np.arange(label_pairs.size, dtype=np.int32) // 2
         return self.sparse_brick_coords_for_label_groups(label_groups_df, 2)
 
 
@@ -681,11 +681,11 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             return combined_df
         
         # Count the number of labels per group in each block
-        labelcounts = combined_df.groupby(['z', 'y', 'x', 'group'], as_index=False).agg('size')
-        labelcounts = labelcounts.rename(columns={'label', 'labelcount'})
+        labelcounts = combined_df.groupby(['z', 'y', 'x', 'group'], as_index=False).agg('count')
+        labelcounts = labelcounts.rename(columns={'label': 'labelcount'})
         
         # Keep brick/group combinations that have enough labels.
-        brick_groups_to_keep = labelcounts.query('labelcount >= @min_subset_size')['z', 'y', 'x', 'group']
+        brick_groups_to_keep = labelcounts.query('labelcount >= @min_subset_size')[['z', 'y', 'x', 'group']]
         filtered_df = combined_df.merge(brick_groups_to_keep, 'inner', ['z', 'y', 'x', 'group'])
         assert filtered_df.columns.tolist() == ['z', 'y', 'x', 'group', 'label']
         return filtered_df
