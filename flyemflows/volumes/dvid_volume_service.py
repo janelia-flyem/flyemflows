@@ -604,32 +604,17 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         by body before fetching the labelindexes,
         to avoid fetching the same labelindexes more than once.
         """
-        brick_shape = self.preferred_message_shape
-        bodies_and_coords = self.sparse_brick_indices_for_labels(labels)
-        if len(bodies_and_coords) == 0:
-            empty_box = np.array([self.bounding_box_zyx[0], self.bounding_box_zyx[0]])
-            empty_mask = np.zeros((0,)*len(empty_box[0]), dtype=bool)
-            return SparseBlockMask(empty_mask, empty_box, brick_shape)
-            
-        coords_df = pd.concat( [kv[1] for kv in bodies_and_coords] )
-        coords_df = coords_df[['z', 'y', 'x']]
+        coords_df = self.sparse_brick_coords_for_labels(labels)
         coords_df.drop_duplicates(['z', 'y', 'x'], inplace=True)
-        coords = coords_df[['z', 'y', 'x']].values
         
-        min_coord = coords.min(axis=0)
-        max_coord = coords.max(axis=0)
-        mask_box = np.array((min_coord, 1+max_coord))
-        mask_shape = mask_box[1] - mask_box[0]
-        mask = np.zeros(mask_shape, dtype=bool)
+        brick_shape = self.preferred_message_shape
+        coords_df[['z', 'y', 'x']] //= brick_shape
 
-        coords -= mask_box[0]
-        mask[(*coords.transpose(),)] = True
-
-        sbm = SparseBlockMask(mask, brick_shape*mask_box, brick_shape)
-        return sbm
+        coords = coords_df[['z', 'y', 'x']].values
+        return SparseBlockMask.create_from_lowres_coords(coords, brick_shape)
 
 
-    def sparse_brick_indices_for_label_pairs(self, label_pairs):
+    def sparse_brick_coords_for_label_pairs(self, label_pairs):
         """
         Given a list of label pairs, determine which bricks in
         the volume contain both labels from at least one of the given pairs.
@@ -645,17 +630,17 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         
         Returns:
             DataFrame with columns ``[z, y, x, group, label]``,
-            where ``[z, y, x]`` are brick indexes, not full-scale coordinates.
+            where ``[z, y, x]`` are brick coordinates (starting corners).
             Note that duplicate brick coordinates will be listed
             (one for each label+pair combination present in the brick).
         """
         label_pairs = np.asarray(label_pairs)
         label_groups_df = pd.DataFrame({'label': label_pairs.transpose().reshape(-1)})
         label_groups_df['group'] = np.arange(label_pairs.size, dtype=np.int32)
-        return self.sparse_brick_indices_for_label_groups(label_groups_df, 2)
+        return self.sparse_brick_coords_for_label_groups(label_groups_df, 2)
 
 
-    def sparse_brick_indices_for_label_groups(self, label_groups_df, min_subset_size=2):
+    def sparse_brick_coords_for_label_groups(self, label_groups_df, min_subset_size=2):
         """
         Given a set of label groups, determine which bricks in
         the volume contain at least N labels from any group (or groups).
@@ -687,18 +672,8 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         assert label_groups_df.columns.tolist() == ['label', 'group']
         assert min_subset_size >= 1
         all_labels = label_groups_df['label'].drop_duplicates()
-        bodies_and_coords = self.sparse_brick_indices_for_labels(all_labels)
-        if len(bodies_and_coords) == 0:
-            raise RuntimeError("Could not find bricks for any of the given labels")
+        coords_df = self.sparse_brick_coords_for_labels(all_labels)
 
-        coords_df = pd.concat( [kv[1] for kv in bodies_and_coords] )
-        if self.supervoxels:
-            coords_df['label'] = coords_df['body']
-        else:
-            coords_df['label'] = coords_df['sv']
-
-        coords_df = coords_df[['z', 'y', 'x', 'label']]
-        coords_df.drop_duplicates(inplace=True)
         combined_df = coords_df.merge(label_groups_df, 'inner', 'label')
         combined_df = combined_df[['z', 'y', 'x', 'group', 'label']]
 
@@ -716,22 +691,17 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         return filtered_df
         
 
-    def sparse_brick_indices_for_labels(self, labels):
+    def sparse_brick_coords_for_labels(self, labels):
         """
-        Return a list of ``[(body, coords_df)]`` indicating the brick
-        indices (not coordinates) that encompass the given labels.
+        Return a DataFrame indicating the brick
+        coordinates (starting corner) that encompass the given labels.
         
         Args:
             labels:
                 A list of body IDs (if ``self.supervoxels`` is False),
                 or supervoxel IDs (if ``self.supervoxels`` is True).
         Returns:
-            list of ``[(body, coords_df), ...]``,
-            where body is a body ID (regardless of ``self.supervoxels``),
-            and coords_df is a DataFrame with columns ``[z, y, x, sv, body]``,
-            where `z,y,x` are brick indices (not coordinates).
-            There are no duplicate brick indices within a given ``coords_df``,
-            but there may be duplicates among different ``coords_df`` items.
+            DataFrame with columns [z,y,x,label]
         """
         labels = set(labels)
         is_supervoxels = self.supervoxels
@@ -810,5 +780,16 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             # Drop null groups
             bodies_and_coords = list( filter(lambda k_v: k_v[1] is not None, bodies_and_coords) )
 
-        return bodies_and_coords
+        if len(bodies_and_coords) == 0:
+            raise RuntimeError("Could not find bricks for any of the given labels")
+
+        coords_df = pd.concat( [kv[1] for kv in bodies_and_coords] )
+        if self.supervoxels:
+            coords_df['label'] = coords_df['body']
+        else:
+            coords_df['label'] = coords_df['sv']
+
+        coords_df.drop_duplicates(['z', 'y', 'x', 'label'], inplace=True)
+        coords_df[['z', 'y', 'x']] *= brick_shape
+        return coords_df[['z', 'y', 'x', 'label']]
 
