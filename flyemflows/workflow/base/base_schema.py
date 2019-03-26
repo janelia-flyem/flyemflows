@@ -1,5 +1,5 @@
 from dvid_resource_manager.server import DEFAULT_CONFIG as DEFAULT_RESOURCE_MANAGER_CONFIG
-
+from .dask_schema import JobQueueSchema
 
 EnvironmentVariablesSchema = \
 {
@@ -118,6 +118,9 @@ WorkerInitSchema = \
     }
 }
 
+JOBQUEUE_CLUSTERS = ["lsf", "sge", "slurm"]
+assert set(JobQueueSchema["properties"].keys()) == set(JOBQUEUE_CLUSTERS)
+
 BaseSchema = \
 {
     "type": "object",
@@ -135,7 +138,7 @@ BaseSchema = \
             "description": "Whether or not to use an LSF cluster or a local cluster.\n"
                            "Choices: lsf, local-cluster, synchronous, processes",
             "type": "string",
-            "enum": ["lsf", "local-cluster", "synchronous", "processes"]
+            "enum": [*JOBQUEUE_CLUSTERS, "local-cluster", "synchronous", "processes"]
             # No default
         },
         "resource-manager": ResourceManagerSchema,

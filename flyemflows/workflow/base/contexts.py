@@ -35,7 +35,8 @@ import confiddler.json as json
 
 from ...util import get_localhost_ip_address, kill_if_running, extract_ip_from_link, construct_ganglia_link
 from ...util.lsf import construct_rtm_url, get_job_submit_time
-from ...util.dask_util import update_lsf_config_with_defaults, dump_dask_config, DebugClient
+from ...util.dask_util import update_jobqueue_config_with_defaults, dump_dask_config, DebugClient
+from .base_schema import JOBQUEUE_CLUSTERS
 
 logger = logging.getLogger(__name__)
 USER = getpass.getuser()
@@ -229,7 +230,7 @@ class WorkerDaemons:
 
         driver_init_pid = None
         if init_options["also-run-on-driver"]:
-            if self.workflow.config["cluster-type"] != "lsf":
+            if self.workflow.config["cluster-type"] not in ("lsf", "sge"):
                 warnings.warn("Warning: You are using a local-cluster, yet your worker initialization specified 'also-run-on-driver'.")
             driver_init_pid = launch_init_script()
         
@@ -387,14 +388,25 @@ class WorkflowClusterContext:
         # - (okay, maybe it's just best to put that stuff in __init__.py, like in DSS)
         self._write_driver_graph_urls()
 
-        if self.config["cluster-type"] == "lsf":
-            from dask_jobqueue import LSFCluster #@UnresolvedImport
-            update_lsf_config_with_defaults()
-            self.workflow.cluster = LSFCluster(ip='0.0.0.0')
+        if self.config["cluster-type"] in JOBQUEUE_CLUSTERS:
+            update_jobqueue_config_with_defaults()
+
+            if self.config["cluster-type"] == "lsf":
+                from dask_jobqueue import LSFCluster #@UnresolvedImport
+                self.workflow.cluster = LSFCluster(ip='0.0.0.0')
+            if self.config["cluster-type"] == "sge":
+                from dask_jobqueue import SGECluster #@UnresolvedImport
+                self.workflow.cluster = SGECluster(ip='0.0.0.0')
+            if self.config["cluster-type"] == "slurm":
+                from dask_jobqueue import SLURMCluster #@UnresolvedImport
+                self.workflow.cluster = SLURMCluster(ip='0.0.0.0')
+
             self.workflow.cluster.scale(self.workflow.num_workers)
+
         elif self.config["cluster-type"] == "local-cluster":
             self.workflow.cluster = LocalCluster(ip='0.0.0.0')
             self.workflow.cluster.scale(self.workflow.num_workers)
+
         elif self.config["cluster-type"] in ("synchronous", "processes"):
             cluster_type = self.config["cluster-type"]
 
@@ -405,7 +417,7 @@ class WorkflowClusterContext:
             dask.config.set(scheduler=self.config["cluster-type"])
             self.workflow.client = DebugClient(cluster_type)
         else:
-            assert False, "Unknown cluster type"
+            raise AssertionError("Unknown cluster type")
 
         dump_dask_config('full-dask-config.yaml')
 
