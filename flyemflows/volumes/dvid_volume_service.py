@@ -699,21 +699,25 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         all_labels = label_groups_df['label'].drop_duplicates()
         coords_df = self.sparse_brick_coords_for_labels(all_labels, clip)
 
-        combined_df = coords_df.merge(label_groups_df, 'inner', 'label')
-        combined_df = combined_df[['z', 'y', 'x', 'group', 'label']]
-
-        if min_subset_size == 1:
-            return combined_df
-        
-        # Count the number of labels per group in each block
-        labelcounts = combined_df.groupby(['z', 'y', 'x', 'group'], as_index=False).agg('count')
-        labelcounts = labelcounts.rename(columns={'label': 'labelcount'})
-        
-        # Keep brick/group combinations that have enough labels.
-        brick_groups_to_keep = labelcounts.query('labelcount >= @min_subset_size')[['z', 'y', 'x', 'group']]
-        filtered_df = combined_df.merge(brick_groups_to_keep, 'inner', ['z', 'y', 'x', 'group'])
-        assert filtered_df.columns.tolist() == ['z', 'y', 'x', 'group', 'label']
-        return filtered_df
+        with Timer(f"Filtering bricks for groups of size >= {min_subset_size}", logger):
+            combined_df = coords_df.merge(label_groups_df, 'inner', 'label')
+            combined_df = combined_df[['z', 'y', 'x', 'group', 'label']]
+    
+            if min_subset_size == 1:
+                logger.info(f"Keeping {len(combined_df)} label+group combinations")
+                return combined_df
+            
+            # Count the number of labels per group in each block
+            labelcounts = combined_df.groupby(['z', 'y', 'x', 'group'], as_index=False).agg('count')
+            labelcounts = labelcounts.rename(columns={'label': 'labelcount'})
+            
+            # Keep brick/group combinations that have enough labels.
+            brick_groups_to_keep = labelcounts.query('labelcount >= @min_subset_size')[['z', 'y', 'x', 'group']]
+            filtered_df = combined_df.merge(brick_groups_to_keep, 'inner', ['z', 'y', 'x', 'group'])
+            assert filtered_df.columns.tolist() == ['z', 'y', 'x', 'group', 'label']
+            
+            logger.info(f"Keeping {len(filtered_df)} label+group combinations")
+            return filtered_df
         
 
     def sparse_brick_coords_for_labels(self, labels, clip=True):
