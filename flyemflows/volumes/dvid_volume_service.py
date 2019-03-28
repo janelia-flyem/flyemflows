@@ -764,21 +764,11 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             and convert the block coordinates to brick coordinates.
             """
             assert is_supervoxels or supervoxel_subset is None
-            supervoxel_subset = set(supervoxel_subset)
+
             try:
                 mgr = self.resource_manager_client
                 with mgr.access_context(self.server, True, 1, 1):
                     coords_df = fetch_labelindex(*self.instance_triple, body, 'pandas').blocks
-                    if len(coords_df) == 0:
-                        return (body, None)
-                    
-                    if is_supervoxels:
-                        coords_df = coords_df.query('sv in @supervoxel_subset').copy()
-
-                    coords_df[['z', 'y', 'x']] //= brick_shape
-                    coords_df['body'] = np.uint64(body)
-                    coords_df.drop_duplicates(inplace=True)
-                return (body, coords_df)
             except HTTPError as ex:
                 if (ex.response is not None and ex.response.status_code == 404):
                     return (body, None)
@@ -787,6 +777,18 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
                 if 'does not map to any body' in str(ex):
                     return (body, None)
                 raise
+
+            if len(coords_df) == 0:
+                return (body, None)
+                
+            if is_supervoxels:
+                supervoxel_subset = set(supervoxel_subset)
+                coords_df = coords_df.query('sv in @supervoxel_subset').copy()
+
+            coords_df[['z', 'y', 'x']] //= brick_shape
+            coords_df['body'] = np.uint64(body)
+            coords_df.drop_duplicates(inplace=True)
+            return (body, coords_df)
 
         with Timer(f"Fetching coarse sparsevols for {len(labels)} labels ({len(bodies_and_svs)} bodies)", logger=logger):
             import dask.bag as db
