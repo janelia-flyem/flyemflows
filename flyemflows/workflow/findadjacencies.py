@@ -212,6 +212,9 @@ class FindAdjacencies(Workflow):
         best_nonadjacent_edges_df = all_nonadjacent_edges_df
 
         if find_closest:
+            np.save('all-adjacent-brick-edges-for-debug.npy', all_adjacent_edges_df.to_records(index=False))
+            np.save('best-adjacent-brick-edges-for-debug.npy', best_nonadjacent_edges_df.to_records(index=False))
+            
             with Timer("Finding closest approaches", logger):
                 ignored_pairs = best_adjacent_edges_df[['label_a', 'label_b']]
                 def find_closest(brick):
