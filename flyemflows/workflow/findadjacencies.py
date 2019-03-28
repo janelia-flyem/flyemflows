@@ -245,6 +245,19 @@ class FindAdjacencies(Workflow):
             # Edges that were not used might be part of two different components.
             final_edges_df.loc[final_edges_df['distance'] > max_distance, 'cc'] = np.int32(-1)
 
+        with Timer("Appending groups"):
+            final_edges_df = final_edges_df.merge(subset_groups, 'left', left_on='label_a', right_on='label').drop('label', axis=1)
+            final_edges_df = final_edges_df.merge(subset_groups, 'left', left_on='label_b', right_on='label',
+                                                  suffixes=['_a', '_b']).drop('label', axis=1)
+            final_edges_df = final_edges_df.query('group_a == group_b')
+            final_edges_df = final_edges_df.rename(columns={'group_a': 'group'}).drop('group_b', axis=1)
+            
+            # Put group first, and sort by group
+            cols = final_edges_df.columns.tolist()
+            cols.remove('group')
+            cols.insert(0, 'group')
+            final_edges_df = final_edges_df[cols]
+
         with Timer("Writing edges", logger):
             final_edges_df.to_csv(options["output-table"], header=True, index=False)
 
