@@ -209,12 +209,12 @@ def _log_flyemflows_version():
     log the git rev we're using.
     """
     flyemflows_dir = os.path.dirname(flyemflows.__file__)
-    flyemflows_git = f'{flyemflows_dir}/.git'
+    flyemflows_git = f'{flyemflows_dir}/../.git'
     if os.path.exists(flyemflows_git):
         env = os.environ.copy()
         env['GIT_DIR'] = flyemflows_git
         r = subprocess.run('git describe', env=env, shell=True, check=True, stdout=subprocess.PIPE)
-        git_rev = r.decode('utf-8')
+        git_rev = r.stdout.decode('utf-8').strip()
         logger.info(f"Running flyemflows from git repo at version: {git_rev}")
 
 
