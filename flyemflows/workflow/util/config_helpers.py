@@ -108,12 +108,19 @@ def _groups_to_df(groups, path):
     assert all( isinstance(group, list) for group in groups ), \
         f"Label group JSON does not have the correct structure in:\n {path}"
     
-    lens = list(map(len, groups))
     labels = np.fromiter(chain(*groups), np.uint64)
-    
+    lens = list(map(len, groups))
+    flag_pos = np.add.accumulate(lens[:-1])
     start_flags = np.zeros(len(labels), np.uint32)
-    start_flags[lens] = 1
+    if len(start_flags) > 0:
+        start_flags[flag_pos] = 1
     group_ids = 1+np.add.accumulate(start_flags, dtype=np.uint32)
     
     df = pd.DataFrame({'label': labels, 'group': group_ids})
     return df
+
+
+if __name__ == "__main__":
+    groups = [[1,2], [3,4], [4,5,6]]
+    groups_df = load_label_groups(groups)
+    print(groups_df)
