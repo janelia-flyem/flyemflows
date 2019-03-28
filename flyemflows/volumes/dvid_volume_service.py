@@ -12,12 +12,11 @@ from neuclease.util import Timer, choose_pyramid_depth, SparseBlockMask
 from neuclease.dvid import ( fetch_repo_instances, fetch_instance_info, fetch_volume_box,
                              fetch_raw, post_raw, fetch_labelarray_voxels, post_labelmap_voxels,
                              update_extents, extend_list_value, create_voxel_instance, create_labelmap_instance,
-                             fetch_sparsevol_coarse_via_labelindex, fetch_mapping )
+                             fetch_mapping )
 
 from ..util import auto_retry, replace_default_entries
 from . import GeometrySchema, VolumeServiceReader, VolumeServiceWriter, GrayscaleAdapters, SegmentationAdapters
 from neuclease.dvid.labelmap._labelindex import fetch_labelindex
-from pylint.checkers.utils import is_super
 
 logger = logging.getLogger(__name__)
 
@@ -592,9 +591,9 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             raise
 
 
-    def sparse_block_mask_for_labels(self, labels):
+    def sparse_block_mask_for_labels(self, labels, clip=True):
         """
-        Determine which bricks (each with our ``preferred_message_shape``
+        Determine which bricks (each with our ``preferred_message_shape``)
         would need to be accessed download all data for the given labels,
         and return the result as a ``SparseBlockMask`` object.
         
@@ -603,8 +602,22 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         If the ``self.supervoxels`` is True, the labels are grouped
         by body before fetching the labelindexes,
         to avoid fetching the same labelindexes more than once.
+
+        Args:
+            labels:
+                A list of body IDs (if ``self.supervoxels`` is False),
+                or supervoxel IDs (if ``self.supervoxels`` is True).
+            
+            clip:
+                If True, filter the results to exclude any coordinates
+                that fall outside this service's bounding-box.
+                Otherwise, all brick coordinates that encompass the given label groups
+                will be returned, whether or not they fall within the bounding box.
+        
+        Returns:
+            ``SparseBlockMask``
         """
-        coords_df = self.sparse_brick_coords_for_labels(labels)
+        coords_df = self.sparse_brick_coords_for_labels(labels, clip)
         coords_df.drop_duplicates(['z', 'y', 'x'], inplace=True)
         
         brick_shape = self.preferred_message_shape
@@ -614,7 +627,7 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         return SparseBlockMask.create_from_lowres_coords(coords, brick_shape)
 
 
-    def sparse_brick_coords_for_label_pairs(self, label_pairs):
+    def sparse_brick_coords_for_label_pairs(self, label_pairs, clip=True):
         """
         Given a list of label pairs, determine which bricks in
         the volume contain both labels from at least one of the given pairs.
@@ -628,6 +641,12 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             label_pairs:
                 array of shape (N,2) listing the pairs of labels you're interested in.
         
+            clip:
+                If True, filter the results to exclude any coordinates
+                that fall outside this service's bounding-box.
+                Otherwise, all brick coordinates that encompass the given label pairs
+                will be returned, whether or not they fall within the bounding box.
+                
         Returns:
             DataFrame with columns ``[z, y, x, group, label]``,
             where ``[z, y, x]`` are brick coordinates (starting corners).
@@ -637,10 +656,10 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         label_pairs = np.asarray(label_pairs)
         label_groups_df = pd.DataFrame({'label': label_pairs.reshape(-1)})
         label_groups_df['group'] = np.arange(label_pairs.size, dtype=np.int32) // 2
-        return self.sparse_brick_coords_for_label_groups(label_groups_df, 2)
+        return self.sparse_brick_coords_for_label_groups(label_groups_df, 2, clip)
 
 
-    def sparse_brick_coords_for_label_groups(self, label_groups_df, min_subset_size=2):
+    def sparse_brick_coords_for_label_groups(self, label_groups_df, min_subset_size=2, clip=True):
         """
         Given a set of label groups, determine which bricks in
         the volume contain at least N labels from any group (or groups).
@@ -662,6 +681,12 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
                 The minimum number of labels (N) which must be present from any
                 single group to qualify the brick for inclusion in the results.
         
+            clip:
+                If True, filter the results to exclude any coordinates
+                that fall outside this service's bounding-box.
+                Otherwise, all brick coordinates that encompass the given label groups
+                will be returned, whether or not they fall within the bounding box.
+                
         Returns:
             DataFrame with columns ``[z, y, x, group, label]``,
             where ``[z, y, x]`` are brick indexes, not full-scale coordinates.
@@ -672,7 +697,7 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         assert label_groups_df.columns.tolist() == ['label', 'group']
         assert min_subset_size >= 1
         all_labels = label_groups_df['label'].drop_duplicates()
-        coords_df = self.sparse_brick_coords_for_labels(all_labels)
+        coords_df = self.sparse_brick_coords_for_labels(all_labels, clip)
 
         combined_df = coords_df.merge(label_groups_df, 'inner', 'label')
         combined_df = combined_df[['z', 'y', 'x', 'group', 'label']]
@@ -691,7 +716,7 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         return filtered_df
         
 
-    def sparse_brick_coords_for_labels(self, labels):
+    def sparse_brick_coords_for_labels(self, labels, clip=True):
         """
         Return a DataFrame indicating the brick
         coordinates (starting corner) that encompass the given labels.
@@ -700,6 +725,13 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             labels:
                 A list of body IDs (if ``self.supervoxels`` is False),
                 or supervoxel IDs (if ``self.supervoxels`` is True).
+            
+            clip:
+                If True, filter the results to exclude any coordinates
+                that fall outside this service's bounding-box.
+                Otherwise, all brick coordinates that encompass the given labels
+                will be returned, whether or not they fall within the bounding box.
+                
         Returns:
             DataFrame with columns [z,y,x,label]
         """
@@ -791,5 +823,11 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
 
         coords_df.drop_duplicates(['z', 'y', 'x', 'label'], inplace=True)
         coords_df[['z', 'y', 'x']] *= brick_shape
+
+        if clip:
+            keep =  (coords_df[['z', 'y', 'x']] >= self.bounding_box_zyx[0]).all(axis=1)
+            keep &= (coords_df[['z', 'y', 'x']]  < self.bounding_box_zyx[1]).all(axis=1)
+            coords_df = coords_df.loc[keep]
+        
         return coords_df[['z', 'y', 'x', 'label']]
 
