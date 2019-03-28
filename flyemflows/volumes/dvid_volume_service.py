@@ -12,10 +12,11 @@ from neuclease.util import Timer, choose_pyramid_depth, SparseBlockMask
 from neuclease.dvid import ( fetch_repo_instances, fetch_instance_info, fetch_volume_box,
                              fetch_raw, post_raw, fetch_labelarray_voxels, post_labelmap_voxels,
                              update_extents, extend_list_value, create_voxel_instance, create_labelmap_instance,
-                             fetch_sparsevol_coarse_via_labelindex, fetch_mapping )
+                             fetch_mapping )
 
 from ..util import auto_retry, replace_default_entries
 from . import GeometrySchema, VolumeServiceReader, VolumeServiceWriter, GrayscaleAdapters, SegmentationAdapters
+from neuclease.dvid.labelmap._labelindex import fetch_labelindex
 
 logger = logging.getLogger(__name__)
 
@@ -510,7 +511,12 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
                     return fetch_raw(self._server, self._uuid, instance_name, box_zyx, throttle)
 
         except Exception as ex:
-            # In certain cluster scenarios, the 'raise ... from ex' traceback doesn't get fully transmitted to the driver.
+            # In cluster scenarios, a chained 'raise ... from ex' traceback
+            # doesn't get fully transmitted to the driver,
+            # so we simply append this extra info to the current exception
+            # rather than using exception chaining. 
+            # Also log it now so it at least appears in the worker log.
+            # See: https://github.com/dask/dask/issues/4384
             import traceback, io
             sio = io.StringIO()
             traceback.print_exc(file=sio)
@@ -518,7 +524,9 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
 
             host = socket.gethostname()
             msg = f"Host {host}: Failed to fetch subvolume: box_zyx = {box_zyx.tolist()}"
-            raise RuntimeError(msg) from ex
+            
+            ex.args += (msg,)
+            raise
         
     # Two-levels of auto-retry:
     # 1. Auto-retry up to three time for any reason.
@@ -565,7 +573,12 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
                               throttle=throttle, mutate=not self.disable_indexing )
 
         except Exception as ex:
-            # In certain cluster scenarios, the 'raise ... from ex' traceback doesn't get fully transmitted to the driver.
+            # In cluster scenarios, a chained 'raise ... from ex' traceback
+            # doesn't get fully transmitted to the driver,
+            # so we simply append this extra info to the current exception
+            # rather than using exception chaining. 
+            # Also log it now so it at least appears in the worker log.
+            # See: https://github.com/dask/dask/issues/4384
             import traceback, io
             sio = io.StringIO()
             traceback.print_exc(file=sio)
@@ -573,12 +586,14 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
 
             host = socket.gethostname()
             msg = f"Host {host}: Failed to write subvolume: offset_zyx = {offset_zyx.tolist()}, shape = {subvolume.shape}"
-            raise RuntimeError(msg) from ex
+            
+            ex.args += (msg,)
+            raise
 
 
-    def sparse_block_mask_for_labels(self, labels):
+    def sparse_block_mask_for_labels(self, labels, clip=True):
         """
-        Determine which bricks (each with our ``preferred_message_shape``
+        Determine which bricks (each with our ``preferred_message_shape``)
         would need to be accessed download all data for the given labels,
         and return the result as a ``SparseBlockMask`` object.
         
@@ -587,57 +602,202 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         If the ``self.supervoxels`` is True, the labels are grouped
         by body before fetching the labelindexes,
         to avoid fetching the same labelindexes more than once.
-        (The implementation of ``fetch_sparsevol_coarse_via_labelindex()``
-        avoids fetching duplicate labelindexes when handling supervoxels
-        that belong to the same body.)
+
+        Args:
+            labels:
+                A list of body IDs (if ``self.supervoxels`` is False),
+                or supervoxel IDs (if ``self.supervoxels`` is True).
+            
+            clip:
+                If True, filter the results to exclude any coordinates
+                that fall outside this service's bounding-box.
+                Otherwise, all brick coordinates that encompass the given label groups
+                will be returned, whether or not they fall within the bounding box.
+        
+        Returns:
+            ``SparseBlockMask``
+        """
+        coords_df = self.sparse_brick_coords_for_labels(labels, clip)
+        coords_df.drop_duplicates(['z', 'y', 'x'], inplace=True)
+        
+        brick_shape = self.preferred_message_shape
+        coords_df[['z', 'y', 'x']] //= brick_shape
+
+        coords = coords_df[['z', 'y', 'x']].values
+        return SparseBlockMask.create_from_lowres_coords(coords, brick_shape)
+
+
+    def sparse_brick_coords_for_label_pairs(self, label_pairs, clip=True):
+        """
+        Given a list of label pairs, determine which bricks in
+        the volume contain both labels from at least one of the given pairs.
+        
+        If you're interested in examining adjacencies between
+        pre-determined pairs of bodies (or supervoxels),
+        this function tells you which bricks contain both labels in the pair,
+        and thus might encompass the coordinates at which the labels are adjacent.
+        
+        Args:
+            label_pairs:
+                array of shape (N,2) listing the pairs of labels you're interested in.
+        
+            clip:
+                If True, filter the results to exclude any coordinates
+                that fall outside this service's bounding-box.
+                Otherwise, all brick coordinates that encompass the given label pairs
+                will be returned, whether or not they fall within the bounding box.
+                
+        Returns:
+            DataFrame with columns ``[z, y, x, group, label]``,
+            where ``[z, y, x]`` are brick coordinates (starting corners).
+            Note that duplicate brick coordinates will be listed
+            (one for each label+pair combination present in the brick).
+        """
+        label_pairs = np.asarray(label_pairs)
+        label_groups_df = pd.DataFrame({'label': label_pairs.reshape(-1)})
+        label_groups_df['group'] = np.arange(label_pairs.size, dtype=np.int32) // 2
+        return self.sparse_brick_coords_for_label_groups(label_groups_df, 2, clip)
+
+
+    def sparse_brick_coords_for_label_groups(self, label_groups_df, min_subset_size=2, clip=True):
+        """
+        Given a set of label groups, determine which bricks in
+        the volume contain at least N labels from any group (or groups).
+        
+        For instance, suppose you have two groups of labels [1,2,3], [4,5,6] and you're only
+        interested in those bricks which contain at least two labels from one (or both)
+        of those groups.  A brick that contains only labels [1,4] is not of interest,
+        but a brick containing [1,3] is of interest, and so is a brick containing [5,6],
+        or [1,2,4,5] etc.
+        
+        Args:
+            label_groups_df:
+                DataFrame with columns ['label', 'group'],
+                where the labels are either body IDs or supervoxel IDs
+                (depending on ``self.supervoxels``), and the group IDs
+                are arbitrary integers.
+            
+            min_subset_size:
+                The minimum number of labels (N) which must be present from any
+                single group to qualify the brick for inclusion in the results.
+        
+            clip:
+                If True, filter the results to exclude any coordinates
+                that fall outside this service's bounding-box.
+                Otherwise, all brick coordinates that encompass the given label groups
+                will be returned, whether or not they fall within the bounding box.
+                
+        Returns:
+            DataFrame with columns ``[z, y, x, group, label]``,
+            where ``[z, y, x]`` are brick indexes, not full-scale coordinates.
+            Note that duplicate brick coordinates will be listed
+            (one for each label+group combination present in the brick).
+        """
+        assert isinstance(label_groups_df, pd.DataFrame)
+        assert label_groups_df.columns.tolist() == ['label', 'group']
+        assert min_subset_size >= 1
+        all_labels = label_groups_df['label'].drop_duplicates()
+        coords_df = self.sparse_brick_coords_for_labels(all_labels, clip)
+
+        combined_df = coords_df.merge(label_groups_df, 'inner', 'label')
+        combined_df = combined_df[['z', 'y', 'x', 'group', 'label']]
+
+        if min_subset_size == 1:
+            return combined_df
+        
+        # Count the number of labels per group in each block
+        labelcounts = combined_df.groupby(['z', 'y', 'x', 'group'], as_index=False).agg('count')
+        labelcounts = labelcounts.rename(columns={'label': 'labelcount'})
+        
+        # Keep brick/group combinations that have enough labels.
+        brick_groups_to_keep = labelcounts.query('labelcount >= @min_subset_size')[['z', 'y', 'x', 'group']]
+        filtered_df = combined_df.merge(brick_groups_to_keep, 'inner', ['z', 'y', 'x', 'group'])
+        assert filtered_df.columns.tolist() == ['z', 'y', 'x', 'group', 'label']
+        return filtered_df
+        
+
+    def sparse_brick_coords_for_labels(self, labels, clip=True):
+        """
+        Return a DataFrame indicating the brick
+        coordinates (starting corner) that encompass the given labels.
+        
+        Args:
+            labels:
+                A list of body IDs (if ``self.supervoxels`` is False),
+                or supervoxel IDs (if ``self.supervoxels`` is True).
+            
+            clip:
+                If True, filter the results to exclude any coordinates
+                that fall outside this service's bounding-box.
+                Otherwise, all brick coordinates that encompass the given labels
+                will be returned, whether or not they fall within the bounding box.
+                
+        Returns:
+            DataFrame with columns [z,y,x,label]
         """
         labels = set(labels)
         is_supervoxels = self.supervoxels
         brick_shape = self.preferred_message_shape
-        blocks_per_brick = brick_shape // self.block_width
+        assert (brick_shape % self.block_width == 0).all(), \
+            ("Brick shape ('preferred-message-shape') must be a multiple of the "
+             f"block width ({self.block_width}) in all dimensions, not {brick_shape}")
+
+        bad_labels = []
 
         if is_supervoxels:
             # Group by body
             mapping = fetch_mapping(*self.instance_triple, list(labels))
-            label_groups = list(mapping.reset_index().groupby('body').agg({'sv': list})['sv'])
-        else:
-            # Each body is its own group
-            label_groups = [[label] for label in labels]
+            bad_svs = mapping[mapping == 0]
+            bad_labels.extend( bad_svs.index.tolist() )
 
-        def fetch_coarse_and_divide(label_group):
+            mapping = mapping[mapping != 0]
+            grouped_svs = mapping.reset_index().groupby('body').agg({'sv': list})['sv']
+            bodies_and_svs = grouped_svs.to_dict()
+        else:
+            # No supervoxel filtering
+            bodies_and_svs = {label: None for label in labels}
+
+        def fetch_brick_coords(body, supervoxel_subset):
             """
-            Fetch the coarse sparsevol for the label and return a pair of
-            (label, coords), where coords is a record array
-            with columns [z,y,x,label], and z,y,x have been converted to
-            brick indices (not block indicies).
+            Fetch the block coordinates for the given body,
+            filter them for the given supervoxels (if any),
+            and convert the block coordinates to brick coordinates.
             """
+            assert is_supervoxels or supervoxel_subset is None
+            supervoxel_subset = set(supervoxel_subset)
             try:
                 mgr = self.resource_manager_client
                 with mgr.access_context(self.server, True, 1, 1):
-                    coords = fetch_sparsevol_coarse_via_labelindex(*self.instance_triple, label_group, is_supervoxels)
-                    if len(coords) == 0:
-                        return (label_group, None)
-                    coords //= blocks_per_brick
-                    coords = pd.DataFrame(coords, columns=['z', 'y', 'x'], dtype=np.int32).drop_duplicates()
-                return (label_group, coords.to_records(index=False))
+                    coords_df = fetch_labelindex(*self.instance_triple, body, 'pandas').blocks
+                    if len(coords_df) == 0:
+                        return (body, None)
+                    
+                    if is_supervoxels:
+                        coords_df = coords_df.query('sv in @supervoxel_subset').copy()
+
+                    coords_df[['z', 'y', 'x']] //= brick_shape
+                    coords_df['body'] = np.uint64(body)
+                    coords_df.drop_duplicates(inplace=True)
+                return (body, coords_df)
             except HTTPError as ex:
                 if (ex.response is not None and ex.response.status_code == 404):
-                    return (label_group, None)
+                    return (body, None)
                 raise
             except RuntimeError as ex:
                 if 'does not map to any body' in str(ex):
-                    return (label_group, None)
+                    return (body, None)
                 raise
 
-        with Timer(f"Fetching coarse sparsevols for {len(labels)} labels ({len(label_groups)} groups)", logger=logger):
+        with Timer(f"Fetching coarse sparsevols for {len(labels)} labels ({len(bodies_and_svs)} bodies)", logger=logger):
             import dask.bag as db
-            label_groups = db.from_sequence(label_groups)
-            groups_and_coords = label_groups.map(fetch_coarse_and_divide).compute()
+            bodies_and_coords = db.from_sequence(bodies_and_svs.items()).starmap(fetch_brick_coords).compute()
 
-        bad_labels = []
-        for label_group, coords in groups_and_coords:
-            if coords is None:
-                bad_labels.extend(label_group)
+        for body, coords_df in bodies_and_coords:
+            if coords_df is None:
+                if is_supervoxels:
+                    bad_labels.extend( bodies_and_svs[body] )
+                else:
+                    bad_labels.append(body)
     
         if bad_labels:
             name = 'sv' if is_supervoxels else 'body'
@@ -650,27 +810,24 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             logger.warning(msg)
 
             # Drop null groups
-            groups_and_coords = list( filter(lambda k_v: k_v[1] is not None, groups_and_coords) )
+            bodies_and_coords = list( filter(lambda k_v: k_v[1] is not None, bodies_and_coords) )
 
-        if len(groups_and_coords) == 0:
-            empty_box = np.array([self.bounding_box_zyx[0], self.bounding_box_zyx[0]])
-            empty_mask = np.zeros((0,)*len(empty_box[0]), dtype=bool)
-            return SparseBlockMask(empty_mask, empty_box, brick_shape)
-            
-        all_coords = np.concatenate( [kv[1] for kv in groups_and_coords] )
-        coords_df = pd.DataFrame( all_coords )
-        coords_df.drop_duplicates(['z', 'y', 'x'], inplace=True)
-        coords = coords_df[['z', 'y', 'x']].values
+        if len(bodies_and_coords) == 0:
+            raise RuntimeError("Could not find bricks for any of the given labels")
+
+        coords_df = pd.concat( [kv[1] for kv in bodies_and_coords] )
+        if self.supervoxels:
+            coords_df['label'] = coords_df['body']
+        else:
+            coords_df['label'] = coords_df['sv']
+
+        coords_df.drop_duplicates(['z', 'y', 'x', 'label'], inplace=True)
+        coords_df[['z', 'y', 'x']] *= brick_shape
+
+        if clip:
+            keep =  (coords_df[['z', 'y', 'x']] >= self.bounding_box_zyx[0]).all(axis=1)
+            keep &= (coords_df[['z', 'y', 'x']]  < self.bounding_box_zyx[1]).all(axis=1)
+            coords_df = coords_df.loc[keep]
         
-        min_coord = coords.min(axis=0)
-        max_coord = coords.max(axis=0)
-        mask_box = np.array((min_coord, 1+max_coord))
-        mask_shape = mask_box[1] - mask_box[0]
-        mask = np.zeros(mask_shape, dtype=bool)
-
-        coords -= mask_box[0]
-        mask[(*coords.transpose(),)] = True
-
-        sbm = SparseBlockMask(mask, brick_shape*mask_box, brick_shape)
-        return sbm
+        return coords_df[['z', 'y', 'x', 'label']]
 

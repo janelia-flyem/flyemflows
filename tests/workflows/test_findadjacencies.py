@@ -67,7 +67,7 @@ def setup_findadjacencies():
 
     return template_dir, config, volume
 
-
+@pytest.mark.xfail # For now, you must specify a subset of labels to consider.
 def test_findadjacencies(setup_findadjacencies):
     template_dir, _config, _volume = setup_findadjacencies
     
@@ -102,6 +102,7 @@ def test_findadjacencies(setup_findadjacencies):
     assert set(cc_sets) == { frozenset({1,2,8}), frozenset({4,3}) }
 
 
+@pytest.mark.xfail # For now, subset-labels-requirement must be 2.  (1 is not supported any more)
 def test_findadjacencies_subset_bodies(setup_findadjacencies):
     template_dir, config, _volume = setup_findadjacencies
     
@@ -125,9 +126,9 @@ def test_findadjacencies_subset_bodies(setup_findadjacencies):
     assert (1,2) not in label_pairs
     assert (3,4) in label_pairs
 
-    assert (output_df.query('label_a == 3')[['za', 'zb']].values[0] == 0).all()
+    assert (output_df.query('label_a == 3')[['za', 'zb']].values[0] == (0,0)).all()
     assert (output_df.query('label_a == 3')[['ya', 'yb']].values[0] == (6,5)).all() # not 'forward'
-    assert (output_df.query('label_a == 3')[['xa', 'xb']].values[0] == 2).all()
+    assert (output_df.query('label_a == 3')[['xa', 'xb']].values[0] == (2,2)).all()
 
     # Check CC groups
     cc_sets = set()
@@ -162,9 +163,9 @@ def test_findadjacencies_subset_edges(setup_findadjacencies):
     assert (1,2) not in label_pairs
     assert (3,4) in label_pairs
     
-    assert (output_df.query('label_a == 3')[['za', 'zb']].values[0] == 0).all()
+    assert (output_df.query('label_a == 3')[['za', 'zb']].values[0] == (0,0)).all()
     assert (output_df.query('label_a == 3')[['ya', 'yb']].values[0] == (6,5)).all() # not 'forward'
-    assert (output_df.query('label_a == 3')[['xa', 'xb']].values[0] == 2).all()
+    assert (output_df.query('label_a == 3')[['xa', 'xb']].values[0] == (2,2)).all()
 
     # Check CC groups
     cc_sets = set()
@@ -447,5 +448,6 @@ if __name__ == "__main__":
     
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_findadjacencies']
-    #args = ['-x', '-k', 'findadjacencies_from_dvid_sparse_edges or findadjacencies_different_dvid_blocks_sparse_labels or findadjacencies_different_dvid_blocks_sparse_edges'] + args
+    #args += ['-x']
+    #args += ['-k', 'findadjacencies_from_dvid_sparse_edges or findadjacencies_different_dvid_blocks_sparse_labels or findadjacencies_different_dvid_blocks_sparse_edges']
     pytest.main(args)

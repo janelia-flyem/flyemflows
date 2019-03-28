@@ -53,7 +53,7 @@ class VolumeService(metaclass=ABCMeta):
 
     def sparse_block_mask_for_labels(self, labels):
         """
-        Determine which bricks (each with our ``preferred_message_shape``
+        Determine which bricks (i.e. using the ``preferred_message_shape``)
         would need to be accessed download all data for the given labels,
         and return the result as a ``SparseBlockMask`` object.
 
@@ -62,6 +62,17 @@ class VolumeService(metaclass=ABCMeta):
         Other services will raise NotImplementedError
         """
         raise NotImplementedError
+
+    ##
+    ## Other sparse fetch functions.
+    ##
+    def sparse_brick_coords_for_label_pairs(self, label_pairs):
+        raise NotImplementedError
+    def sparse_brick_coords_for_label_groups(self, label_groups_df, min_subset_size=2):
+        raise NotImplementedError
+    def sparse_brick_coords_for_labels(self, labels):
+        raise NotImplementedError
+        
 
     @classmethod
     def create_from_config( cls, volume_config, resource_manager_client=None ):
