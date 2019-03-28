@@ -389,7 +389,7 @@ class WorkflowClusterContext:
         self._write_driver_graph_urls()
 
         if self.config["cluster-type"] in JOBQUEUE_CLUSTERS:
-            update_jobqueue_config_with_defaults()
+            update_jobqueue_config_with_defaults(self.config["cluster-type"])
 
             if self.config["cluster-type"] == "lsf":
                 from dask_jobqueue import LSFCluster #@UnresolvedImport
