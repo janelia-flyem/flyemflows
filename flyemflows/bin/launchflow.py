@@ -191,7 +191,7 @@ def launch_flow(template_dir, num_workers, kill_cluster=True, _custom_execute_fn
         with tee_streams(logpath):
             logger.info(f"Teeing output to {logpath}")
     
-            _load_and_overwrite_dask_config(execution_dir)
+            _load_and_overwrite_dask_config(execution_dir, config_data["cluster-type"])
             _log_flyemflows_version()
             
             # On NFS, sometimes it takes a while for it to flush the file cache to disk,
@@ -234,7 +234,7 @@ def _load_workflow_config(template_dir):
     return workflow_cls, config_data
     
 
-def _load_and_overwrite_dask_config(execution_dir):
+def _load_and_overwrite_dask_config(execution_dir, cluster_type):
     # Load dask config, inject defaults for (selected) missing entries, and overwrite in-place.
     dask_config_path = os.path.abspath(f'{execution_dir}/dask-config.yaml')
     if os.path.exists(dask_config_path):
@@ -250,6 +250,15 @@ def _load_and_overwrite_dask_config(execution_dir):
     else:
         dask_config = {}
         validate(dask_config, DaskConfigSchema, inject_defaults=True)
+
+    # Don't pollute the config file with extra jobqueue parameters we aren't using
+    if "jobqueue" in dask_config:
+        for key in list(dask_config["jobqueue"].keys()):
+            if key != cluster_type:
+                del dask_config["jobqueue"][key]
+    
+        if len(dask_config["jobqueue"]) == 0:
+            del dask_config["jobqueue"]
     
     dump_config(dask_config, dask_config_path)
 
