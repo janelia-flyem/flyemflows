@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from dvid_resource_manager.client import ResourceManagerClient
-from neuclease.util import Timer, swap_df_cols, closest_approach, SparseBlockMask, connected_components_nonconsecutive
+from neuclease.util import Timer, swap_df_cols, approximate_closest_approach, SparseBlockMask, connected_components_nonconsecutive
 
 from ilastikrag import Rag
 from dvidutils import LabelMapper
@@ -74,11 +74,16 @@ class FindAdjacencies(Workflow):
                 "type": "string",
                 "default": ""
             },
-            "find-closest": {
-                "description": "For body pairs that do not physically touch, find the points at which they come closest to eachother.\n"
-                               "Only permitted when using a subset option.\n",
-                "type": "boolean",
-                "default": False
+            "find-closest-using-scale": {
+                "description": "For body pairs that do not physically touch,\n"
+                               "find the points at which they come closest to each other, if this setting is not null.\n"
+                               "For perfect accuracy, set this to 0 (i.e. scale 0).\n"
+                               "For faster performance, set this to a higher scale (1,2,3, etc.)\n"
+                               "The results will be approximate (not necessarily the exact closest points, or even on the object borders)\n"
+                               "but the resulting coordinates are still guaranteed to fall on the objects of interest.\n"
+                               "(Only permitted when using a subset option.)\n",
+                "oneOf": [{"type": "integer"}, {"type": "null"}],
+                "default": None
             },
             "compute-cc": {
                 "description": "Once the edges have been found, run connected components on the\n"
@@ -120,7 +125,7 @@ class FindAdjacencies(Workflow):
     def _sanitize_config(self):
         options = self.config["findadjacencies"]
         subset_requirement = options["subset-labels-requirement"]
-        find_closest = options["find-closest"]
+        find_closest_using_scale = options["find-closest-using-scale"]
 
         num_subsets = sum([ bool(options["subset-labels"]),
                             bool(options["subset-edges"]),
@@ -130,8 +135,8 @@ class FindAdjacencies(Workflow):
                                "Provide either subset-labels, subset-edges, or subset-label-groups.")
 
 
-        if find_closest and subset_requirement != 2:
-            raise RuntimeError("Can't use find-closest unless subset-requirement == 2")
+        if find_closest_using_scale is not None and subset_requirement != 2:
+            raise RuntimeError("Can't use find-closest-using-scale unless subset-requirement == 2")
 
         assert subset_requirement == 2, \
             "FIXME: subset-requirement other than 2 is not currently supported."
@@ -180,7 +185,7 @@ class FindAdjacencies(Workflow):
         options = self.config["findadjacencies"]
         resource_config = self.config["resource-manager"]
         subset_requirement = options["subset-labels-requirement"]
-        find_closest = options["find-closest"]
+        find_closest_using_scale = options["find-closest-using-scale"]
 
         self.resource_mgr_client = ResourceManagerClient(resource_config["server"], resource_config["port"])
         volume_service = VolumeService.create_from_config(input_config, self.resource_mgr_client)
@@ -195,7 +200,7 @@ class FindAdjacencies(Workflow):
                 #        it might be better to distribute each brick's rows.
                 #        (But that will involve a dask join step...)
                 #        The brick_coords_df should generally be under 1 GB, anyway...
-                return find_edges_in_brick(brick, 'adjacent', subset_groups, subset_requirement)
+                return find_edges_in_brick(brick, None, subset_groups, subset_requirement)
             adjacent_edge_tables = brickwall.bricks.map(find_adj).compute()
 
         with Timer("Combining/filtering direct adjacencies", logger):
@@ -211,14 +216,14 @@ class FindAdjacencies(Workflow):
         all_nonadjacent_edges_df = pd.DataFrame([], columns=EDGE_TABLE_COLS).astype(EDGE_TABLE_TYPES)
         best_nonadjacent_edges_df = all_nonadjacent_edges_df
 
-        if find_closest:
+        if find_closest_using_scale is not None:
             np.save('all-adjacent-brick-edges-for-debug.npy', all_adjacent_edges_df.to_records(index=False))
             np.save('best-adjacent-brick-edges-for-debug.npy', best_nonadjacent_edges_df.to_records(index=False))
             
             with Timer("Finding closest approaches", logger):
                 ignored_pairs = best_adjacent_edges_df[['label_a', 'label_b']]
                 def find_closest(brick):
-                    return find_edges_in_brick(brick, 'closest', subset_groups, subset_requirement, ignored_pairs)
+                    return find_edges_in_brick(brick, find_closest_using_scale, subset_groups, subset_requirement, ignored_pairs)
                 nonadjacent_edge_tables = brickwall.bricks.map(find_closest).compute()
 
             with Timer("Combining closest approaches", logger):
@@ -298,7 +303,7 @@ class FindAdjacencies(Workflow):
         return brickwall
 
 
-def find_edges_in_brick(brick, method='adjacent', subset_groups=[], subset_requirement=2, ignored_pairs=[]):
+def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requirement=2, ignored_pairs=[]):
     """
     Find all pairs of adjacent labels in the given brick,
     and find the central-most point along the edge between them.
@@ -355,15 +360,13 @@ def find_edges_in_brick(brick, method='adjacent', subset_groups=[], subset_requi
     remapped_subset_groups = subset_groups.copy()
     remapped_subset_groups['label'] = mapper.apply(subset_groups['label'].values)
 
-    if method == 'adjacent':
+    if closest_scale is None:
         best_edges_df = _find_and_select_central_edges(remapped_volume, remapped_subset_groups, subset_requirement)
-    elif method == 'closest':
+    else:
         remapped_ignored_pairs = mapper.apply_with_default(ignored_pairs, 0)
         remapped_ignored_edges = pd.DataFrame(remapped_ignored_pairs, columns=['label_a', 'label_b'], dtype=np.uint32)
         remapped_ignored_edges = remapped_ignored_edges.query('label_a != 0 and label_b != 0')
-        best_edges_df = _find_closest_approaches(remapped_volume, remapped_subset_groups, remapped_ignored_edges)
-    else:
-        raise AssertionError(f"Unknown method: {method}")
+        best_edges_df = _find_closest_approaches(remapped_volume, closest_scale, remapped_subset_groups, remapped_ignored_edges)
 
     if best_edges_df is None:
         return None
@@ -382,7 +385,7 @@ def find_edges_in_brick(brick, method='adjacent', subset_groups=[], subset_requi
     return best_edges_df
 
 
-def _find_closest_approaches(volume, subset_groups, ignored_edges):
+def _find_closest_approaches(volume, closest_scale, subset_groups, ignored_edges):
     """
     Given a volume and a list of list of edges (body pairs),
     Find the points at which the two bodies come closest to one
@@ -437,7 +440,7 @@ def _find_closest_approaches(volume, subset_groups, ignored_edges):
 
     result_rows = []
     for (label_a, label_b) in subset_edges[['label_a', 'label_b']].values:
-        coord_a, coord_b, distance = closest_approach(volume, label_a, label_b, check_present=False)
+        coord_a, coord_b, distance = approximate_closest_approach(volume, label_a, label_b, closest_scale)
         result_rows.append((label_a, label_b, *coord_a, *coord_b, distance))
     
     if len(result_rows) == 0:

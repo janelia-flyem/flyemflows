@@ -224,7 +224,7 @@ def test_findadjacencies_closest_approach_subset_edges(setup_findadjacencies):
     # Overwrite config with updated settings.
     config = copy.deepcopy(config)
     config["findadjacencies"]["subset-edges"] = 'subset-edges.csv'
-    config["findadjacencies"]["find-closest"] = True
+    config["findadjacencies"]["find-closest-using-scale"] = 0
 
     output_df = _impl_test_findadjacencies_closest_approach(template_dir, config)
 
@@ -244,7 +244,7 @@ def test_findadjacencies_closest_approach_subset_labels(setup_findadjacencies):
     # Overwrite config with updated settings.
     config = copy.copy(config)
     config["findadjacencies"]["subset-labels"] = [3,4,6,7,8]
-    config["findadjacencies"]["find-closest"] = True
+    config["findadjacencies"]["find-closest-using-scale"] = 0
 
     output_df = _impl_test_findadjacencies_closest_approach(template_dir, config)
     
@@ -334,7 +334,7 @@ def setup_dvid_segmentation_input(setup_dvid_repo):
  
         findadjacencies:
           output-table: output.csv
-          find-closest: true
+          find-closest-using-scale: 0
     """)
  
     with open(f"{template_dir}/workflow.yaml", 'w') as f:
@@ -448,6 +448,6 @@ if __name__ == "__main__":
     
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_findadjacencies']
-    #args += ['-x']
+    args += ['-x']
     #args += ['-k', 'findadjacencies_from_dvid_sparse_edges or findadjacencies_different_dvid_blocks_sparse_labels or findadjacencies_different_dvid_blocks_sparse_edges']
     pytest.main(args)
