@@ -825,9 +825,9 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
 
         coords_df = pd.concat( [kv[1] for kv in bodies_and_coords] )
         if self.supervoxels:
-            coords_df['label'] = coords_df['body']
-        else:
             coords_df['label'] = coords_df['sv']
+        else:
+            coords_df['label'] = coords_df['body']
 
         coords_df.drop_duplicates(['z', 'y', 'x', 'label'], inplace=True)
         coords_df[['z', 'y', 'x']] *= brick_shape
