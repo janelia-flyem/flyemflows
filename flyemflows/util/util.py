@@ -200,10 +200,13 @@ def stdout_redirected(to=os.devnull, stdout=None):
 
     stdout_fd = fileno(stdout)
 
-    if fileno(to) == stdout_fd:
-        # Nothing to do; early return
-        yield stdout
-        return
+    try:
+        if fileno(to) == stdout_fd:
+            # Nothing to do; early return
+            yield stdout
+            return
+    except ValueError: # filename
+        pass
 
     # copy stdout_fd before it is overwritten
     #NOTE: `copied` is inheritable on Windows when duplicating a standard stream
