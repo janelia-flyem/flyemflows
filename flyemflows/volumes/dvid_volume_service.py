@@ -694,7 +694,7 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             (one for each label+group combination present in the brick).
         """
         assert isinstance(label_groups_df, pd.DataFrame)
-        assert label_groups_df.columns.tolist() == ['label', 'group']
+        label_groups_df = label_groups_df[['label', 'group']]
         assert min_subset_size >= 1
         all_labels = label_groups_df['label'].drop_duplicates()
         coords_df = self.sparse_brick_coords_for_labels(all_labels, clip)

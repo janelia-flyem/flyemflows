@@ -26,7 +26,8 @@ EDGE_TABLE_TYPES = {
     'za': np.int32, 'ya': np.int32, 'xa': np.int32,
     'zb': np.int32, 'yb': np.int32, 'xb': np.int32,
     'distance': np.float32,
-    'edge_area': np.int32 }
+    'edge_area': np.int32
+}
 
 EDGE_TABLE_COLS = list(EDGE_TABLE_TYPES.keys())
 
@@ -193,6 +194,7 @@ class FindAdjacencies(Workflow):
         volume_service = VolumeService.create_from_config(input_config, self.resource_mgr_client)
 
         subset_groups = self._load_label_groups(volume_service)
+        subset_groups["group_cc"] = np.arange(len(subset_groups), dtype=np.uint32)
 
         brickwall = self.init_brickwall(volume_service, subset_groups)
 
@@ -210,22 +212,25 @@ class FindAdjacencies(Workflow):
             if len(adjacent_edge_tables) == 0:
                 all_adjacent_edges_df = pd.DataFrame([], columns=EDGE_TABLE_COLS).astype(EDGE_TABLE_TYPES)
                 best_adjacent_edges_df = all_adjacent_edges_df
+                best_adjacent_edges_df['group'] = np.zeros((0,), dtype=np.uint32)
+                best_adjacent_edges_df['group_cc'] = np.zeros((0,), dtype=np.int32)
             else:
                 all_adjacent_edges_df = pd.concat(adjacent_edge_tables, ignore_index=True)
                 best_adjacent_edges_df = select_central_edges(all_adjacent_edges_df, ['za', 'ya', 'xa'])
+                best_adjacent_edges_df, subset_groups = self.append_group_ccs(best_adjacent_edges_df, subset_groups, None)
+
+            np.save('all-adjacent-brick-edges-for-debug.npy', all_adjacent_edges_df.to_records(index=False))
 
         # No non-adjacencies by default
         all_nonadjacent_edges_df = pd.DataFrame([], columns=EDGE_TABLE_COLS).astype(EDGE_TABLE_TYPES)
         best_nonadjacent_edges_df = all_nonadjacent_edges_df
 
         if find_closest_using_scale is not None:
-            np.save('all-adjacent-brick-edges-for-debug.npy', all_adjacent_edges_df.to_records(index=False))
             np.save('best-adjacent-brick-edges-for-debug.npy', best_nonadjacent_edges_df.to_records(index=False))
             
             with Timer("Finding closest approaches", logger):
-                ignored_pairs = best_adjacent_edges_df[['label_a', 'label_b']]
                 def find_closest(brick):
-                    return find_edges_in_brick(brick, find_closest_using_scale, subset_groups, subset_requirement, ignored_pairs)
+                    return find_edges_in_brick(brick, find_closest_using_scale, subset_groups, subset_requirement)
                 nonadjacent_edge_tables = brickwall.bricks.map(find_closest).compute()
 
             with Timer("Combining closest approaches", logger):
@@ -235,38 +240,14 @@ class FindAdjacencies(Workflow):
                     best_nonadjacent_edges_df = select_closest_edges(all_nonadjacent_edges_df)
 
         with Timer("Sorting edges", logger):
+            del best_adjacent_edges_df['group']
+            del best_adjacent_edges_df['group_cc']
             final_edges_df = pd.concat((best_adjacent_edges_df, best_nonadjacent_edges_df))
             # This sort isn't strictly necessary, but makes it
             # easier to diff results of one execution vs another.
             final_edges_df.sort_values(list(final_edges_df.columns), inplace=True)
 
-        if options["compute-cc"]:
-            max_distance = options["cc-distance-threshold"]
-            nodes = pd.unique(final_edges_df[['label_a', 'label_b']].values.reshape(-1))
-            
-            thresholded_edges_df = final_edges_df.query('distance <= @max_distance')
-            edges = thresholded_edges_df[['label_a', 'label_b']].values
-            
-            cc = 1 + connected_components_nonconsecutive(edges, nodes)
-            cc_df = pd.DataFrame({ 'label_a': nodes, 'cc': cc.astype(np.int32) })
-            final_edges_df = final_edges_df.merge(cc_df, 'left', 'label_a')
-            final_edges_df['cc'] = final_edges_df['cc'].astype(np.int32)
-
-            # Edges that were not used might be part of two different components.
-            final_edges_df.loc[final_edges_df['distance'] > max_distance, 'cc'] = np.int32(-1)
-
-        with Timer("Appending groups"):
-            final_edges_df = final_edges_df.merge(subset_groups, 'left', left_on='label_a', right_on='label').drop('label', axis=1)
-            final_edges_df = final_edges_df.merge(subset_groups, 'left', left_on='label_b', right_on='label',
-                                                  suffixes=['_a', '_b']).drop('label', axis=1)
-            final_edges_df = final_edges_df.query('group_a == group_b')
-            final_edges_df = final_edges_df.rename(columns={'group_a': 'group'}).drop('group_b', axis=1)
-            
-            # Put group first, and sort by group
-            cols = final_edges_df.columns.tolist()
-            cols.remove('group')
-            cols.insert(0, 'group')
-            final_edges_df = final_edges_df[cols]
+        final_edges_df, subset_groups = self.append_group_ccs(final_edges_df, subset_groups, options["cc-distance-threshold"])
 
         with Timer("Writing edges", logger):
             final_edges_df.to_csv(options["output-table"], header=True, index=False)
@@ -305,7 +286,63 @@ class FindAdjacencies(Workflow):
         return brickwall
 
 
-def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requirement=2, ignored_pairs=[]):
+    @classmethod
+    def append_group_col(cls, edges_df, subset_groups):
+        """
+        For the given list of edges, append a 'group' ID to each row.
+        If an edge belongs to multiple groups, the edge is duplicated so
+        it can be listed with multiple group values.
+        """
+        subset_groups = subset_groups[['label', 'group']]
+        with Timer("Appending groups", logger):
+            edges_df = edges_df.merge(subset_groups, 'left', left_on='label_a', right_on='label').drop('label', axis=1)
+            edges_df = edges_df.merge(subset_groups, 'left', left_on='label_b', right_on='label',
+                                                  suffixes=['_a', '_b']).drop('label', axis=1)
+            edges_df = edges_df.query('group_a == group_b')
+            edges_df = edges_df.rename(columns={'group_a': 'group'}).drop('group_b', axis=1)
+            
+            # Put group first, and sort by group
+            cols = edges_df.columns.tolist()
+            cols.remove('group')
+            cols.insert(0, 'group')
+            edges_df = edges_df[cols]
+            return edges_df
+    
+    
+    @classmethod
+    def append_group_ccs(cls, edges_df, subset_groups, max_distance=None):
+        edges_df = cls.append_group_col(edges_df, subset_groups)
+
+        # Note: Assigning node IDs this way assumes subset-requirement == 2
+        subset_groups = subset_groups[['label', 'group']].copy()
+        subset_groups['node_id'] = subset_groups.index.astype(np.uint32)
+        
+        edges_df = edges_df.merge( subset_groups, 'left',
+                                   left_on=['label_a', 'group'], right_on=['label', 'group']
+                                   ).drop('label', axis=1)
+
+        edges_df = edges_df.merge( subset_groups, 'left',
+                                   left_on=['label_b', 'group'], right_on=['label', 'group'],
+                                   suffixes=['_a', '_b'] ).drop('label', axis=1)
+
+        if max_distance is None:
+            thresholded_edges = edges_df[['node_id_a', 'node_id_b']].values
+        else:
+            thresholded_edges = edges_df.query('distance <= @max_distance')[['node_id_a', 'node_id_b']].values
+            
+        group_cc = 1 + connected_components_nonconsecutive(thresholded_edges, subset_groups['node_id'].values)
+        subset_groups['group_cc'] = group_cc.astype(np.int32)
+        
+        edges_df = edges_df.merge(subset_groups[['node_id', 'group_cc']], 'left', left_on='node_id_a', right_on='node_id')
+        edges_df = edges_df.drop(['node_id_a', 'node_id_b', 'node_id'], axis=1)
+
+        # Edges that were not used might be part of two different components.
+        edges_df['group_cc'] = edges_df['group_cc'].astype(np.int32)
+        edges_df.loc[edges_df['distance'] > max_distance, 'group_cc'] = np.int32(-1)
+        return edges_df, subset_groups
+
+
+def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requirement=2):
     """
     Find all pairs of adjacent labels in the given brick,
     and find the central-most point along the edge between them.
@@ -336,10 +373,6 @@ def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requ
             Whether or not both labels in each edge must be in subset_groups, or only one in each edge.
             (Currently, subset_requirement must be 2.)
         
-        ignored_edges:
-            Edges to explicitly discard from analysis.
-            (Typically this is used to exclude previously-found edges from analysis.)
-    
     Returns:
         If the brick contains no edges at all (other than edges to label 0), return None.
         
@@ -358,8 +391,6 @@ def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requ
         
         And 'edge_area' is the total count of the voxels touching both labels.
     """
-    ignored_pairs = np.asarray(ignored_pairs, dtype=np.uint64).reshape((-1,2))
-    
     # ilastikrag requires uint32, so remap to consecutive ints
     brick_labels = set(pd.unique(brick.volume.reshape(-1)))
     if (len(brick_labels) == 1) or (len(brick_labels) == 2 and (0 in brick_labels)):
@@ -393,10 +424,7 @@ def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requ
     if closest_scale is None:
         best_edges_df = _find_and_select_central_edges(remapped_volume, remapped_subset_groups, subset_requirement)
     else:
-        remapped_ignored_pairs = mapper.apply_with_default(ignored_pairs, 0)
-        remapped_ignored_edges = pd.DataFrame(remapped_ignored_pairs, columns=['label_a', 'label_b'], dtype=np.uint32)
-        remapped_ignored_edges = remapped_ignored_edges.query('label_a != 0 and label_b != 0')
-        best_edges_df = _find_closest_approaches(remapped_volume, closest_scale, remapped_subset_groups, remapped_ignored_edges)
+        best_edges_df = _find_closest_approaches(remapped_volume, closest_scale, remapped_subset_groups)
 
     if best_edges_df is None:
         return None
@@ -415,28 +443,21 @@ def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requ
     return best_edges_df
 
 
-def _find_closest_approaches(volume, closest_scale, subset_groups, ignored_edges):
+def _find_closest_approaches(volume, closest_scale, subset_groups):
     """
     Given a volume and one or more groups of labels,
     find intra-group "edges" (label pairs) for objects in the given volume that are
     close to one another, but don't actually touch.
-    
-    Note:
-        None of the body pairs of interest should actually touch each
-        other in the volume.  Use ``ignored_edges`` to explicitly avoid
-        analyzing bodies that actually touch.
     
     Args:
         volume:
             3D label volume, np.uint32
 
         subset_groups:
-            DataFrame with columns [label, group].
+            DataFrame with columns [label, group, group_cc].
             Each grouped subset subset of labels is considered independently.
+            Furthermore, we do not look for edges within the same group_cc
 
-        ignored_edges:
-            Explicitly ignore any edges (body pairs) in this list.
-    
     Returns:
         DataFrame with columns:
             [label_a, label_b, za, ya, xa, zb, yb, xb, distance, edge_area]
@@ -447,13 +468,21 @@ def _find_closest_approaches(volume, closest_scale, subset_groups, ignored_edges
     assert volume.ndim == 3
     assert volume.dtype == np.uint32
 
+    # We can only process groups that contain at least two labels.
+    # If no group contains at least two labels, we're done.
     if subset_groups['group'].value_counts().max() == 1:
         return None
 
-    # Normalize
-    ignored_edges = ignored_edges.copy()
-    swap_df_cols(ignored_edges, None, ignored_edges.eval('label_a > label_b') )
+    # We only find edges from one CC to another.
+    # (We don't bother looking for edges within a pre-established CC)
+    # Therefore, if a group contains only 1 CC, we don't deal with it.
+    cc_counts = subset_groups.groupby('group')['group_cc'].agg('nunique')
+    _kept_groups = cc_counts[cc_counts >= 2].index
+    subset_groups = subset_groups.query('group in @_kept_groups')
 
+    if len(subset_groups) == 0:
+        return None
+    
     def distanceTransformUint8(volume):
         # For the watershed below, the distance transform input need not be super-precise,
         # and vigra's watersheds() function operates MUCH faster on uint8 data.
@@ -488,13 +517,16 @@ def _find_closest_approaches(volume, closest_scale, subset_groups, ignored_edges
 
     subset_edges = pd.DataFrame(subset_edges, columns=['label_a', 'label_b'], dtype=np.uint64)
 
-    # Exclude any pre-specified ignored_edges
-    subset_edges = subset_edges.merge(ignored_edges, 'left', ['label_a', 'label_b'], indicator='source')
-    subset_edges = subset_edges.query('source == "left_only"')
-    subset_edges = subset_edges.drop('source', axis=1)
+    subset_edges = subset_edges.merge(subset_groups[['label', 'group_cc']], 'left',
+                                      left_on='label_a', right_on='label').drop('label', axis=1)
+    subset_edges = subset_edges.merge(subset_groups[['label', 'group_cc']], 'left',
+                                      left_on='label_b', right_on='label',  suffixes=['_a', '_b']).drop('label', axis=1)
+
+    subset_edges = subset_edges.query('group_cc_a != group_cc_b')
+    subset_edges = subset_edges[['label_a', 'label_b']].drop_duplicates()
 
     result_rows = []
-    for (label_a, label_b) in subset_edges[['label_a', 'label_b']].values:
+    for (label_a, label_b) in subset_edges.values:
         coord_a, coord_b, distance = approximate_closest_approach(volume, label_a, label_b, closest_scale)
         result_rows.append((label_a, label_b, *coord_a, *coord_b, distance))
     
@@ -535,6 +567,7 @@ def _find_and_select_central_edges(volume, subset_groups, subset_requirement):
     FIXME: subset_requirement is not respected.
     """
     edges_df = compute_dense_rag_table(volume)
+    subset_groups = subset_groups[['label', 'group']]
     
     # Keep only the edges that belong in the same group(s)
     edges_df = edges_df.merge(subset_groups, 'inner', left_on='label_a', right_on='label').drop('label', axis=1)

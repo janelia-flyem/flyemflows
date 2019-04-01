@@ -96,7 +96,7 @@ def test_findadjacencies(setup_findadjacencies):
 
     # Check CC groups
     cc_sets = set()
-    for _cc, cc_df in output_df.groupby('cc'):
+    for _cc, cc_df in output_df.groupby('group_cc'):
         cc_set = frozenset(cc_df[['label_a', 'label_b']].values.flat)
         cc_sets.add(cc_set)
     assert set(cc_sets) == { frozenset({1,2,8}), frozenset({4,3}) }
@@ -132,7 +132,7 @@ def test_findadjacencies_subset_bodies(setup_findadjacencies):
 
     # Check CC groups
     cc_sets = set()
-    for _cc, cc_df in output_df.groupby('cc'):
+    for _cc, cc_df in output_df.groupby('group_cc'):
         cc_set = frozenset(cc_df[['label_a', 'label_b']].values.flat)
         cc_sets.add(cc_set)
     assert set(cc_sets) == { frozenset({4,3}) }
@@ -166,14 +166,6 @@ def test_findadjacencies_subset_edges(setup_findadjacencies):
     assert (output_df.query('label_a == 3')[['za', 'zb']].values[0] == (0,0)).all()
     assert (output_df.query('label_a == 3')[['ya', 'yb']].values[0] == (6,5)).all() # not 'forward'
     assert (output_df.query('label_a == 3')[['xa', 'xb']].values[0] == (2,2)).all()
-
-    # Check CC groups
-    cc_sets = set()
-    for _cc, cc_df in output_df.groupby('cc'):
-        cc_set = frozenset(cc_df[['label_a', 'label_b']].values.flat)
-        cc_sets.add(cc_set)
-        
-    assert set(cc_sets) == { frozenset({3,4}) }
 
 
 def test_findadjacencies_solid_volume():
@@ -226,15 +218,7 @@ def test_findadjacencies_closest_approach_subset_edges(setup_findadjacencies):
     config["findadjacencies"]["subset-edges"] = 'subset-edges.csv'
     config["findadjacencies"]["find-closest-using-scale"] = 0
 
-    output_df = _impl_test_findadjacencies_closest_approach(template_dir, config)
-
-    # Check CC groups
-    cc_sets = set()
-    for _cc, cc_df in output_df.groupby('cc'):
-        cc_set = frozenset(cc_df[['label_a', 'label_b']].values.flat)
-        cc_sets.add(cc_set)
-    
-    assert set(cc_sets) == { frozenset(s) for s in [{3,4}, {6,7,8}] }
+    _output_df = _impl_test_findadjacencies_closest_approach(template_dir, config)
 
 
 
@@ -250,7 +234,7 @@ def test_findadjacencies_closest_approach_subset_labels(setup_findadjacencies):
     
     # Check CC groups
     cc_sets = set()
-    for _cc, cc_df in output_df.groupby('cc'):
+    for _cc, cc_df in output_df.groupby('group_cc'):
         cc_set = frozenset(cc_df[['label_a', 'label_b']].values.flat)
         cc_sets.add(cc_set)
     
