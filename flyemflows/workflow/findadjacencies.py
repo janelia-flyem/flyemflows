@@ -7,11 +7,13 @@ import numpy as np
 import pandas as pd
 
 from dvid_resource_manager.client import ResourceManagerClient
-from neuclease.util import Timer, swap_df_cols, approximate_closest_approach, SparseBlockMask, connected_components_nonconsecutive
+from neuclease.util import (Timer, swap_df_cols, approximate_closest_approach, SparseBlockMask,
+                            connected_components_nonconsecutive, apply_mask_for_labels)
 
 from ilastikrag import Rag
 from dvidutils import LabelMapper
 
+from ..util import stdout_redirected
 from ..brick import BrickWall
 from ..volumes import VolumeService, SegmentationVolumeSchema, DvidVolumeService
 from .util.config_helpers import BodyListSchema, load_body_list, LabelGroupSchema, load_label_groups
@@ -310,6 +312,34 @@ def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requ
     
     (Edges to/from label 0 are discarded.)
     
+    If closest_scale is not None, then non-adjacent pairs will be considered,
+    according to a particular heuristic to decide which pairs to consider.
+    
+    Args:
+        brick:
+            A Brick to analyze
+        
+        closest_scale:
+            If None, then consider direct (touching) adjacencies only.
+            If not-None, then non-direct "adjacencies" (i.e. close-but-not-touching) are found.
+            In that case `closest_scale` should be an integer >=0 indicating the scale at which
+            the analysis will be performed.
+            Higher scales are faster, but less precise.
+            See ``neuclease.util.approximate_closest_approach`` for more information.
+        
+        subset_groups:
+            A DataFrame with columns [label, group].  Only the given labels will be analyzed
+            for adjacencies.  Furthermore, edges (pairs) will only be returned if both labels
+            in the edge are from the same group.
+            
+        subset_requirement:
+            Whether or not both labels in each edge must be in subset_groups, or only one in each edge.
+            (Currently, subset_requirement must be 2.)
+        
+        ignored_edges:
+            Edges to explicitly discard from analysis.
+            (Typically this is used to exclude previously-found edges from analysis.)
+    
     Returns:
         If the brick contains no edges at all (other than edges to label 0), return None.
         
@@ -387,9 +417,9 @@ def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requ
 
 def _find_closest_approaches(volume, closest_scale, subset_groups, ignored_edges):
     """
-    Given a volume and a list of list of edges (body pairs),
-    Find the points at which the two bodies come closest to one
-    another in the volume.
+    Given a volume and one or more groups of labels,
+    find intra-group "edges" (label pairs) for objects in the given volume that are
+    close to one another, but don't actually touch.
     
     Note:
         None of the body pairs of interest should actually touch each
@@ -399,15 +429,11 @@ def _find_closest_approaches(volume, closest_scale, subset_groups, ignored_edges
     Args:
         volume:
             3D label volume, np.uint32
-            
-        subset_bodies:
-            Consider all pairwise combinations of bodies in this list
-            and use it instead of subset_edges.
-            Cannot be used with subset_edges.
-        
-        subset_edges:
-            The list of body pairs to analyze.  Cannot be used with subset_bodies.
-        
+
+        subset_groups:
+            DataFrame with columns [label, group].
+            Each grouped subset subset of labels is considered independently.
+
         ignored_edges:
             Explicitly ignore any edges (body pairs) in this list.
     
@@ -428,10 +454,39 @@ def _find_closest_approaches(volume, closest_scale, subset_groups, ignored_edges
     ignored_edges = ignored_edges.copy()
     swap_df_cols(ignored_edges, None, ignored_edges.eval('label_a > label_b') )
 
-    # Compute all intra-group pair combinations
-    subset_edges = subset_groups.merge(subset_groups, 'inner', 'group', suffixes=['_a', '_b'])
-    swap_df_cols(subset_edges, None, subset_edges.eval('label_a > label_b') ) # Normalize
-    subset_edges = subset_edges.drop_duplicates(['label_a', 'label_b']).query('label_a != label_b')
+    def distanceTransformUint8(volume):
+        # For the watershed below, the distance transform input need not be super-precise,
+        # and vigra's watersheds() function operates MUCH faster on uint8 data.
+        dt = vigra.filters.distanceTransform(volume)
+        dt = (255*dt / dt.max()).astype(np.uint8)
+        return dt
+
+    def fill_gaps(volume):
+        dt = distanceTransformUint8(volume)
+        
+        # The watersheds function annoyingly prints a bunch of useless messages to stdout,
+        # so hide that stuff using this context manager.
+        with stdout_redirected():
+            ws, _max_label = vigra.analysis.watersheds(dt, seeds=volume, method='Turbo')
+        return ws
+
+    subset_edges = []
+    for _group_id, group_df in subset_groups.groupby('group'):
+        group_labels = pd.unique(group_df['label'])
+        if len(group_labels) == 1:
+            continue
+        elif len(group_labels) == 2:
+            subset_edges.append( sorted(group_labels) )
+        else:
+            # Rather than computing pairwise distances between all labels,
+            # Figure out which labels are close to each other by filling the
+            # gaps in the image and computing direct adjacencies.
+            masked_vol = apply_mask_for_labels(volume, group_df['label'])
+            filled_vol = fill_gaps(masked_vol)
+            edges_df = compute_dense_rag_table(filled_vol)
+            subset_edges.extend( edges_df[['label_a', 'label_b']].drop_duplicates().values.tolist() )
+
+    subset_edges = pd.DataFrame(subset_edges, columns=['label_a', 'label_b'], dtype=np.uint64)
 
     # Exclude any pre-specified ignored_edges
     subset_edges = subset_edges.merge(ignored_edges, 'left', ['label_a', 'label_b'], indicator='source')
@@ -479,29 +534,8 @@ def _find_and_select_central_edges(volume, subset_groups, subset_requirement):
         
     FIXME: subset_requirement is not respected.
     """
-    assert volume.dtype == np.uint32
-    rag = Rag(vigra.taggedView(volume, 'zyx'))
+    edges_df = compute_dense_rag_table(volume)
     
-    # Edges are stored by axis -- concatenate them all.
-    edges_z, edges_y, edges_x = rag.dense_edge_tables.values()
-
-    del rag
-
-    if len(edges_z) == len(edges_y) == len(edges_x) == 0:
-        return None # No edges detected
-    
-    edges_z['axis'] = 'z'
-    edges_y['axis'] = 'y'
-    edges_x['axis'] = 'x'
-    
-    all_edges = list(filter(len, [edges_z, edges_y, edges_x]))
-    edges_df = pd.concat(all_edges, ignore_index=True)
-    edges_df.rename(columns={'sp1': 'label_a', 'sp2': 'label_b'}, inplace=True)
-    del edges_df['edge_label']
-
-    # Filter: not interested in label 0
-    edges_df.query("label_a != 0 and label_b != 0", inplace=True)
-
     # Keep only the edges that belong in the same group(s)
     edges_df = edges_df.merge(subset_groups, 'inner', left_on='label_a', right_on='label').drop('label', axis=1)
     edges_df = edges_df.merge(subset_groups, 'inner', left_on='label_b', right_on='label',
@@ -546,6 +580,43 @@ def _find_and_select_central_edges(volume, subset_groups, subset_requirement):
 
     return best_edges_df[['label_a', 'label_b', 'za', 'ya', 'xa', 'zb', 'yb', 'xb', 'distance', 'edge_area']]
 
+
+def compute_dense_rag_table(volume):
+    """
+    Find all voxel-level adjacencies in the volume,
+    except for adjacencies to ID 0.
+    
+    Returns:
+        dataframe with columns:
+        ['label_a', 'label_b', 'forwardness', 'z', 'y', 'x', 'axis']
+        where ``label_a < label_b`` for all rows, and `forwardness` indicates whether
+        label_a is on the 'left' (upper) or on the 'right' (lower) side
+        of the voxel boundary.
+    """
+    assert volume.dtype == np.uint32
+    rag = Rag(vigra.taggedView(volume, 'zyx'))
+    
+    # Edges are stored by axis -- concatenate them all.
+    edges_z, edges_y, edges_x = rag.dense_edge_tables.values()
+
+    del rag
+
+    if len(edges_z) == len(edges_y) == len(edges_x) == 0:
+        return None # No edges detected
+    
+    edges_z['axis'] = 'z'
+    edges_y['axis'] = 'y'
+    edges_x['axis'] = 'x'
+    
+    all_edges = list(filter(len, [edges_z, edges_y, edges_x]))
+    edges_df = pd.concat(all_edges, ignore_index=True)
+    edges_df.rename(columns={'sp1': 'label_a', 'sp2': 'label_b'}, inplace=True)
+    del edges_df['edge_label']
+
+    # Filter: not interested in label 0
+    edges_df.query("label_a != 0 and label_b != 0", inplace=True)
+
+    return edges_df
 
 def select_central_edges(all_edges_df, coord_cols=['za', 'ya', 'xa']):
     """

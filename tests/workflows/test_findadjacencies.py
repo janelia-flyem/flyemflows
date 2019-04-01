@@ -357,12 +357,22 @@ def test_findadjacencies_from_dvid_sparse_labels(setup_dvid_segmentation_input):
 def test_findadjacencies_from_dvid_sparse_edges(setup_dvid_segmentation_input):
     template_dir, config, _volume, _dvid_address, _repo_uuid = setup_dvid_segmentation_input
 
-    subset_edges = pd.DataFrame([[1,2], [4,3], [7,6], [1,6], [2,8]], columns=['label_a', 'label_b'])
+    subset_edges = pd.DataFrame([[1,2], [4,3], [7,6], [2,8]], columns=['label_a', 'label_b'])
     subset_edges.to_csv(f'{template_dir}/subset-edges.csv', index=False, header=True)
     
     # Overwrite config with updated settings.
     config = copy.deepcopy(config)
     config["findadjacencies"]["subset-edges"] = 'subset-edges.csv'
+
+    _impl_test_findadjacencies_from_dvid_sparse(template_dir, config)
+
+
+def test_findadjacencies_from_dvid_sparse_groups(setup_dvid_segmentation_input):
+    template_dir, config, _volume, _dvid_address, _repo_uuid = setup_dvid_segmentation_input
+
+    # Overwrite config with updated settings.
+    config = copy.deepcopy(config)
+    config["findadjacencies"]["subset-label-groups"] = [[1,2,6,7,8], [3,4,5,9]]
 
     _impl_test_findadjacencies_from_dvid_sparse(template_dir, config)
 
@@ -382,8 +392,9 @@ def _impl_test_findadjacencies_from_dvid_sparse(template_dir, config):
     assert (1,2) in label_pairs
     assert (3,4) in label_pairs
     assert (6,7) in label_pairs
-    assert (1,6) in label_pairs
     assert (2,8) in label_pairs
+    assert (1,6) not in label_pairs
+    assert (1,7) not in label_pairs
     
     assert (output_df.query('label_a == 3')[['za', 'zb']].values[0] == 31).all()
     assert (output_df.query('label_a == 3')[['ya', 'yb']].values[0] == (6*16, 6*16-1)).all() # not 'forward'
@@ -448,6 +459,6 @@ if __name__ == "__main__":
     
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_findadjacencies']
-    args += ['-x']
-    #args += ['-k', 'findadjacencies_from_dvid_sparse_edges or findadjacencies_different_dvid_blocks_sparse_labels or findadjacencies_different_dvid_blocks_sparse_edges']
+    #args += ['-x']
+    #args += ['-k', 'findadjacencies_from_dvid_sparse_groups']
     pytest.main(args)
