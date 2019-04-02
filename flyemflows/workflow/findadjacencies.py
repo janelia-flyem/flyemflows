@@ -265,9 +265,11 @@ class FindAdjacencies(Workflow):
     def init_brickwall(self, volume_service, subset_groups):
         try:
             brick_coords_df = volume_service.sparse_brick_coords_for_label_groups(subset_groups)
+            np.save('brick-coords.npy', brick_coords_df.to_records(index=False))
+
             brick_shape = volume_service.preferred_message_shape
-            coords = brick_coords_df[['z', 'y', 'x']].values // brick_shape
-            sbm = SparseBlockMask.create_from_lowres_coords(coords, brick_shape)
+            brick_indexes = brick_coords_df[['z', 'y', 'x']].values // brick_shape
+            sbm = SparseBlockMask.create_from_lowres_coords(brick_indexes, brick_shape)
         except NotImplementedError:
             logger.warning("The volume service does not support sparse fetching.  All bricks will be analyzed.")
             sbm = None
