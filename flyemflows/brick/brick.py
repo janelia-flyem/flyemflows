@@ -76,6 +76,7 @@ class Brick:
             self.location_id = tuple(logical_box[0])
 
         self._volume = volume
+        self._volume.flags['WRITEABLE'] = False
         if self._volume is not None:
             assert ((self.physical_box[1] - self.physical_box[0]) == self._volume.shape).all()
         
@@ -117,11 +118,13 @@ class Brick:
                                               self._dtype,
                                               self._compressed_box,
                                               self.physical_box )
+            self._volume.flags['WRITEABLE'] = False
             return self._volume
         
         if self._create_volume_fn is not None:
             fn = cloudpickle.loads(self._create_volume_fn)
             self._volume = fn(self.physical_box)
+            self._volume.flags['WRITEABLE'] = False
             assert (self._volume.shape == (self.physical_box[1] - self.physical_box[0])).all()
             del self._create_volume_fn
             return self._volume
@@ -137,8 +140,10 @@ class Brick:
         if self._destroyed:
             raise RuntimeError("Attempting to compress data for a brick that has already been explicitly destroyed:\n"
                                f"{self}")
-
-        if self._volume is not None and self.compression is not None:
+        elif self._compressed_volume is not None:
+            # Compressed vol already exists, so simply delete the uncompressed.
+            self._volume = None
+        elif self._volume is not None and self.compression is not None:
             self._dtype = self._volume.dtype
             self._compressed_box, self._compressed_volume = compress_volume(self.compression, self._volume, self.physical_box)
             self._volume = None
