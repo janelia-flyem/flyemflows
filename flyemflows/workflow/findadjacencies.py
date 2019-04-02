@@ -205,7 +205,9 @@ class FindAdjacencies(Workflow):
                 #        it might be better to distribute each brick's rows.
                 #        (But that will involve a dask join step...)
                 #        The subset_groups should generally be under 1 GB, anyway...
-                return find_edges_in_brick(brick, None, sg, subset_requirement)
+                edges = find_edges_in_brick(brick, None, sg, subset_requirement)
+                brick.compress()
+                return edges
             adjacent_edge_tables = brickwall.bricks.map(find_adj, sg=delayed(subset_groups)).compute()
 
         with Timer("Combining/filtering direct adjacencies", logger):
@@ -231,7 +233,9 @@ class FindAdjacencies(Workflow):
             
             with Timer("Finding closest approaches", logger):
                 def find_closest(brick, sg):
-                    return find_edges_in_brick(brick, find_closest_using_scale, sg, subset_requirement)
+                    edges = find_edges_in_brick(brick, find_closest_using_scale, sg, subset_requirement)
+                    brick.compress()
+                    return edges
                 nonadjacent_edge_tables = brickwall.bricks.map(find_closest, sg=delayed(subset_groups)).compute()
 
             with Timer("Combining closest approaches", logger):
@@ -284,7 +288,7 @@ class FindAdjacencies(Workflow):
             # TODO: Allow the user to configure whether or not the halo should
             #       be fetched from the outset, or added after the blocks are loaded.
             halo = self.config["findadjacencies"]["halo"]
-            brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.client, target_partition_size_voxels, halo, sbm)
+            brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.client, target_partition_size_voxels, halo, sbm, compression='lz4_2x')
 
         return brickwall
 
