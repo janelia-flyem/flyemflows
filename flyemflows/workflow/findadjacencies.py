@@ -5,6 +5,7 @@ import logging
 import vigra
 import numpy as np
 import pandas as pd
+from dask.delayed import delayed
 
 from dvid_resource_manager.client import ResourceManagerClient
 from neuclease.util import (Timer, swap_df_cols, approximate_closest_approach, SparseBlockMask,
@@ -199,13 +200,13 @@ class FindAdjacencies(Workflow):
         brickwall = self.init_brickwall(volume_service, subset_groups)
 
         with Timer("Finding direct adjacencies", logger):
-            def find_adj(brick):
-                # FIXME: Instead of broadcasting the entire brick_coords_df to all tasks,
+            def find_adj(brick, sg):
+                # FIXME: Instead of broadcasting the entire subset_groups to all tasks,
                 #        it might be better to distribute each brick's rows.
                 #        (But that will involve a dask join step...)
-                #        The brick_coords_df should generally be under 1 GB, anyway...
-                return find_edges_in_brick(brick, None, subset_groups, subset_requirement)
-            adjacent_edge_tables = brickwall.bricks.map(find_adj).compute()
+                #        The subset_groups should generally be under 1 GB, anyway...
+                return find_edges_in_brick(brick, None, sg, subset_requirement)
+            adjacent_edge_tables = brickwall.bricks.map(find_adj, sg=delayed(subset_groups)).compute()
 
         with Timer("Combining/filtering direct adjacencies", logger):
             adjacent_edge_tables = list(filter(lambda t: t is not None, adjacent_edge_tables))
@@ -229,9 +230,9 @@ class FindAdjacencies(Workflow):
             np.save('best-adjacent-brick-edges-for-debug.npy', best_nonadjacent_edges_df.to_records(index=False))
             
             with Timer("Finding closest approaches", logger):
-                def find_closest(brick):
-                    return find_edges_in_brick(brick, find_closest_using_scale, subset_groups, subset_requirement)
-                nonadjacent_edge_tables = brickwall.bricks.map(find_closest).compute()
+                def find_closest(brick, sg):
+                    return find_edges_in_brick(brick, find_closest_using_scale, sg, subset_requirement)
+                nonadjacent_edge_tables = brickwall.bricks.map(find_closest, sg=delayed(subset_groups)).compute()
 
             with Timer("Combining closest approaches", logger):
                 nonadjacent_edge_tables = list(filter(lambda t: t is not None, nonadjacent_edge_tables))
