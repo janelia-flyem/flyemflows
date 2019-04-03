@@ -1,4 +1,4 @@
-import lz4
+import lz4.frame
 import numpy as np
 from neuclease.util import box_to_slicing
 from neuclease.dvid import encode_nonaligned_labelarray_volume, decode_labelarray_volume
@@ -32,13 +32,13 @@ def compress_volume(method, volume, box_zyx):
 
     if method == 'lz4':
         volume = np.asarray(volume, order='C')
-        encoded = lz4.compress(volume)
+        encoded = lz4.frame.compress(volume)
         return box_zyx, encoded
 
     if method == 'lz4_2x':
         volume = np.asarray(volume, order='C')
-        encoded = lz4.compress(volume)
-        encoded = lz4.compress(encoded)
+        encoded = lz4.frame.compress(volume)
+        encoded = lz4.frame.compress(encoded)
         return box_zyx, encoded
 
 
@@ -53,13 +53,13 @@ def uncompress_volume(method, encoded_data, dtype, encoded_box_zyx, box_zyx=None
     
     if method == 'lz4':
         shape = encoded_box_zyx[1] - encoded_box_zyx[0]
-        buf = lz4.uncompress(encoded_data)
+        buf = lz4.frame.decompress(encoded_data)
         volume = np.frombuffer(buf, dtype).reshape(shape)
     
     if method == 'lz4_2x':
         shape = encoded_box_zyx[1] - encoded_box_zyx[0]
-        buf = lz4.uncompress(encoded_data)
-        buf = lz4.uncompress(buf)
+        buf = lz4.frame.decompress(encoded_data)
+        buf = lz4.frame.decompress(buf)
         volume = np.frombuffer(buf, dtype).reshape(shape)
 
     if box_zyx is None or (box_zyx == encoded_box_zyx).all():

@@ -1,5 +1,5 @@
 import os
-import lz4
+import lz4.frame
 import numpy as np
 
 from dvidutils import LabelMapper
@@ -56,7 +56,7 @@ class LabelmappedVolumeService(VolumeServiceWriter):
         if self._compressed_mapping_pairs is None:
             # Load the labelmapping and then compress 
             mapping_pairs = np.asarray(self.mapping_pairs, order='C')
-            self._compressed_mapping_pairs = (mapping_pairs.shape, mapping_pairs.dtype, lz4.compress(mapping_pairs)) #@UndefinedVariable
+            self._compressed_mapping_pairs = (mapping_pairs.shape, mapping_pairs.dtype, lz4.frame.compress(mapping_pairs)) #@UndefinedVariable
 
         d = self.__dict__.copy()
         
@@ -72,7 +72,7 @@ class LabelmappedVolumeService(VolumeServiceWriter):
         if self._mapping_pairs is None:
             if self._compressed_mapping_pairs is not None:
                 shape, dtype, compressed = self._compressed_mapping_pairs
-                self._mapping_pairs = np.frombuffer(lz4.uncompress(compressed), dtype).reshape(shape) #@UndefinedVariable
+                self._mapping_pairs = np.frombuffer(lz4.frame.decompress(compressed), dtype).reshape(shape) #@UndefinedVariable
             else:
                 self._mapping_pairs = load_labelmap(self.labelmap_config, '.')
                 

@@ -39,8 +39,12 @@ requirements:
     - dask-jobqueue
 
     # Misc. serialization tools
-    - lz4
-    - python-lz4
+
+    # Note:
+    #  Previously, the lz4 packages were named 'lz4' (c library) and 'python-lz4' (python bindings)
+    #  but now they are named 'lz4-c' (c library) and 'lz4' (python bindings)
+    - lz4 >=2,<3
+
     - cloudpickle
     - tblib
 
