@@ -174,9 +174,12 @@ def launch_flow(template_dir, num_workers, kill_cluster=True, _custom_execute_fn
     os.chmod(f'{execution_dir}/workflow.yaml', 0o444) # read-only
     
     # Export conda env for future reference
-    p = subprocess.run('conda env export', shell=True, check=True, stdout=subprocess.PIPE)
-    with open(f'{execution_dir}/conda-environment.yml', 'wb') as f:
-        f.write(p.stdout)
+    try:
+        p = subprocess.run('conda env export', shell=True, check=True, stdout=subprocess.PIPE)
+        with open(f'{execution_dir}/conda-environment.yml', 'wb') as f:
+            f.write(p.stdout)
+    except Exception as ex:
+        logger.warning(f"Failed to export the conda environment: {ex}")
 
     # Export bash environment variables for future reference
     with open(f'{execution_dir}/bash-environment.sh', 'w') as f:
