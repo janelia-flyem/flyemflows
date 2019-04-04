@@ -356,9 +356,19 @@ def test_findadjacencies_from_dvid_sparse_groups(setup_dvid_segmentation_input):
 
     # Overwrite config with updated settings.
     config = copy.deepcopy(config)
-    config["findadjacencies"]["subset-label-groups"] = [[1,2,6,7,8], [3,4,5,9]]
+    config["findadjacencies"]["subset-label-groups"] = [[1,2,6,7,8], [3,4,5,9], [2,7], [8,6]]
 
-    _impl_test_findadjacencies_from_dvid_sparse(template_dir, config)
+    execution_dir, workflow = _impl_test_findadjacencies_from_dvid_sparse(template_dir, config)
+
+    final_config = workflow.config
+    output_df = pd.read_csv(f'{execution_dir}/{final_config["findadjacencies"]["output-table"]}')
+
+    # More checks
+    label_pairs = output_df[['label_a', 'label_b']].values
+    label_pairs = list(map(tuple, label_pairs))
+    assert (1,2) in label_pairs
+    assert (2,7) in label_pairs
+    assert (6,8) in label_pairs
 
 
 def _impl_test_findadjacencies_from_dvid_sparse(template_dir, config):
@@ -388,6 +398,8 @@ def _impl_test_findadjacencies_from_dvid_sparse(template_dir, config):
     #assert (output_df.query('label_a == 6')[['za', 'zb']].values[0] == 31).all()
     assert (output_df.query('label_a == 6')[['ya', 'yb']].values[0] == (2*16-1, 3*16)).all() # not 'forward'
     assert (output_df.query('label_a == 6')[['xa', 'xb']].values[0] == 6*16).all()
+    
+    return execution_dir, workflow
     
 
 def test_findadjacencies_different_dvid_blocks_sparse_labels(setup_dvid_segmentation_input):
