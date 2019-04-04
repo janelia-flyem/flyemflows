@@ -39,6 +39,12 @@ class FindAdjacencies(Workflow):
     and output a coordinate for each that lies along the adjacency
     boundary, and somewhat near the centroid of the boundary.
     
+    Additionally, this workflow can find near-adjacent "edges",
+    for specified groups of labels.  In that case, the emitted coordinates
+    are guaranteed to reside in the labels of interest, and reside close to
+    the points of "closest approach" between the two listed bodies within
+    the brick in which the bodies were analyzed.
+    
     Note: This workflow performs well on medium-sized volumes,
           or on large volumes when filtering the set of edges using either
           the restrict-bodies or restrict-edges settings in the config.
@@ -251,10 +257,13 @@ class FindAdjacencies(Workflow):
         with Timer("Sorting edges", logger):
             del best_adjacent_edges_df['group']
             del best_adjacent_edges_df['group_cc']
-            final_edges_df = pd.concat((best_adjacent_edges_df, best_nonadjacent_edges_df))
-            # This sort isn't strictly necessary, but makes it
-            # easier to diff results of one execution vs another.
+            final_edges_df = pd.concat((best_adjacent_edges_df, best_nonadjacent_edges_df), ignore_index=True)
+            # This sort isn't necessary, but makes it easier to diff
+            # the results of one execution vs another, for debugging.
             final_edges_df.sort_values(list(final_edges_df.columns), inplace=True)
+
+        assert len(best_adjacent_edges_df.merge(best_nonadjacent_edges_df, 'inner', ['label_a', 'label_b'])) == 0, \
+            "The sets of adjacent and non-adjacent edges were supposed to be completely disjoint."
 
         final_edges_df, subset_groups = append_group_ccs(final_edges_df, subset_groups, options["cc-distance-threshold"])
 
@@ -264,11 +273,6 @@ class FindAdjacencies(Workflow):
             # Save in numpy format, too.
             npy_path = options["output-table"][:-4] + '.npy'
             np.save(npy_path, final_edges_df.to_records(index=False))
-
-            # For debugging and analysis, write complete table of edges we found in all bricks,
-            # even though some pairs may appear more than once.
-            all_edges_df = pd.concat((best_adjacent_edges_df, best_nonadjacent_edges_df))
-            np.save('all-unfiltered-brick-edges-for-debug.npy', all_edges_df.to_records(index=False))
 
 
     def init_brickwall(self, volume_service, subset_groups):
@@ -302,53 +306,93 @@ def append_group_col(edges_df, subset_groups):
     For the given list of edges, append a 'group' ID to each row.
     If an edge belongs to multiple groups, the edge is duplicated so
     it can be listed with multiple group values.
+    
+    Note: Each [label_a,label_b] pair of the input will be used only once
+          (but will be duplicated into multiple groups if necessary),
+          even if duplicate edge pairs have differing values in the other columns.
+          That is, don't pass in rows with identical [label_a, label_b] columns
+          but have different values in the other columns.
     """
     subset_groups = subset_groups[['label', 'group']]
-    with Timer("Appending groups", logger):
-        edges_df = edges_df.merge(subset_groups, 'left', left_on='label_a', right_on='label').drop('label', axis=1)
-        edges_df = edges_df.merge(subset_groups, 'left', left_on='label_b', right_on='label',
-                                              suffixes=['_a', '_b']).drop('label', axis=1)
-        edges_df = edges_df.query('group_a == group_b')
-        edges_df = edges_df.rename(columns={'group_a': 'group'}).drop('group_b', axis=1)
-        
-        # Put group first, and sort by group
-        cols = edges_df.columns.tolist()
-        cols.remove('group')
-        cols.insert(0, 'group')
-        edges_df = edges_df[cols]
-        return edges_df
+    edges_df = edges_df.drop_duplicates(['label_a', 'label_b'])
+    
+    # Assign label_a groups, (duplicating edges as necessary if label_a belongs to multiple groups) 
+    edges_a_df = edges_df.merge(subset_groups, 'left', left_on='label_a', right_on='label').drop('label', axis=1)
+
+    # Assign label_b groups, (duplicating edges as necessary if label_b belongs to multiple groups) 
+    edges_b_df = edges_df[['label_a', 'label_b']].merge(subset_groups, 'left', left_on='label_b', right_on='label').drop('label', axis=1)
+
+    # Keep rows that have matching groups on both sides
+    edges_df = edges_a_df.merge(edges_b_df, 'inner', ['label_a', 'label_b', 'group'])
+    
+    # Put group first, and sort by group
+    cols = edges_df.columns.tolist()
+    cols.remove('group')
+    cols.insert(0, 'group')
+    edges_df = edges_df[cols]
+    return edges_df
 
 
 def append_group_ccs(edges_df, subset_groups, max_distance=None):
-    edges_df = append_group_col(edges_df, subset_groups)
-
-    # Note: Assigning node IDs this way assumes subset-requirement == 2
-    subset_groups = subset_groups[['label', 'group']].copy()
-    subset_groups['node_id'] = subset_groups.index.astype(np.uint32)
+    """
+    For the given edges_df, assign a group to each edge
+    (duplicating edges if they belong to multiple groups),
+    and return the cc id as a new column 'group_cc'.
     
-    edges_df = edges_df.merge( subset_groups, 'left',
-                               left_on=['label_a', 'group'], right_on=['label', 'group']
-                               ).drop('label', axis=1)
+    The CC operation is performed on all groups at once,
+    using disjoint sets of node IDs for every group.
+    Thus, the CC ids for each group do NOT start at 1.
+    Rather, the values in group_cc are arbitrary and
+    not even consecutive.
+    
+    max_distance:
+        If provided, exclude edges that exceed this distance from
+        the CC computation (but include them in the resulting dataframe).
+        For such excluded edges, group_cc == -1. 
+    """
+    with Timer("Computing group_cc", logger):
+        edges_df = append_group_col(edges_df, subset_groups)
 
-    edges_df = edges_df.merge( subset_groups, 'left',
-                               left_on=['label_b', 'group'], right_on=['label', 'group'],
-                               suffixes=['_a', '_b'] ).drop('label', axis=1)
-
-    if max_distance is None:
-        thresholded_edges = edges_df[['node_id_a', 'node_id_b']].values
-    else:
-        thresholded_edges = edges_df.query('distance <= @max_distance')[['node_id_a', 'node_id_b']].values
+        # Assign a unique id for every label/group combination,
+        # so we can run CC on the whole set at once.
+        # Labels that appear more than once (in different groups)
+        # will be treated as independent nodes,
+        # and there will be no edges between groups.
+        #
+        # Note: Assigning node IDs this way assumes subset-requirement == 2
+        subset_groups = subset_groups[['label', 'group']].copy()
+        subset_groups['node_id'] = subset_groups.index.astype(np.uint32)
         
-    group_cc = 1 + connected_components_nonconsecutive(thresholded_edges, subset_groups['node_id'].values)
-    subset_groups['group_cc'] = group_cc.astype(np.int32)
-    
-    edges_df = edges_df.merge(subset_groups[['node_id', 'group_cc']], 'left', left_on='node_id_a', right_on='node_id')
-    edges_df = edges_df.drop(['node_id_a', 'node_id_b', 'node_id'], axis=1)
+        # Append columns for [node_id_a, node_id_b]
+        edges_df = (edges_df.merge( subset_groups, 'left',
+                                    left_on=['label_a', 'group'], right_on=['label', 'group'])
+                    .drop('label', axis=1))
+        edges_df = (edges_df.merge( subset_groups, 'left',
+                                    left_on=['label_b', 'group'], right_on=['label', 'group'],
+                                    suffixes=['_a', '_b'])
+                   .drop('label', axis=1))
 
-    # Edges that were not used might be part of two different components.
-    edges_df['group_cc'] = edges_df['group_cc'].astype(np.int32)
-    edges_df.loc[edges_df['distance'] > max_distance, 'group_cc'] = np.int32(-1)
-    return edges_df, subset_groups
+        # Drop edges that are too distant to consider for CC
+        if max_distance is None:
+            thresholded_edges = edges_df[['node_id_a', 'node_id_b']].values
+        else:
+            thresholded_edges = edges_df.query('distance <= @max_distance')[['node_id_a', 'node_id_b']].values
+
+        # Compute CC on the entire edge set, yielding a unique id for every CC in each group
+        group_cc = 1 + connected_components_nonconsecutive(thresholded_edges, subset_groups['node_id'].values)
+        subset_groups['group_cc'] = group_cc.astype(np.int32)
+        
+        # Append group_cc to every row.
+        # All edges we actually used will have the same group_cc for node_id_a/node_id_b,
+        # so just use node_id_a as the lookup.
+        edges_df = edges_df.merge(subset_groups[['node_id', 'group_cc']], 'left', left_on='node_id_a', right_on='node_id')
+        edges_df = edges_df.drop(['node_id_a', 'node_id_b', 'node_id'], axis=1)
+    
+        # But edges that were NOT used might be part of two different components.
+        # group_cc has no valid value for those rows.  Set to -1.
+        edges_df['group_cc'] = edges_df['group_cc'].astype(np.int32)
+        edges_df.loc[edges_df['distance'] > max_distance, 'group_cc'] = np.int32(-1)
+        return edges_df, subset_groups
 
 
 def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requirement=2):

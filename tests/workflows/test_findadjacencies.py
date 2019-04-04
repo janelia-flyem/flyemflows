@@ -284,10 +284,10 @@ def setup_dvid_segmentation_input(setup_dvid_repo):
                       [_,1,1,2, 2,_,_,_], # 2
                       [_,1,1,2, 8,_,7,7], # 3
 
-                      [_,_,_,_, _,_,_,_], # 4
-                      [_,4,4,4, _,_,_,_], # 5
-                      [_,3,3,3, _,5,9,_], # 6
-                      [_,_,_,_, _,_,_,_]]]# 7
+                      [_,1,1,2, 8,_,7,7], # 4
+                      [_,_,_,_, _,_,_,_], # 5
+                      [_,4,4,4, _,_,_,_], # 6
+                      [_,3,3,3, _,5,9,_]]]# 7
     #                  0 1 2 3  4 5 6 7
     
     lowres_volume = np.zeros((4,8,8), np.uint64)
@@ -356,7 +356,7 @@ def test_findadjacencies_from_dvid_sparse_groups(setup_dvid_segmentation_input):
 
     # Overwrite config with updated settings.
     config = copy.deepcopy(config)
-    config["findadjacencies"]["subset-label-groups"] = [[1,2,6,7,8], [3,4,5,9], [2,7], [8,6]]
+    config["findadjacencies"]["subset-label-groups"] = [[1,2,6,7,8], [1,2], [2,8], [3,4,5,9], [2,7], [8,6]]
 
     execution_dir, workflow = _impl_test_findadjacencies_from_dvid_sparse(template_dir, config)
 
@@ -382,6 +382,8 @@ def _impl_test_findadjacencies_from_dvid_sparse(template_dir, config):
     label_pairs = output_df[['label_a', 'label_b']].values
     assert 0 not in label_pairs.flat
 
+    assert output_df[['label_a', 'label_b', 'group']].duplicated().sum() == 0
+
     label_pairs = list(map(tuple, label_pairs))
     assert (1,2) in label_pairs
     assert (3,4) in label_pairs
@@ -391,7 +393,7 @@ def _impl_test_findadjacencies_from_dvid_sparse(template_dir, config):
     assert (1,7) not in label_pairs
     
     assert (output_df.query('label_a == 3')[['za', 'zb']].values[0] == 31).all()
-    assert (output_df.query('label_a == 3')[['ya', 'yb']].values[0] == (6*16, 6*16-1)).all() # not 'forward'
+    assert (output_df.query('label_a == 3')[['ya', 'yb']].values[0] == (7*16, 7*16-1)).all() # not 'forward'
     assert (output_df.query('label_a == 3')[['xa', 'xb']].values[0] == 2.5*16-1).all()
 
     # The Z and X locations here are a little hard to test, since several voxels are tied.
