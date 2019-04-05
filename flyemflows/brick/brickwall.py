@@ -171,6 +171,7 @@ class BrickWall:
             assert scale == 0, "FIXME: I don't think the sparse feature works with scales other than 0."
             sparse_boxes = sparse_block_mask.sparse_boxes(grid)
             if len(sparse_boxes) == 0:
+                # Some workflows check for this message; if you change it, change those checks!
                 raise RuntimeError("SparseBlockMask selects no blocks at all!")
 
         return BrickWall.from_accessor_func( downsampled_box,
