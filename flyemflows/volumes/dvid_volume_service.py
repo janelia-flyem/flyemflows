@@ -833,8 +833,10 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         coords_df[['z', 'y', 'x']] *= brick_shape
 
         if clip:
-            keep =  (coords_df[['z', 'y', 'x']] >= self.bounding_box_zyx[0]).all(axis=1)
-            keep &= (coords_df[['z', 'y', 'x']]  < self.bounding_box_zyx[1]).all(axis=1)
+            # Keep if the last pixel in the brick is to the right of the bounding-box start
+            # and the first pixel in the brick is to the left of the bounding-box stop
+            keep =  (coords_df[['z', 'y', 'x']] + brick_shape > self.bounding_box_zyx[0]).all(axis=1)
+            keep &= (coords_df[['z', 'y', 'x']]               < self.bounding_box_zyx[1]).all(axis=1)
             coords_df = coords_df.loc[keep]
         
         return coords_df[['z', 'y', 'x', 'label']]
