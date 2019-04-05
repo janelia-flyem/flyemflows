@@ -475,17 +475,23 @@ class CopySegmentation(Workflow):
         pyramid_depth = options["pyramid-depth"]
 
         input_slab_box = output_slab_box - self.translation_offset_zyx
-        input_wall = BrickWall.from_volume_service( self.input_service,
-                                                    0,
-                                                    input_slab_box,
-                                                    self.client,
-                                                    self.target_partition_size_voxels,
-                                                    sparse_block_mask=self.sbm,
-                                                    compression=options['brick-compression'] )
-        if input_wall.num_bricks == 0:
-            logger.info(f"Slab: {slab_index}: No bricks to process.  Skipping.")
-            return
-        
+        try:
+            input_wall = BrickWall.from_volume_service( self.input_service,
+                                                        0,
+                                                        input_slab_box,
+                                                        self.client,
+                                                        self.target_partition_size_voxels,
+                                                        sparse_block_mask=self.sbm,
+                                                        compression=options['brick-compression'] )
+
+            if input_wall.num_bricks == 0:
+                logger.info(f"Slab: {slab_index}: No bricks to process.  Skipping.")
+                return
+
+        except RuntimeError as ex:
+            if "SparseBlockMask selects no blocks" in str(ex):
+                return
+
         input_wall.persist_and_execute(f"Slab {slab_index}: Reading ({input_slab_box[:,::-1].tolist()})", logger)
 
         # Translate coordinates from input to output

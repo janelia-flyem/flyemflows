@@ -421,5 +421,6 @@ if __name__ == "__main__":
     
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_copysegmentation']
-    #args = ['-k', 'copysegmentation_from_dvid_to_dvid_input_mask'] + args
+    #args += ['-x']
+    #args += ['-k', 'copysegmentation_from_dvid_to_dvid_input_mask']
     pytest.main(args)
