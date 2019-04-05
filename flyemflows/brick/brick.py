@@ -76,8 +76,8 @@ class Brick:
             self.location_id = tuple(logical_box[0])
 
         self._volume = volume
-        self._volume.flags['WRITEABLE'] = False
         if self._volume is not None:
+            self._volume.flags['WRITEABLE'] = False
             assert ((self.physical_box[1] - self.physical_box[0]) == self._volume.shape).all()
         
         # Used for pickling.
