@@ -1,14 +1,12 @@
 import os
-import socket
 import logging
 
 import neuclease
 from neuclease.util import Timer
 
-from ...util import extract_ip_from_link
-
 from .base_schema import BaseSchema
 from .contexts import environment_context, LocalResourceManager, WorkerDaemons, WorkflowClusterContext
+from ...util.dask_util import run_on_each_worker
 
 logger = logging.getLogger(__name__)
 
@@ -115,45 +113,8 @@ class Workflow(object):
             { 'ip:port' : result } OR
             { 'hostname:port' : result }
         """
-        try:
-            funcname = func.__name__
-        except AttributeError:
-            funcname = 'unknown function'
-
         if self.config["cluster-type"] in ("synchronous", "processes"):
-            if return_hostnames:
-                results = {f'tcp://{socket.gethostname()}': func()}
-            else:
-                results = {'tcp://127.0.0.1': func()}
-            logger.info(f"Ran {funcname} on the driver only")
-            return results
-        
-        all_worker_hostnames = self.client.run(socket.gethostname)
-        if not once_per_machine:
-            worker_hostnames = all_worker_hostnames
-
-        if once_per_machine:
-            machines = set()
-            worker_hostnames = {}
-            for address, name in all_worker_hostnames.items():
-                ip = address.split('://')[1].split(':')[0]
-                if ip not in machines:
-                    machines.add(ip)
-                    worker_hostnames[address] = name
-        
-        workers = list(worker_hostnames.keys())
-        with Timer(f"Running {funcname} on {len(workers)} workers", logger):
-            results = self.client.run(func, workers=workers)
-        
-        if not return_hostnames:
-            return results
+            return run_on_each_worker(func, None, once_per_machine, return_hostnames)
+        else:
+            return run_on_each_worker(func, self.client, once_per_machine, return_hostnames)
     
-        final_results = {}
-        for address, result in results.items():
-            hostname = worker_hostnames[address]
-            ip = extract_ip_from_link(address)
-            final_results[address.replace(ip, hostname)] = result
-
-        return final_results
-
-

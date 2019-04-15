@@ -1,5 +1,7 @@
 import os
 import copy
+import socket
+import logging
 import getpass
 import tempfile
 import multiprocessing
@@ -12,6 +14,10 @@ from distributed.utils import parse_bytes
 
 from confiddler import dump_config
 from neuclease.util import Timer
+
+from . import extract_ip_from_link
+
+logger = logging.getLogger(__name__)
 
 def update_jobqueue_config_with_defaults(cluster_type):
     """
@@ -104,6 +110,75 @@ def dump_dask_config(path):
         config['jobqueue'] = { 'lsf': lsf }
     dump_config(config, path)
     
+
+def run_on_each_worker(func, client=None, once_per_machine=False, return_hostnames=True):
+    """
+    Run the given function once per worker (or once per worker machine).
+    Results are returned in a dict of { worker: result }
+    
+    Args:
+        func:
+            Must be picklable.
+        
+        client:
+            If provided, must be a distributed Client object.
+            If None, it is assumed you are not using a distributed cluster,
+            and so the function will only be run once, on the driver (synchronously).
+        
+        once_per_machine:
+            Ensure that the function is only run once per machine,
+            even if your cluster is configured to run more than one
+            worker on each node.
+        
+        return_hostnames:
+            If True, result keys use hostnames instead of IPs.
+    Returns:
+        dict:
+        { 'ip:port' : result } OR
+        { 'hostname:port' : result }
+    """
+    try:
+        funcname = func.__name__
+    except AttributeError:
+        funcname = 'unknown function'
+
+    if client is None:
+        # Assume non-distributed scheduler (either synchronous or processes)
+        if return_hostnames:
+            results = {f'tcp://{socket.gethostname()}': func()}
+        else:
+            results = {'tcp://127.0.0.1': func()}
+        logger.info(f"Ran {funcname} on the driver only")
+        return results
+
+    all_worker_hostnames = client.run(socket.gethostname)
+    if not once_per_machine:
+        worker_hostnames = all_worker_hostnames
+
+    if once_per_machine:
+        machines = set()
+        worker_hostnames = {}
+        for address, name in all_worker_hostnames.items():
+            ip = address.split('://')[1].split(':')[0]
+            if ip not in machines:
+                machines.add(ip)
+                worker_hostnames[address] = name
+    
+    workers = list(worker_hostnames.keys())
+    with Timer(f"Running {funcname} on {len(workers)} workers", logger):
+        results = client.run(func, workers=workers)
+    
+    if not return_hostnames:
+        return results
+
+    final_results = {}
+    for address, result in results.items():
+        hostname = worker_hostnames[address]
+        ip = extract_ip_from_link(address)
+        final_results[address.replace(ip, hostname)] = result
+
+    return final_results
+
 
 def persist_and_execute(bag, description, logger=None, optimize_graph=True):
     """
