@@ -9,6 +9,7 @@ from collections import defaultdict
 
 import dask
 import dask.bag
+import dask.dataframe
 from dask.bag import Bag
 from distributed.utils import parse_bytes
 
@@ -205,7 +206,15 @@ def persist_and_execute(bag, description, logger=None, optimize_graph=True):
     return bag
 
 
-def drop_empty_partitions(bag):
+def drop_empty_partitions(bag_or_df):
+    if isinstance(bag_or_df, dask.bag.Bag):
+        return drop_empty_bag_partitions(bag_or_df)
+    if isinstance(bag_or_df, dask.dataframe.DataFrame):
+        return drop_empty_ddf_partitions(bag_or_df)
+    raise AssertionError(f"Unsupported input type: {type(bag_or_df)}")
+
+
+def drop_empty_bag_partitions(bag):
     """
     When bags are created by filtering or grouping from a different bag,
     it retains the original bag's partition count, even if a lot of the
@@ -234,6 +243,23 @@ def drop_empty_partitions(bag):
     # Convert from list of delayed objects back into a Bag.
     return dask.bag.from_delayed(partitions)
     
+
+def drop_empty_ddf_partitions(df):
+    """
+    https://stackoverflow.com/questions/47812785/remove-empty-partitions-in-dask
+    """
+    ll = list(df.map_partitions(len).compute())
+    df_delayed = df.to_delayed()
+    df_delayed_new = list()
+    pempty = None
+    for ix, n in enumerate(ll):
+        if 0 == n:
+            pempty = df.get_partition(ix)
+        else:
+            df_delayed_new.append(df_delayed[ix])
+    if pempty is not None:
+        df = dask.dataframe.from_delayed(df_delayed_new, meta=pempty)
+    return df
 
 class as_completed_synchronous:
     """
@@ -298,5 +324,3 @@ class FakeFuture:
         if self._error:
             raise self._error
         return self._result
-    
-
