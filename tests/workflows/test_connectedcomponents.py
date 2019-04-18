@@ -14,7 +14,7 @@ from neuclease.util import ndrange
 
 from flyemflows.util import upsample
 from flyemflows.bin.launchflow import launch_flow
-from neuclease.util import extract_subvol, BLOCK_STATS_DTYPES
+from neuclease.util import extract_subvol
 from neuclease.dvid import create_labelmap_instance, post_labelmap_voxels, fetch_labelmap_voxels
 
 # Overridden below when running from __main__

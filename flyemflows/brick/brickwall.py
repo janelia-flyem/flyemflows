@@ -10,6 +10,9 @@ from .brick import ( Brick, generate_bricks_from_volume_source, realign_bricks_t
 LB_COLS = ['logical_z0', 'logical_y0', 'logical_x0', 'logical_z1', 'logical_y1', 'logical_x1']
 PB_COLS = ['physical_z0', 'physical_y0', 'physical_x0', 'physical_z1', 'physical_y1', 'physical_x1']
 
+LB_SHORT_COLS = ['lz0', 'ly0', 'lx0', 'lz1', 'ly1', 'lx1']
+PB_SHORT_COLS = ['pz0', 'py0', 'px0', 'pz1', 'py1', 'px1']
+
 class BrickWall:
     """
     Manages a (lazy) set of bricks within a Grid.
@@ -317,15 +320,35 @@ class BrickWall:
         return BrickWall( new_bounding_box, new_grid, new_bricks, self.num_bricks )
 
     @classmethod
-    def bricks_as_ddf(cls, bricks):
+    def bricks_as_ddf(cls, bricks, logical=True, physical=False, names='short'):
         """
         Return given dask Bag of bricks as a dask DataFrame,
         with columns for the logical and physical boxes.
         """
+        cols = []
+
+        if logical:
+            if names == 'long':
+                cols += LB_COLS
+            else:
+                cols += LB_SHORT_COLS
+
+        if physical:
+            if names == 'long':
+                cols += PB_COLS
+            else:
+                cols += PB_SHORT_COLS
+
+        assert names in ('short', 'long')
         def boxes_and_brick(brick):
-            return (*brick.logical_box.flat, *brick.physical_box.flat, brick)
+            bounds = []
+            if logical:
+                bounds += list(brick.logical_box.flat)
+            if physical:
+                bounds += list(brick.physical_box.flat)
+            return (*bounds, brick)
         
-        dtypes = {col: np.int32 for col in LB_COLS + PB_COLS}
+        dtypes = {col: np.int32 for col in cols}
         dtypes['brick'] = object
         bricks_df = bricks.map(boxes_and_brick).to_dataframe(dtypes)
         return bricks_df

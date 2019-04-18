@@ -193,8 +193,8 @@ class ConnectedComponents(Workflow):
         outer_halos = extract_halos(cc_bricks, input_wall.grid, 'outer', 'lower')
         inner_halos = extract_halos(cc_bricks, input_wall.grid, 'inner', 'upper')
 
-        outer_halos_df = BrickWall.bricks_as_ddf(outer_halos)
-        inner_halos_df = BrickWall.bricks_as_ddf(inner_halos)
+        outer_halos_df = BrickWall.bricks_as_ddf(outer_halos, logical=False, physical=True, names='long')
+        inner_halos_df = BrickWall.bricks_as_ddf(inner_halos, logical=False, physical=True, names='long')
         
         # Combine halo DFs along physical boxes, so that each outer halo is paired with it's partner (an inner halo).
         # This is an pandas 'inner' merge, not to be confused with the 'inner' halos!
