@@ -583,6 +583,7 @@ class CreateMeshes(Workflow):
         destination = self.config["output"]
         fmt = options["format"]
         include_empty = options["include-empty"]
+        resource_mgr = self.resource_mgr_client
         def write_sv_meshes(sv_meshes_df):
             (destination_type,) = destination.keys()
             assert destination_type in ('directory', 'keyvalue', 'tarsupervoxels')
@@ -603,10 +604,11 @@ class CreateMeshes(Workflow):
                         f.write(mesh_bytes)
             else:
                 instance = (destination[destination_type][k] for k in ('server', 'uuid', 'instance'))
-                if destination_type == 'tarsupervoxels':
-                    post_load(*instance, keyvalues)
-                elif 'keyvalue' in destination:
-                    post_keyvalues(*instance, keyvalues)
+                with resource_mgr.access_context(instance[0], False, 1, sum(filesizes)):
+                    if destination_type == 'tarsupervoxels':
+                        post_load(*instance, keyvalues)
+                    elif 'keyvalue' in destination:
+                        post_keyvalues(*instance, keyvalues)
 
             return pd.DataFrame({'sv': sv_meshes_df['sv'].values, 'filesize': filesizes})
         
