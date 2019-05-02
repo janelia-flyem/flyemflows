@@ -1,6 +1,7 @@
 from .base.workflow import Workflow
 from .connectedcomponents import ConnectedComponents
 from .copygrayscale import CopyGrayscale
+from .createmeshes import CreateMeshes
 from .copysegmentation import CopySegmentation
 from .decimatemeshes import DecimateMeshes
 from .findadjacencies import FindAdjacencies
@@ -23,4 +24,5 @@ BUILTIN_WORKFLOWS = [
     SparseBlockstats,
     SparseMeshes,
     StitchedMeshes,
+    CreateMeshes
 ]
