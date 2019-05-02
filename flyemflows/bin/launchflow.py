@@ -170,8 +170,10 @@ def launch_flow(template_dir, num_workers, kill_cluster=True, _custom_execute_fn
     # Create execution dir (copy of template dir) and make it the CWD
     timestamp = f'{datetime.now():%Y%m%d.%H%M%S}'
     execution_dir = f'{template_dir}-{timestamp}'
+    execution_dir = os.path.abspath(execution_dir)
     shutil.copytree(template_dir, execution_dir, symlinks=True)
     os.chmod(f'{execution_dir}/workflow.yaml', 0o444) # read-only
+    
     
     # Export conda env for future reference
     try:
