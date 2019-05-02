@@ -1,4 +1,5 @@
 import os
+import pickle
 import tempfile
 import textwrap
 from io import StringIO
@@ -47,7 +48,7 @@ def create_test_segmentation():
     vol_path = f'{d}/test-createmeshes-segmentation.npy'
     boxes_path = f'{d}/test-createmeshes-boxes.npy'
     if os.path.exists(vol_path):
-        return np.load(vol_path), np.load(boxes_path)
+        return np.load(vol_path), pickle.load(open(boxes_path, 'rb'))
 
     test_volume = np.zeros((256, 256, 256), np.uint64)
 
@@ -62,15 +63,15 @@ def create_test_segmentation():
         return object_box
 
     # Place four text objects
-    object_boxes = []
+    object_boxes = {}
     labels = [100,200,300]
     corners = [(10,10,10), (10, 60, 10), (10, 110, 10)]
     for label, corner in zip(labels, corners):
         box = place_test_object(label, corner)
-        object_boxes.append( box )
+        object_boxes[label] = box
 
     np.save(vol_path, test_volume) # Cache for next pytest run
-    np.save(boxes_path, np.array(object_boxes))
+    pickle.dump(object_boxes, open(boxes_path, 'wb'))
     return test_volume, object_boxes
 
 
@@ -145,17 +146,41 @@ def setup_createmeshes_config(setup_segmentation_input, disable_auto_retry):
     return template_dir, config, dvid_address, repo_uuid, object_boxes
 
 
-def test_createmeshes(setup_createmeshes_config, disable_auto_retry):
+def check_outputs(execution_dir, object_boxes, subset_labels=None):
+    """
+    Basic checks to make sure the meshes for the given labels were
+    generated and not terribly wrong.
+    """
+    # Check all test objects by default.
+    if subset_labels is None:
+        subset_labels = sorted(object_boxes.keys())
+
+    df = pd.DataFrame( np.load(f'{execution_dir}/final-mesh-stats.npy') )
+    assert len(df) == len(subset_labels)
+    df.set_index('sv', inplace=True)
+
+    for label in subset_labels:
+        assert df.loc[label, 'file_size'] > 0
+
+        # Here's where our test meshes ended up:
+        #print(f"{execution_dir}/meshes/{label}.obj")
+        assert os.path.exists(f"{execution_dir}/meshes/{label}.obj")
+    
+        # Make sure the mesh vertices appeared in the right place.
+        # (If they weren't rescaled, this won't work.)
+        mesh = Mesh.from_file(f"{execution_dir}/meshes/{label}.obj")
+        assert (mesh.vertices_zyx[:] >= object_boxes[label][0]).all()
+        assert (mesh.vertices_zyx[:] <= object_boxes[label][1]).all()
+
+
+def test_createmeshes_basic(setup_createmeshes_config, disable_auto_retry):
     template_dir, _config, _dvid_address, _repo_uuid, object_boxes = setup_createmeshes_config
     
     execution_dir, _workflow = launch_flow(template_dir, 1)
-    print(execution_dir)
-    #final_config = workflow.config
 
-    assert os.path.exists(f"{execution_dir}/meshes/100.obj")
-    assert os.path.exists(f"{execution_dir}/meshes/200.obj")
-    assert os.path.exists(f"{execution_dir}/meshes/300.obj")
-    
+    #print(execution_dir)
+    check_outputs(execution_dir, object_boxes)
+
 
 if __name__ == "__main__":
     if 'CLUSTER_TYPE' in os.environ:

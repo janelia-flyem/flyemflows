@@ -610,11 +610,13 @@ class CreateMeshes(Workflow):
                     elif 'keyvalue' in destination:
                         post_keyvalues(*instance, keyvalues)
 
-            return pd.DataFrame({'sv': sv_meshes_df['sv'].values, 'filesize': filesizes})
+            result_df = sv_meshes_df[['sv', 'vertex_count', 'compressed_size']]
+            result_df['file_size'] = filesizes
+            return result_df
         
-        dtypes = {'sv': np.uint64, 'filesize': int}
-        filesizes = sv_meshes_ddf[['sv', 'mesh']].map_partitions(write_sv_meshes, meta=dtypes).clear_divisions().compute()
-        filesizes.to_csv('file-sizes.csv', index=False, header=True)
+        dtypes = {'sv': np.uint64, 'vertex_count': np.int64, 'compressed_size': int, 'file_size': int}
+        final_stats_df = sv_meshes_ddf.map_partitions(write_sv_meshes, meta=dtypes).clear_divisions().compute()
+        np.save('final-mesh-stats.npy', final_stats_df.to_records(index=False))
         
 
     def init_brickwall(self, volume_service, subset_labels):
