@@ -24,19 +24,24 @@ yaml.default_flow_style = False
 CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'local-cluster')
 
 
-def create_test_object():
-    # Create a test object (shaped like an 'X')
-    center_line_img = np.zeros((128,128,128), dtype=np.uint32)
-    for i in range(128):
+def create_test_object(height=128, radius=10):
+    """
+    Create a test object (shaped like an 'X')
+    with overall height (and width and depth) determined by 'height',
+    and whose "arm" thickness is determined by the given radius.
+    """
+    center_line_img = np.zeros((height,height,height), dtype=np.uint32)
+    for i in range(height):
         center_line_img[i, i, i] = 1
-        center_line_img[127-i, i, i] = 1
+        center_line_img[height-1-i, i, i] = 1
     
     # Scipy distance_transform_edt conventions are opposite of vigra:
     # it calculates distances of non-zero pixels to the zero pixels.
     center_line_img = 1 - center_line_img
     distance_to_line = distance_transform_edt(center_line_img)
-    binary_vol = (distance_to_line <= 10).astype(np.uint8)
+    binary_vol = (distance_to_line <= radius).astype(np.uint8)
     return binary_vol
+
 
 def create_test_segmentation():
     if os.environ.get('TRAVIS', '') == 'true':
@@ -46,49 +51,57 @@ def create_test_segmentation():
         d = '/tmp'
 
     vol_path = f'{d}/test-createmeshes-segmentation.npy'
-    boxes_path = f'{d}/test-createmeshes-boxes.npy'
+    boxes_path = f'{d}/test-createmeshes-boxes.pkl'
+    sizes_path = f'{d}/test-createmeshes-sizes.pkl'
     if os.path.exists(vol_path):
-        return np.load(vol_path), pickle.load(open(boxes_path, 'rb'))
+        test_volume = np.load(vol_path)
+        object_boxes = pickle.load(open(boxes_path, 'rb'))
+        object_sizes = pickle.load(open(sizes_path, 'rb'))
+        return test_volume, object_boxes, object_sizes
 
     test_volume = np.zeros((256, 256, 256), np.uint64)
 
-    def place_test_object(label, corner):
+    def place_test_object(label, corner, height):
         corner = np.array(corner)
-        object_vol = create_test_object().astype(np.uint64)
+        object_vol = create_test_object(height).astype(np.uint64)
         object_vol *= label
         object_box = np.array([corner, corner + object_vol.shape])
         
         testvol_view = test_volume[box_to_slicing(*object_box)]
         testvol_view[:] = np.where(object_vol, object_vol, testvol_view)
-        return object_box
+        return object_box, (object_vol != 0).sum()
 
     # Place four text objects
     object_boxes = {}
+    object_sizes = {}
     labels = [100,200,300]
     corners = [(10,10,10), (10, 60, 10), (10, 110, 10)]
-    for label, corner in zip(labels, corners):
-        box = place_test_object(label, corner)
+    heights = (200, 150, 50)
+    for label, corner, height in zip(labels, corners, heights):
+        box, num_voxels = place_test_object(label, corner, height)
         object_boxes[label] = box
+        object_sizes[label] = int(num_voxels)
 
     np.save(vol_path, test_volume) # Cache for next pytest run
     pickle.dump(object_boxes, open(boxes_path, 'wb'))
-    return test_volume, object_boxes
+    pickle.dump(object_sizes, open(sizes_path, 'wb'))
+    return test_volume, object_boxes, object_sizes
 
 
 @pytest.fixture(scope='module')
 def setup_segmentation_input(setup_dvid_repo):
     dvid_address, repo_uuid = setup_dvid_repo
     input_segmentation_name = 'segmentation-createmeshes-input'
-    test_volume, object_boxes = create_test_segmentation()
+    test_volume, object_boxes, object_sizes = create_test_segmentation()
  
     create_labelmap_instance(dvid_address, repo_uuid, input_segmentation_name, max_scale=3)
     post_labelmap_voxels(dvid_address, repo_uuid, input_segmentation_name, (0,0,0), test_volume, downres=True, noindexing=False)
-    return dvid_address, repo_uuid, input_segmentation_name, object_boxes
+    return dvid_address, repo_uuid, input_segmentation_name, object_boxes, object_sizes
 
 
 @pytest.fixture
 def setup_createmeshes_config(setup_segmentation_input, disable_auto_retry):
-    dvid_address, repo_uuid, input_segmentation_name, object_boxes = setup_segmentation_input
+    dvid_address, repo_uuid, input_segmentation_name, object_boxes, object_sizes = setup_segmentation_input
     template_dir = tempfile.mkdtemp(suffix="createmeshes-template")
 
     config_text = textwrap.dedent(f"""\
@@ -143,7 +156,7 @@ def setup_createmeshes_config(setup_segmentation_input, disable_auto_retry):
     with StringIO(config_text) as f:
         config = yaml.load(f)
  
-    return template_dir, config, dvid_address, repo_uuid, object_boxes
+    return template_dir, config, dvid_address, repo_uuid, object_boxes, object_sizes
 
 
 def check_outputs(execution_dir, object_boxes, subset_labels=None):
@@ -169,17 +182,89 @@ def check_outputs(execution_dir, object_boxes, subset_labels=None):
         # Make sure the mesh vertices appeared in the right place.
         # (If they weren't rescaled, this won't work.)
         mesh = Mesh.from_file(f"{execution_dir}/meshes/{label}.obj")
-        assert (mesh.vertices_zyx[:] >= object_boxes[label][0]).all()
-        assert (mesh.vertices_zyx[:] <= object_boxes[label][1]).all()
+        assert np.allclose(mesh.vertices_zyx.min(axis=0), object_boxes[label][0], 1)
+        assert np.allclose(mesh.vertices_zyx.max(axis=0), object_boxes[label][1], 1)
 
 
 def test_createmeshes_basic(setup_createmeshes_config, disable_auto_retry):
-    template_dir, _config, _dvid_address, _repo_uuid, object_boxes = setup_createmeshes_config
+    template_dir, _config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
+     
+    execution_dir, _workflow = launch_flow(template_dir, 1)
+    #print(execution_dir)
+    check_outputs(execution_dir, object_boxes)
+
+
+def test_createmeshes_subset_svs(setup_createmeshes_config, disable_auto_retry):
+    template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
+    config['createmeshes']['subset-supervoxels'] = [100,300]
+    YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
+     
+    execution_dir, _workflow = launch_flow(template_dir, 1)
+ 
+    df = pd.DataFrame( np.load(f'{execution_dir}/final-mesh-stats.npy') )
+    assert 200 not in df['sv'].values
+ 
+    check_outputs(execution_dir, object_boxes, subset_labels=[100,300])
+
+
+def test_createmeshes_subset_bodies(setup_createmeshes_config, disable_auto_retry):
+    template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
+    config['createmeshes']['subset-bodies'] = [100,300]
+    YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
     
     execution_dir, _workflow = launch_flow(template_dir, 1)
 
-    #print(execution_dir)
-    check_outputs(execution_dir, object_boxes)
+    df = pd.DataFrame( np.load(f'{execution_dir}/final-mesh-stats.npy') )
+    assert 200 not in df['sv'].values
+
+    check_outputs(execution_dir, object_boxes, subset_labels=[100,300])
+
+
+def test_createmeshes_filter_supervoxels(setup_createmeshes_config, disable_auto_retry):
+    template_dir, config, _dvid_address, _repo_uuid, object_boxes, object_sizes = setup_createmeshes_config
+
+    # Set size filter to exclude the largest SV (100) and smallest SV (300),
+    # leaving only the middle object (SV 200).
+    assert object_sizes[300] < object_sizes[200] < object_sizes[100]
+    config['createmeshes']['size-filters']['minimum-supervoxel-size'] = object_sizes[300]+1
+    config['createmeshes']['size-filters']['maximum-supervoxel-size'] = object_sizes[100]-1
+    YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
+    
+    execution_dir, _workflow = launch_flow(template_dir, 1)
+
+    df = pd.DataFrame( np.load(f'{execution_dir}/final-mesh-stats.npy') )
+    assert 100 not in df['sv'].values
+    assert 300 not in df['sv'].values
+
+    check_outputs(execution_dir, object_boxes, subset_labels=[200])
+
+
+def test_createmeshes_rescale(setup_createmeshes_config, disable_auto_retry):
+    template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
+    config['createmeshes']['rescale-before-write'] = 2
+    YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
+     
+    execution_dir, _workflow = launch_flow(template_dir, 1)
+
+    scaled_boxes = { label: box * 2 for label, box in object_boxes.items() }
+    check_outputs(execution_dir, scaled_boxes)
+
+
+def test_createmeshes_skip_existing(setup_createmeshes_config, disable_auto_retry):
+    template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
+    config['createmeshes']['skip-existing'] = True
+    YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
+
+    # Create an empty file for mesh 200
+    os.makedirs(f"{template_dir}/meshes")
+    open(f"{template_dir}/meshes/200.obj", 'wb').close()
+    execution_dir, _workflow = launch_flow(template_dir, 1)
+ 
+    # The file should have been left alone (still empty).
+    assert open(f"{execution_dir}/meshes/200.obj", 'rb').read() == b''
+
+    # But other meshes were generated.
+    check_outputs(execution_dir, object_boxes, subset_labels=[100,300])
 
 
 if __name__ == "__main__":
@@ -190,4 +275,7 @@ if __name__ == "__main__":
     import flyemflows
     os.chdir(os.path.dirname(flyemflows.__file__))    
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
-    pytest.main(['-s', '--tb=native', '--pyargs', 'tests.workflows.test_createmeshes'])
+    args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_createmeshes']
+    #args += ['-x']
+    #args += ['-k', 'createmeshes_skip_existing']
+    pytest.main(args)

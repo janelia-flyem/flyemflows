@@ -201,6 +201,7 @@ class CreateMeshes(Workflow):
             },
             "size-filters": SizeFiltersSchema,
             
+            # TODO
             "max-body-vertices": {
                 "description": "If necessary, dynamically increase decimation on a per-body, per-brick basis so that\n"
                                "the total vertex count for each mesh (across all bricks) final mesh will not exceed\n"
@@ -267,6 +268,9 @@ class CreateMeshes(Workflow):
             logger.warn("Your config uses 'stitch' aggregation, but your halo != 1.\n"
                         "This will waste CPU and/or lead to unintuitive results.")
 
+        assert options["format"] != 'ngmesh', \
+            "FIXME: The ngmesh serialization code doesn't properly convert to nanometers yet!"
+
     def _init_input(self): 
         input_config = self.config["input"]
         resource_config = self.config["resource-manager"]
@@ -281,7 +285,7 @@ class CreateMeshes(Workflow):
 
         ## directory output
         if 'directory' in output_cfg:
-            os.makedirs(output_cfg['directory'])
+            os.makedirs(output_cfg['directory'], exist_ok=True)
             return
 
         ##
@@ -373,12 +377,12 @@ class CreateMeshes(Workflow):
             raise RuntimeError("Can't use both subset-supervoxels and subset-bodies.  Choose one.")
 
         if self.input_is_labelmap_supervoxels():
-            if subset_bodies:
+            if len(subset_bodies) > 0:
                 with Timer("Fetching supervoxel set for labelmap bodies", logger):
                     def fetch_svs(body):
                         return fetch_supervoxels(*self.input_service.instance_triple, body)
                     svs = db.from_sequence(subset_bodies, npartitions=512).map(fetch_svs).compute()
-                    subset_supervoxels = chain(*svs)
+                    subset_supervoxels = list(chain(*svs))
 
         brickwall = self.init_brickwall(self.input_service, subset_supervoxels)
 
@@ -421,6 +425,9 @@ class CreateMeshes(Workflow):
         dtypes = {'label': np.uint64, 'count': np.int64,
                   'lz0': np.int32, 'ly0': np.int32, 'lx0': np.int32}
         brick_counts_df = bricks_ddf.map_partitions(compute_brick_labelcounts, meta=dtypes).clear_divisions().compute()
+
+        if len(brick_counts_df) == 0:
+            raise RuntimeError("All bricks are empty (no non-zero voxels)!")
         
         if self.input_is_labelmap_supervoxels():
             seg_instance = self.input_service.base_service.instance_triple
@@ -451,11 +458,13 @@ class CreateMeshes(Workflow):
         brick_counts_df = brick_counts_df.merge(total_sv_counts, 'left', 'sv')
         brick_counts_df = brick_counts_df.merge(total_body_counts, 'left', 'body')
 
-        logger.info("Saving brick-counts.npy")
+        logger.info("Exporting sizes")
         np.save('brick-counts.npy', brick_counts_df.to_records(index=False))
+        np.save('sv-sizes.npy', total_sv_counts.to_records(index=False))
+        np.save('body-sizes.npy', total_body_counts.to_records(index=False))
 
-        # Filter for subset        
-        if subset_supervoxels:
+        # Filter for subset
+        if len(subset_supervoxels) > 0:
             sv_set = set(subset_supervoxels) #@UnusedVariable
             brick_counts_df = brick_counts_df.query('sv in @sv_set')
 
@@ -468,6 +477,10 @@ class CreateMeshes(Workflow):
         q = ('sv_size >= @min_sv_size and sv_size <= @max_sv_size and '
              'body_size >= @min_body_size and body_size <= @max_body_size')
         brick_counts_df = brick_counts_df.query(q)
+
+        if len(brick_counts_df) == 0:
+            raise RuntimeError("Based on your current settings, no meshes will be generated at all.\n"
+                               "See sv-sizes.npy and body-sizes.npy")
         
         # Filter for already existing
         if options["skip-existing"]:
@@ -495,7 +508,11 @@ class CreateMeshes(Workflow):
                     existing_svs = set(int(k[:-4]) for k in keys)
             
             brick_counts_df = brick_counts_df.query('sv not in @existing_svs')
-
+            if len(brick_counts_df) == 0:
+                raise RuntimeError("Based on your current settings, no meshes will be generated at all.\n"
+                                   "All possible meshes already exist in the destination location.\n"
+                                   "To regenerate them anyway, use 'skip-existing: false'")
+            
         brick_counts_grouped_df = brick_counts_df.groupby(['lz0', 'ly0', 'lx0'])[['sv', 'sv_size', 'body', 'body_size']].agg(list).reset_index()
 
         with Timer("Distributing counts to bricks", logger):
@@ -621,9 +638,9 @@ class CreateMeshes(Workflow):
 
     def init_brickwall(self, volume_service, subset_labels):
         sbm = None
-        if subset_labels:
+        if len(subset_labels) > 0:
             try:
-                brick_coords_df = volume_service.sparse_block_mask_for_labels(subset_labels)
+                brick_coords_df = volume_service.sparse_brick_coords_for_labels(subset_labels)
                 np.save('brick-coords.npy', brick_coords_df.to_records(index=False))
     
                 brick_shape = volume_service.preferred_message_shape
