@@ -103,6 +103,7 @@ class CreateMeshes(Workflow):
     {
         # TODO: skip-decimation-body-size
         # TODO: downsample-before-marching-cubes?
+        "default": {},
         "properties": {
             "smoothing": {
                 "description": "How many iterations of smoothing to apply to each mesh before decimation.",
@@ -128,6 +129,7 @@ class CreateMeshes(Workflow):
 
     SizeFiltersSchema = \
     {
+        "default": {},
         "properties": {
             "minimum-supervoxel-size": {
                 "type": "number",
