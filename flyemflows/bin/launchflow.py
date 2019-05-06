@@ -25,6 +25,7 @@ Tip:
 """
 import os
 import sys
+import copy
 import time
 import shutil
 import logging
@@ -92,13 +93,19 @@ def main():
         sys.exit(0)
 
     if args.dump_default_yaml:
-        workflow_cls = get_workflow_cls(args.dump_default_yaml, True)
-        dump_default_config(workflow_cls.schema(), sys.stdout, 'yaml')
+        workflow_name = args.dump_default_yaml
+        workflow_cls = get_workflow_cls(workflow_name, True)
+        schema = copy.deepcopy(workflow_cls.schema())
+        schema["properties"]["workflow-name"]["default"] = workflow_name.lower()
+        dump_default_config(schema, sys.stdout, 'yaml')
         sys.exit(0)
 
     if args.dump_default_verbose_yaml:
-        workflow_cls = get_workflow_cls(args.dump_default_verbose_yaml, True)
-        dump_default_config(workflow_cls.schema(), sys.stdout, 'yaml-with-comments')
+        worfklow_name = args.dump_default_verbose_yaml
+        workflow_cls = get_workflow_cls(worfklow_name, True)
+        schema = copy.deepcopy(workflow_cls.schema())
+        schema["properties"]["workflow-name"]["default"] = worfklow_name.lower()
+        dump_default_config(schema, sys.stdout, 'yaml-with-comments')
         sys.exit(0)
 
     if not args.template_dir:
