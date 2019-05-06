@@ -376,13 +376,12 @@ class CreateMeshes(Workflow):
         if len(subset_supervoxels) and len(subset_bodies):
             raise RuntimeError("Can't use both subset-supervoxels and subset-bodies.  Choose one.")
 
-        if self.input_is_labelmap_supervoxels():
-            if len(subset_bodies) > 0:
-                with Timer("Fetching supervoxel set for labelmap bodies", logger):
-                    def fetch_svs(body):
-                        return fetch_supervoxels(*self.input_service.instance_triple, body)
-                    svs = db.from_sequence(subset_bodies, npartitions=512).map(fetch_svs).compute()
-                    subset_supervoxels = list(chain(*svs))
+        if self.input_is_labelmap_supervoxels() and len(subset_bodies) > 0:
+            with Timer("Fetching supervoxel set for labelmap bodies", logger):
+                def fetch_svs(body):
+                    return fetch_supervoxels(*self.input_service.instance_triple, body)
+                svs = db.from_sequence(subset_bodies, npartitions=512).map(fetch_svs).compute()
+                subset_supervoxels = list(chain(*svs))
 
         brickwall = self.init_brickwall(self.input_service, subset_supervoxels)
 
