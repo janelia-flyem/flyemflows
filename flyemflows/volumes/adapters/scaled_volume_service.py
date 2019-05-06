@@ -8,22 +8,22 @@ from .. import VolumeServiceReader
 RescaleLevelSchema = \
 {
     "description": "Level to rescale the original input source when reading.\n"
-                   "Presents a resized view of the original volume.\n"
-                   "Examples:\n"
-                   "null: No rescaling -- don't even instantiate a ScaledVolumeService adapter object.\n"
-                   "      When data is requested, only the scales supported by the base service are permitted.\n"
-                   "\n"
-                   "   0: No rescaling, but a ScaledVolumeService adapter is used, which allows clients to request\n"
-                   "      scales that aren't natively supported by the base service.  In that case, the adapter can\n"
-                   "      produced data at any scale, by downsampling the data from the base service.\n"
-                   "\n"
-                   "   1: downsample by 2x, e.g. If the client requests scale 0, the adapter requests scale 1 from \n"
-                   "      the base service (if available), or automatically downsamples from scale 0 data if the base\n"
-                   "      service doesn't provide it natively.\n"
-                   "\n"
-                   "   2: downsample by 4x, e.g. If the client requests scale 1, return (or generate) scale 3 from the base service.\n"
-                   "\n"
-                   "  -1: upsample by 2x\n",
+                   "Presents a resized view of the original volume.\n  \n"
+                   "  Examples:\n  \n"
+                   "    null: No rescaling -- don't even instantiate a ScaledVolumeService adapter object.\n"
+                   "          When data is requested, only the scales supported by the base service are permitted.\n"
+                   "    \n"
+                   "       0: No rescaling, but a ScaledVolumeService adapter is used, which allows clients to request\n"
+                   "          scales that aren't natively supported by the base service.  In that case, the adapter can\n"
+                   "          produced data at any scale, by downsampling the data from the base service.\n"
+                   "    \n"
+                   "       1: downsample by 2x, e.g. If the client requests scale 0, the adapter requests scale 1 from \n"
+                   "          the base service (if available), or automatically downsamples from scale 0 data if the base\n"
+                   "          service doesn't provide it natively.\n"
+                   "    \n"
+                   "       2: downsample by 4x, e.g. If the client requests scale 1, return (or generate) scale 3 from the base service.\n"
+                   "    \n"
+                   "      -1: upsample by 2x\n",
     "oneOf": [ {"type": "integer"}, {"type": "null"} ],
     "default": None
 }
