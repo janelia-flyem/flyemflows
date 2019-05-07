@@ -424,100 +424,107 @@ class CreateMeshes(Workflow):
 
             return pd.concat(brick_counts_dfs, ignore_index=True)
 
-        dtypes = {'label': np.uint64, 'count': np.int64,
-                  'lz0': np.int32, 'ly0': np.int32, 'lx0': np.int32}
-        brick_counts_df = bricks_ddf.map_partitions(compute_brick_labelcounts, meta=dtypes).clear_divisions().compute()
+        with Timer("Computing brickwise labelcounts", logger):
+            dtypes = {'label': np.uint64, 'count': np.int64,
+                      'lz0': np.int32, 'ly0': np.int32, 'lx0': np.int32}
+            brick_counts_df = bricks_ddf.map_partitions(compute_brick_labelcounts, meta=dtypes).clear_divisions().compute()
 
         if len(brick_counts_df) == 0:
             raise RuntimeError("All bricks are empty (no non-zero voxels)!")
-        
-        if self.input_is_labelmap_supervoxels():
-            seg_instance = self.input_service.base_service.instance_triple
 
-            brick_counts_df['sv'] = brick_counts_df['label'].values
-
-            # Arbitrary heuristic for whether to do the body-lookups on DVID or on the client.
-            if len(brick_counts_df['sv']) < 100_000:
-                # If we're only dealing with a few supervoxels,
-                # ask dvid to map them to bodies for us.
-                brick_counts_df['body'] = fetch_mapping(*seg_instance, brick_counts_df['sv']).values
-            else:
-                # If we're dealing with a lot of supervoxels, ask for
-                # the entire mapping, and look up the bodies ourselves.
-                mapping = fetch_mappings(*seg_instance)
-                mapper = LabelMapper(mapping.index.values, mapping.values)
-                brick_counts_df['body'] = mapper.apply(brick_counts_df['sv'].values)
-            
-            total_sv_counts = brick_counts_df.groupby('sv')['count'].sum().rename('sv_size').reset_index()
-            total_body_counts = brick_counts_df.groupby('body')['count'].sum().rename('body_size').reset_index()
-        else:
-            # Every label is treated as a supervoxel for our purposes.
-            brick_counts_df['sv'] = brick_counts_df['label']
-            brick_counts_df['body'] = brick_counts_df['label']
-            total_sv_counts = brick_counts_df.groupby('sv')['count'].sum().rename('sv_size').reset_index()
-            total_body_counts = total_sv_counts.rename(columns={'sv': 'body', 'sv_size': 'body_size'})
-
-        brick_counts_df = brick_counts_df.merge(total_sv_counts, 'left', 'sv')
-        brick_counts_df = brick_counts_df.merge(total_body_counts, 'left', 'body')
-
-        logger.info("Exporting sizes")
-        np.save('brick-counts.npy', brick_counts_df.to_records(index=False))
-        np.save('sv-sizes.npy', total_sv_counts.to_records(index=False))
-        np.save('body-sizes.npy', total_body_counts.to_records(index=False))
-
-        # Filter for subset
-        if len(subset_supervoxels) > 0:
-            sv_set = set(subset_supervoxels) #@UnusedVariable
-            brick_counts_df = brick_counts_df.query('sv in @sv_set')
-
-        # Filter for size
-        size_filters = options["size-filters"]
-        min_sv_size = size_filters['minimum-supervoxel-size'] #@UnusedVariable
-        max_sv_size = size_filters['maximum-supervoxel-size'] #@UnusedVariable
-        min_body_size = size_filters['minimum-body-size']     #@UnusedVariable
-        max_body_size = size_filters['maximum-body-size']     #@UnusedVariable
-        q = ('sv_size >= @min_sv_size and sv_size <= @max_sv_size and '
-             'body_size >= @min_body_size and body_size <= @max_body_size')
-        brick_counts_df = brick_counts_df.query(q)
-
-        if len(brick_counts_df) == 0:
-            raise RuntimeError("Based on your current settings, no meshes will be generated at all.\n"
-                               "See sv-sizes.npy and body-sizes.npy")
-        
-        # Filter for already existing
-        if options["skip-existing"]:
-            with Timer("Determining which meshes are already stored (skip-existing)", logger):
-                fmt = options["format"]
-                destination = self.config["output"]
-                (destination_type,) = destination.keys()
-                assert destination_type in ('directory', 'keyvalue', 'tarsupervoxels')
+        with Timer("Aggregating brick stats into body stats", logger):
+            if self.input_is_labelmap_supervoxels():
+                seg_instance = self.input_service.base_service.instance_triple
     
-                all_svs = pd.unique(brick_counts_df['sv'])
-                if destination_type == 'directory':
-                    d = self.config["output"]["directory"]
-                    existing_svs = set()
-                    for sv in all_svs:
-                        if os.path.exists(f"{d}/{sv}.{fmt}"):
-                            existing_svs.add(sv)
-                elif destination_type == 'tarsupervoxels':
-                    tsv_instance = [destination['tarsupervoxels'][k] for k in ('server', 'uuid', 'instance')]
-                    exists = fetch_exists(*tsv_instance, all_svs)
-                    existing_svs = set(exists[exists].index)
-                elif destination_type == 'keyvalue':
-                    logger.warning("Using skip-exists with a keyvalue output.  This might take a LONG time if there are many meshes already stored.")
-                    kv_instance = [destination['keyvalue'][k] for k in ('server', 'uuid', 'instance')]
-                    keys = fetch_keys(*kv_instance)
-                    existing_svs = set(int(k[:-4]) for k in keys)
-            
-            brick_counts_df = brick_counts_df.query('sv not in @existing_svs')
+                brick_counts_df['sv'] = brick_counts_df['label'].values
+    
+                # Arbitrary heuristic for whether to do the body-lookups on DVID or on the client.
+                if len(brick_counts_df['sv']) < 100_000:
+                    # If we're only dealing with a few supervoxels,
+                    # ask dvid to map them to bodies for us.
+                    brick_counts_df['body'] = fetch_mapping(*seg_instance, brick_counts_df['sv']).values
+                else:
+                    # If we're dealing with a lot of supervoxels, ask for
+                    # the entire mapping, and look up the bodies ourselves.
+                    mapping = fetch_mappings(*seg_instance)
+                    mapper = LabelMapper(mapping.index.values, mapping.values)
+                    brick_counts_df['body'] = mapper.apply(brick_counts_df['sv'].values)
+                
+                total_sv_counts = brick_counts_df.groupby('sv')['count'].sum().rename('sv_size').reset_index()
+                total_body_counts = brick_counts_df.groupby('body')['count'].sum().rename('body_size').reset_index()
+            else:
+                # Every label is treated as a supervoxel for our purposes.
+                brick_counts_df['sv'] = brick_counts_df['label']
+                brick_counts_df['body'] = brick_counts_df['label']
+                total_sv_counts = brick_counts_df.groupby('sv')['count'].sum().rename('sv_size').reset_index()
+                total_body_counts = total_sv_counts.rename(columns={'sv': 'body', 'sv_size': 'body_size'})
+
+            brick_counts_df = brick_counts_df.merge(total_sv_counts, 'left', 'sv')
+            brick_counts_df = brick_counts_df.merge(total_body_counts, 'left', 'body')
+    
+            logger.info("Exporting sizes")
+            np.save('brick-counts.npy', brick_counts_df.to_records(index=False))
+            np.save('sv-sizes.npy', total_sv_counts.to_records(index=False))
+            np.save('body-sizes.npy', total_body_counts.to_records(index=False))
+
+        with Timer("Filtering", logger):
+            # Filter for subset
+            if len(subset_supervoxels) > 0:
+                sv_set = set(subset_supervoxels) #@UnusedVariable
+                brick_counts_df = brick_counts_df.query('sv in @sv_set')
+    
+            # Filter for size
+            size_filters = options["size-filters"]
+            min_sv_size = size_filters['minimum-supervoxel-size'] #@UnusedVariable
+            max_sv_size = size_filters['maximum-supervoxel-size'] #@UnusedVariable
+            min_body_size = size_filters['minimum-body-size']     #@UnusedVariable
+            max_body_size = size_filters['maximum-body-size']     #@UnusedVariable
+            q = ('sv_size >= @min_sv_size and sv_size <= @max_sv_size and '
+                 'body_size >= @min_body_size and body_size <= @max_body_size')
+            brick_counts_df = brick_counts_df.query(q)
+    
             if len(brick_counts_df) == 0:
                 raise RuntimeError("Based on your current settings, no meshes will be generated at all.\n"
-                                   "All possible meshes already exist in the destination location.\n"
-                                   "To regenerate them anyway, use 'skip-existing: false'")
+                                   "See sv-sizes.npy and body-sizes.npy")
             
-        brick_counts_grouped_df = brick_counts_df.groupby(['lz0', 'ly0', 'lx0'])[['sv', 'sv_size', 'body', 'body_size']].agg(list).reset_index()
+            # Filter for already existing
+            if options["skip-existing"]:
+                with Timer("Determining which meshes are already stored (skip-existing)", logger):
+                    fmt = options["format"]
+                    destination = self.config["output"]
+                    (destination_type,) = destination.keys()
+                    assert destination_type in ('directory', 'keyvalue', 'tarsupervoxels')
+        
+                    all_svs = pd.unique(brick_counts_df['sv'])
+                    if destination_type == 'directory':
+                        d = self.config["output"]["directory"]
+                        existing_svs = set()
+                        for sv in all_svs:
+                            if os.path.exists(f"{d}/{sv}.{fmt}"):
+                                existing_svs.add(sv)
+                    elif destination_type == 'tarsupervoxels':
+                        tsv_instance = [destination['tarsupervoxels'][k] for k in ('server', 'uuid', 'instance')]
+                        exists = fetch_exists(*tsv_instance, all_svs)
+                        existing_svs = set(exists[exists].index)
+                    elif destination_type == 'keyvalue':
+                        logger.warning("Using skip-exists with a keyvalue output.  This might take a LONG time if there are many meshes already stored.")
+                        kv_instance = [destination['keyvalue'][k] for k in ('server', 'uuid', 'instance')]
+                        keys = fetch_keys(*kv_instance)
+                        existing_svs = set(int(k[:-4]) for k in keys)
+                
+                brick_counts_df = brick_counts_df.query('sv not in @existing_svs')
+                if len(brick_counts_df) == 0:
+                    raise RuntimeError("Based on your current settings, no meshes will be generated at all.\n"
+                                       "All possible meshes already exist in the destination location.\n"
+                                       "To regenerate them anyway, use 'skip-existing: false'")
+                
 
         with Timer("Distributing counts to bricks", logger):
+            brick_counts_grouped_df = (brick_counts_df
+                                        .groupby(['lz0', 'ly0', 'lx0'])[['sv', 'sv_size', 'body', 'body_size']]
+                                        .agg(list)
+                                        .reset_index())
+
             # Send count lists to their respective bricks
             # Use an inner merge to discard bricks that had no objects of interest.
             brick_counts_grouped_ddf = ddf.from_pandas(brick_counts_grouped_df, npartitions=1) # FIXME: What's good here?
@@ -632,15 +639,18 @@ class CreateMeshes(Workflow):
             result_df = sv_meshes_df[['sv', 'vertex_count', 'compressed_size']]
             result_df['file_size'] = filesizes
             return result_df
-        
-        dtypes = {'sv': np.uint64, 'vertex_count': np.int64, 'compressed_size': int, 'file_size': int}
-        final_stats_df = sv_meshes_ddf.map_partitions(write_sv_meshes, meta=dtypes).clear_divisions().compute()
-        np.save('final-mesh-stats.npy', final_stats_df.to_records(index=False))
+
+        with Timer("Computing all meshes", logger):
+            dtypes = {'sv': np.uint64, 'vertex_count': np.int64, 'compressed_size': int, 'file_size': int}
+            final_stats_df = sv_meshes_ddf.map_partitions(write_sv_meshes, meta=dtypes).clear_divisions().compute()
+            np.save('final-mesh-stats.npy', final_stats_df.to_records(index=False))
         
 
     def init_brickwall(self, volume_service, subset_labels):
         sbm = None
+        msg = "Initializing BrickWall"
         if len(subset_labels) > 0:
+            msg = f"Initializing BrickWall for {len(subset_labels)} labels"
             try:
                 brick_coords_df = volume_service.sparse_brick_coords_for_labels(subset_labels)
                 np.save('brick-coords.npy', brick_coords_df.to_records(index=False))
@@ -651,8 +661,8 @@ class CreateMeshes(Workflow):
             except NotImplementedError:
                 logger.warning("The volume service does not support sparse fetching.  All bricks will be analyzed.")
                 sbm = None
-            
-        with Timer("Initializing BrickWall", logger):
+
+        with Timer(msg, logger):
             # Aim for 2 GB RDD partitions when loading segmentation
             GB = 2**30
             target_partition_size_voxels = 2 * GB // np.uint64().nbytes
