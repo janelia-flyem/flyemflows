@@ -449,7 +449,7 @@ class CreateMeshes(Workflow):
                     # the entire mapping, and look up the bodies ourselves.
                     mapping = fetch_mappings(*seg_instance)
                     mapper = LabelMapper(mapping.index.values, mapping.values)
-                    brick_counts_df['body'] = mapper.apply(brick_counts_df['sv'].values)
+                    brick_counts_df['body'] = mapper.apply(brick_counts_df['sv'].values, True)
                 
                 total_sv_counts = brick_counts_df.groupby('sv')['count'].sum().rename('sv_size').reset_index()
                 total_body_counts = brick_counts_df.groupby('body')['count'].sum().rename('body_size').reset_index()
