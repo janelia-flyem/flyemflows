@@ -401,6 +401,7 @@ class CreateMeshes(Workflow):
             
         bricks_ddf = BrickWall.bricks_as_ddf(brickwall.bricks, logical=True)
         bricks_ddf = bricks_ddf[['lz0', 'ly0', 'lx0', 'brick']]
+        bricks_ddf = bricks_ddf.persist()
         
         def compute_brick_labelcounts(brick_df):
             brick_counts_dfs = []
