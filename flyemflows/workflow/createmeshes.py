@@ -558,10 +558,11 @@ class CreateMeshes(Workflow):
                   'vertex_count': int, 'compressed_size': int}
 
         brick_meshes_ddf = bricks_ddf.map_partitions(compute_meshes_for_bricks, meta=dtypes).clear_divisions()
+        brick_meshes_ddf = brick_meshes_ddf.persist()
 
         # Export brick mesh statistics
         os.makedirs('brick-mesh-stats')
-        brick_stats_ddf = brick_meshes_ddf[['sv', 'body', 'vertex_count', 'compressed_size']]
+        brick_stats_ddf = brick_meshes_ddf.drop(['mesh'], axis=1)
         brick_stats_ddf.to_csv('brick-mesh-stats/partition-*.csv', index=False, header=True)
         del brick_stats_ddf
 
@@ -597,9 +598,11 @@ class CreateMeshes(Workflow):
                                  'compressed_size': compressed_size})
 
         sv_brick_meshes_ddf = brick_meshes_ddf.groupby('sv')
+        del brick_meshes_ddf
         
         dtypes = {'sv': np.uint64, 'mesh': object, 'vertex_count': np.int64, 'compressed_size': int}
         sv_meshes_ddf = sv_brick_meshes_ddf.apply(assemble_sv_meshes, meta=dtypes)
+        sv_meshes_ddf = drop_empty_partitions(sv_meshes_ddf)
 
         # Export stitched mesh statistics        
         os.makedirs('stitched-mesh-stats')
@@ -682,6 +685,7 @@ def serialize_mesh(sv, mesh, path=None, fmt=None):
     Call mesh.serialize(), but if an error occurs,
     log it and save an .obj to 'bad-meshes'
     """
+    logger.info(f"Serializing mesh for {sv}")
     try:
         return mesh.serialize(path, fmt)
     except:
@@ -695,6 +699,8 @@ def serialize_mesh(sv, mesh, path=None, fmt=None):
 
 
 def compute_meshes_for_brick(brick, stats_df, options):
+    logger.info(f"Computing meshes for brick: {brick} ({len(stats_df)} meshes)")
+    
     smoothing = options["pre-stitch-parameters"]["smoothing"]
     decimation = options["pre-stitch-parameters"]["decimation"]
     rescale_factor = options["rescale-before-write"]
@@ -705,7 +711,7 @@ def compute_meshes_for_brick(brick, stats_df, options):
     if len(stats_df) == 0:
         empty64 = np.zeros((0,1), dtype=np.uint64)
         emptyObject = np.zeros((0,1), dtype=object)
-        return pd.DataFrame([empty64, empty64, emptyObject, empty64, empty64])
+        return pd.DataFrame([empty64, empty64, emptyObject, empty64, empty64], columns=cols)
     
     volume = brick.volume
     brick.compress()
