@@ -8,7 +8,7 @@ from requests import HTTPError
 from confiddler import validate
 from dvid_resource_manager.client import ResourceManagerClient
 
-from neuclease.util import Timer, choose_pyramid_depth, SparseBlockMask
+from neuclease.util import Timer, choose_pyramid_depth, SparseBlockMask, round_box
 from neuclease.dvid import ( fetch_repo_instances, fetch_instance_info, fetch_volume_box,
                              fetch_raw, post_raw, fetch_labelarray_voxels, post_labelmap_voxels,
                              update_extents, extend_list_value, create_voxel_instance, create_labelmap_instance,
@@ -447,7 +447,7 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         extend_list_value(self.server, self.uuid, '.meta', 'neuroglancer', [self.instance_name])
         
         for scale in range(pyramid_depth+1):
-            scaled_output_box_zyx = self.bounding_box_zyx // 2**scale # round down
+            scaled_output_box_zyx = round_box(self.bounding_box_zyx, 2**scale, 'out') // 2**scale
     
             if scale == 0:
                 scaled_instance_name = self.instance_name
