@@ -223,6 +223,7 @@ def drop_empty_bag_partitions(bag):
     This function drops the empty partitions.
     Inspired by: https://stackoverflow.com/questions/47812785/remove-empty-partitions-in-dask
     """
+    bag = bag.persist()
     def get_len(partition):
         # If the bag is the result of bag.filter(),
         # then each partition is actually a 'filter' object,
@@ -248,6 +249,7 @@ def drop_empty_ddf_partitions(df):
     """
     https://stackoverflow.com/questions/47812785/remove-empty-partitions-in-dask
     """
+    df = df.persist()
     ll = list(df.map_partitions(len).compute())
     df_delayed = df.to_delayed()
     df_delayed_new = list()
