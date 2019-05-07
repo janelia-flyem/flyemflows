@@ -115,6 +115,15 @@ DvidServiceSchema = \
             "type": "boolean",
             "default": False
         },
+        "accept-throttling": {
+            "description": "Whether to send throttle=true when requesting data from DVID.\n"
+                           "This allows DVID to respond with 503 errors, in which case the local service will pause before retrying.\n"
+                           "This mechanism is somewhat clumsy, and best left unused.\n"
+                           "Usually, it's better to restrict concurrency via global token server, such as the dvid-resource-manager.\n"
+                           "See the 'resource-manager' section of the Workflow config, and use that instead.\n",
+            "type": "boolean",
+            "default": False
+        },
         "creation-settings": DvidInstanceCreationSettingsSchema
     }
 }
@@ -223,6 +232,7 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         
         self._server = volume_config["dvid"]["server"]
         self._uuid = volume_config["dvid"]["uuid"]
+        self._throttle = volume_config["dvid"]["accept-throttling"]
 
         ##
         ## instance, dtype, etc.
@@ -371,6 +381,10 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
     @property
     def dtype(self):
         return self._dtype
+    
+    @property
+    def throttle(self):
+        return self._throttle
 
     @property
     def preferred_message_shape(self):
@@ -483,7 +497,6 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
     @auto_retry(3, pause_between_tries=60.0, logging_name=__name__)
     def get_subvolume(self, box_zyx, scale=0):
         req_bytes = self._dtype_nbytes * np.prod(box_zyx[1] - box_zyx[0])
-        throttle = (self._resource_manager_client.server_ip == "")
 
         instance_name = self._instance_name
         if self._instance_type.endswith('blk') and scale > 0:
@@ -501,14 +514,14 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
                                                          instance_name,
                                                          box_zyx,
                                                          scale,
-                                                         throttle,
+                                                         self._throttle,
                                                          supervoxels=self.supervoxels,
                                                          format='lazy-array' )
                 # Inflate
                 return vol_proxy()
             else:
                 with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
-                    return fetch_raw(self._server, self._uuid, instance_name, box_zyx, throttle)
+                    return fetch_raw(self._server, self._uuid, instance_name, box_zyx, self._throttle)
 
         except Exception as ex:
             # In cluster scenarios, a chained 'raise ... from ex' traceback
@@ -536,7 +549,6 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
     @auto_retry(3, pause_between_tries=60.0, logging_name=__name__)
     def write_subvolume(self, subvolume, offset_zyx, scale):
         req_bytes = self._dtype_nbytes * np.prod(subvolume.shape)
-        throttle = (self._resource_manager_client.server_ip == "")
 
         offset_zyx = np.asarray(offset_zyx)
         shape_zyx = np.asarray(subvolume.shape)
@@ -563,14 +575,14 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             if self._instance_type in ('labelarray', 'labelmap') and is_block_aligned:
                 with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
                     post_labelmap_voxels( self._server, self._uuid, instance_name, offset_zyx, subvolume, scale,
-                                            self.enable_downres, self.disable_indexing, throttle )
+                                            self.enable_downres, self.disable_indexing, self._throttle )
             else:
                 assert not self.enable_downres, \
                     "Can't use enable-downres: You are attempting to post non-block-aligned data."
 
                 with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
                     post_raw( self._server, self._uuid, instance_name, offset_zyx, subvolume,
-                              throttle=throttle, mutate=not self.disable_indexing )
+                              throttle=self._throttle, mutate=not self.disable_indexing )
 
         except Exception as ex:
             # In cluster scenarios, a chained 'raise ... from ex' traceback
