@@ -372,8 +372,8 @@ class CreateMeshes(Workflow):
         self._init_input()
         self._prepare_output()        
 
-        subset_supervoxels = load_body_list(options["subset-supervoxels"], self.input_is_labelmap_supervoxels())
-        subset_bodies = load_body_list(options["subset-bodies"], self.input_is_labelmap_supervoxels())
+        subset_supervoxels = load_body_list(options["subset-supervoxels"], True)
+        subset_bodies = load_body_list(options["subset-bodies"], False)
 
         if len(subset_supervoxels) and len(subset_bodies):
             raise RuntimeError("Can't use both subset-supervoxels and subset-bodies.  Choose one.")
@@ -384,8 +384,6 @@ class CreateMeshes(Workflow):
                     return fetch_supervoxels(*self.input_service.instance_triple, body)
                 svs = db.from_sequence(subset_bodies, npartitions=512).map(fetch_svs).compute()
                 subset_supervoxels = list(chain(*svs))
-
-        brickwall = self.init_brickwall(self.input_service, subset_supervoxels)
 
         if self.input_is_labelmap_bodies():
             assert len(subset_supervoxels) == 0, \
@@ -398,6 +396,8 @@ class CreateMeshes(Workflow):
             #
             # FIXME: I need to just rename 'supervoxel' to 'label' and make this less confusing.
             subset_supervoxels = subset_bodies
+
+        brickwall = self.init_brickwall(self.input_service, subset_supervoxels)
             
         bricks_ddf = BrickWall.bricks_as_ddf(brickwall.bricks, logical=True)
         bricks_ddf = bricks_ddf[['lz0', 'ly0', 'lx0', 'brick']]
