@@ -380,8 +380,9 @@ class CreateMeshes(Workflow):
 
         if self.input_is_labelmap_supervoxels() and len(subset_bodies) > 0:
             with Timer("Fetching supervoxel set for labelmap bodies", logger):
+                seg_instance = self.input_service.base_service.instance_triple
                 def fetch_svs(body):
-                    return fetch_supervoxels(*self.input_service.instance_triple, body)
+                    return fetch_supervoxels(*seg_instance, body)
                 svs = db.from_sequence(subset_bodies, npartitions=512).map(fetch_svs).compute()
                 subset_supervoxels = list(chain(*svs))
 
