@@ -518,13 +518,14 @@ class CreateMeshes(Workflow):
                     raise RuntimeError("Based on your current settings, no meshes will be generated at all.\n"
                                        "All possible meshes already exist in the destination location.\n"
                                        "To regenerate them anyway, use 'skip-existing: false'")
-                
 
-        with Timer("Distributing counts to bricks", logger):
+        with Timer("Grouping counts", logger):
             brick_counts_grouped_df = (brick_counts_df
                                         .groupby(['lz0', 'ly0', 'lx0'])[['sv', 'sv_size', 'body', 'body_size']]
                                         .agg(list)
                                         .reset_index())
+
+            np.save('grouped-brick-counts.npy', brick_counts_grouped_df.to_records(index=False))
 
             # Send count lists to their respective bricks
             # Use an inner merge to discard bricks that had no objects of interest.
@@ -536,6 +537,7 @@ class CreateMeshes(Workflow):
             assert len(bricks_partition_df) > 0, "partition is empty" # drop_empty_partitions() should have eliminated these.
             result_dfs = []
             for row in bricks_partition_df.itertuples():
+                assert len(row.sv) > 0
                 stats_df = pd.DataFrame({'sv': row.sv, 'sv_size': row.sv_size,
                                          'body': row.body, 'body_size': row.body_size})
 
@@ -565,11 +567,14 @@ class CreateMeshes(Workflow):
         brick_meshes_ddf = bricks_ddf.map_partitions(compute_meshes_for_bricks, meta=dtypes).clear_divisions()
         brick_meshes_ddf = brick_meshes_ddf.persist()
 
-        # Export brick mesh statistics
-        os.makedirs('brick-mesh-stats')
-        brick_stats_ddf = brick_meshes_ddf.drop(['mesh'], axis=1)
-        brick_stats_ddf.to_csv('brick-mesh-stats/partition-*.csv', index=False, header=True)
-        del brick_stats_ddf
+        with Timer("Computing brickwise meshes", logger):
+            # Export brick mesh statistics
+            os.makedirs('brick-mesh-stats')
+            brick_stats_ddf = brick_meshes_ddf.drop(['mesh'], axis=1)
+
+            # to_csv() blocks, so this triggers the computation.
+            brick_stats_ddf.to_csv('brick-mesh-stats/partition-*.csv', index=False, header=True)
+            del brick_stats_ddf
 
         final_smoothing = options["post-stitch-parameters"]["smoothing"]
         final_decimation = options["post-stitch-parameters"]["decimation"]
@@ -621,9 +626,12 @@ class CreateMeshes(Workflow):
         del sv_brick_meshes_dgb
         sv_meshes_ddf = drop_empty_partitions(sv_meshes_ddf)
 
-        # Export stitched mesh statistics        
-        os.makedirs('stitched-mesh-stats')
-        sv_meshes_ddf[['sv', 'vertex_count', 'compressed_size']].to_csv('stitched-mesh-stats/partition-*.csv', index=False, header=True)
+        with Timer("Combining brick meshes", logger):
+            # Export stitched mesh statistics
+            os.makedirs('stitched-mesh-stats')
+            
+            # to_csv() blocks, so this triggers the computation.
+            sv_meshes_ddf[['sv', 'vertex_count', 'compressed_size']].to_csv('stitched-mesh-stats/partition-*.csv', index=False, header=True)
         
         # TODO: Repartition?
         
@@ -661,7 +669,7 @@ class CreateMeshes(Workflow):
             result_df['file_size'] = filesizes
             return result_df
 
-        with Timer("Computing all meshes", logger):
+        with Timer("Writing meshes", logger):
             dtypes = {'sv': np.uint64, 'vertex_count': np.int64, 'compressed_size': int, 'file_size': int}
             final_stats_df = sv_meshes_ddf.map_partitions(write_sv_meshes, meta=dtypes).clear_divisions().compute()
             np.save('final-mesh-stats.npy', final_stats_df.to_records(index=False))
