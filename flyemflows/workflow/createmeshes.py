@@ -553,7 +553,9 @@ class CreateMeshes(Workflow):
                 
                 result_dfs.append(brick_meshes_df)
 
-            return pd.concat(result_dfs, ignore_index=True)
+            result_df = pd.concat(result_dfs, ignore_index=True)
+            assert result_df.columns.tolist() == cols
+            return result_df
                 
         dtypes = {'lz0': np.int32, 'ly0': np.int32, 'lx0': np.int32,
                   'sv': np.uint64, 'body': np.uint64,
@@ -575,9 +577,19 @@ class CreateMeshes(Workflow):
 
         stitch_method = options["stitch-method"]
         def assemble_sv_meshes(sv_brick_meshes_df):
-            sv = sv_brick_meshes_df['sv'].iloc[0]
+            assert len(sv_brick_meshes_df) > 0
+            
+            try:
+                sv = sv_brick_meshes_df['sv'].iloc[0]
+            except Exception as ex:
+                # Re-raise with the whole input
+                # (Can't use exception chaining, sadly.)
+                raise Exception('WrappedError:', type(ex), sv_brick_meshes_df.index, sv_brick_meshes_df.columns.tolist(), str(sv_brick_meshes_df))
+
+            assert (sv_brick_meshes_df['sv'] == sv).all()
 
             mesh = Mesh.concatenate_meshes(sv_brick_meshes_df['mesh'])
+            
             if stitch_method == 'stitch':
                 mesh.stitch_adjacent_faces(drop_unused_vertices=True, drop_duplicate_faces=True)
             
@@ -601,11 +613,12 @@ class CreateMeshes(Workflow):
                                  'compressed_size': compressed_size},
                                 index=[sv])
 
-        sv_brick_meshes_ddf = brick_meshes_ddf.groupby('sv')
+        sv_brick_meshes_dgb = brick_meshes_ddf.groupby('sv')
         del brick_meshes_ddf
         
         dtypes = {'sv': np.uint64, 'mesh': object, 'vertex_count': np.int64, 'compressed_size': int}
-        sv_meshes_ddf = sv_brick_meshes_ddf.apply(assemble_sv_meshes, meta=dtypes)
+        sv_meshes_ddf = sv_brick_meshes_dgb.apply(assemble_sv_meshes, meta=dtypes)
+        del sv_brick_meshes_dgb
         sv_meshes_ddf = drop_empty_partitions(sv_meshes_ddf)
 
         # Export stitched mesh statistics        
