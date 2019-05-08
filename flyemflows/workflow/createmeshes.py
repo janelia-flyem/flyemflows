@@ -539,6 +539,9 @@ class CreateMeshes(Workflow):
                 stats_df = pd.DataFrame({'sv': row.sv, 'sv_size': row.sv_size,
                                          'body': row.body, 'body_size': row.body_size})
 
+                dtypes = {'sv': np.uint64, 'sv_size': np.uint64,
+                          'body': np.uint64, 'body_size': np.uint64}
+                stats_df = stats_df.astype(dtypes)
                 brick_meshes_df = compute_meshes_for_brick(row.brick, stats_df, options)
                 brick_meshes_df['lz0'] = row.lz0
                 brick_meshes_df['ly0'] = row.ly0
@@ -553,7 +556,7 @@ class CreateMeshes(Workflow):
             return pd.concat(result_dfs, ignore_index=True)
                 
         dtypes = {'lz0': np.int32, 'ly0': np.int32, 'lx0': np.int32,
-                  'sv': np.int64, 'body': np.int64,
+                  'sv': np.uint64, 'body': np.uint64,
                   'mesh': object,
                   'vertex_count': int, 'compressed_size': int}
 
@@ -592,10 +595,11 @@ class CreateMeshes(Workflow):
             vertex_count = len(mesh.vertices_zyx)
             compressed_size = mesh.compress()
             
-            return pd.DataFrame({'sv': [sv],
-                                 'mesh': [mesh],
-                                 'vertex_count': [vertex_count],
-                                 'compressed_size': compressed_size})
+            return pd.DataFrame({'sv': sv,
+                                 'mesh': mesh,
+                                 'vertex_count': vertex_count,
+                                 'compressed_size': compressed_size},
+                                index=[sv])
 
         sv_brick_meshes_ddf = brick_meshes_ddf.groupby('sv')
         del brick_meshes_ddf
@@ -685,7 +689,7 @@ def serialize_mesh(sv, mesh, path=None, fmt=None):
     Call mesh.serialize(), but if an error occurs,
     log it and save an .obj to 'bad-meshes'
     """
-    logger.info(f"Serializing mesh for {sv}")
+    logging.getLogger(__name__).info(f"Serializing mesh for {sv}")
     try:
         return mesh.serialize(path, fmt)
     except:
@@ -699,7 +703,7 @@ def serialize_mesh(sv, mesh, path=None, fmt=None):
 
 
 def compute_meshes_for_brick(brick, stats_df, options):
-    logger.info(f"Computing meshes for brick: {brick} ({len(stats_df)} meshes)")
+    logging.getLogger(__name__).info(f"Computing meshes for brick: {brick} ({len(stats_df)} meshes)")
     
     smoothing = options["pre-stitch-parameters"]["smoothing"]
     decimation = options["pre-stitch-parameters"]["decimation"]
@@ -722,7 +726,10 @@ def compute_meshes_for_brick(brick, stats_df, options):
                                                             smoothing, decimation, rescale_factor)
         meshes.append( (row.sv, row.body, mesh, vertex_count, compressed_size) )
     
-    return pd.DataFrame(meshes, columns=cols)
+    dtypes = {'sv': np.uint64, 'body': np.uint64,
+              'mesh': object,
+              'vertex_count': int, 'compressed_size': int}
+    return pd.DataFrame(meshes, columns=cols).astype(dtypes)
 
 
 def generate_mesh(volume, box, label, smoothing, decimation, rescale_factor):
