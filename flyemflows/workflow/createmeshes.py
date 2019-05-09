@@ -532,6 +532,7 @@ class CreateMeshes(Workflow):
                                    "See sv-sizes.npy and body-sizes.npy")
             
             # Filter for already existing
+            # TODO: This should occurr earlier, so we can avoid fetching unneeded bricks in the first place.
             if options["skip-existing"]:
                 with Timer("Determining which meshes are already stored (skip-existing)", logger):
                     fmt = options["format"]
@@ -561,6 +562,12 @@ class CreateMeshes(Workflow):
                     raise RuntimeError("Based on your current settings, no meshes will be generated at all.\n"
                                        "All possible meshes already exist in the destination location.\n"
                                        "To regenerate them anyway, use 'skip-existing: false'")
+
+        np.save('fitlered-brick-counts.npy', brick_counts_df.to_records(index=False))
+
+        num_bodies = pd.unique(brick_counts_df['body'])
+        num_svs = pd.unique(brick_counts_df['sv'])
+        logger.info(f"After filtering, {num_svs} supervoxels remain, from {num_bodies} bodies.")
 
         with Timer("Grouping counts", logger):
             brick_counts_grouped_df = (brick_counts_df
@@ -611,7 +618,8 @@ class CreateMeshes(Workflow):
         brick_meshes_ddf = bricks_ddf.map_partitions(compute_meshes_for_bricks, meta=dtypes).clear_divisions()
         brick_meshes_ddf = brick_meshes_ddf.persist()
 
-        with Timer("Computing brickwise meshes", logger):
+        msg = f"Computing {len(brick_counts_df)} brickwise meshes from {len(brick_counts_grouped_df)} bricks"
+        with Timer(msg, logger):
             # Export brick mesh statistics
             os.makedirs('brick-mesh-stats')
             brick_stats_ddf = brick_meshes_ddf.drop(['mesh'], axis=1)
