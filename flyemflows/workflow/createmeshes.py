@@ -38,7 +38,7 @@ class CreateMeshes(Workflow):
         "type": "object",
         "required": ["server", "uuid"],
     
-        #"default": {}, # Must not have default
+        #"default": {}, # Must not have default. (Appears below in a 'oneOf' context.)
         "additionalProperties": False,
         "properties": {
             "server": {
@@ -94,7 +94,7 @@ class CreateMeshes(Workflow):
             "directory": {
                 "description": "Directory to write supervoxel meshes into.",
                 "type": "string",
-                "default": "meshes"
+                #"default": "" # Must not have default. (Appears below in a 'oneOf' context.)
             }
         }
     }
