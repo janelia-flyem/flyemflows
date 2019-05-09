@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from scipy.ndimage import distance_transform_edt
 
-from neuclease.dvid import create_labelmap_instance, post_labelmap_voxels
+from neuclease.dvid import create_labelmap_instance, post_labelmap_voxels, fetch_supervoxel, fetch_key
 
 from vol2mesh import Mesh
 
@@ -194,6 +194,46 @@ def test_createmeshes_basic(setup_createmeshes_config, disable_auto_retry):
     check_outputs(execution_dir, object_boxes)
 
 
+def test_createmeshes_to_tarsupervoxels(setup_createmeshes_config, disable_auto_retry):
+    template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
+     
+    tsv_instance = 'test_createmeshes_to_tarsupervoxels'
+    config['output'] = {'tarsupervoxels':
+                            {'instance': tsv_instance,
+                             'create-if-necessary': True}}
+    YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
+
+    _execution_dir, _workflow = launch_flow(template_dir, 1)
+    
+    server = config['input']['dvid']['server']
+    uuid = config['input']['dvid']['uuid']
+    for sv in [100,200,300]:
+        mesh_bytes = fetch_supervoxel(server, uuid, tsv_instance, sv)
+        mesh = Mesh.from_buffer(mesh_bytes, fmt='obj')
+        assert np.allclose(mesh.vertices_zyx.min(axis=0), object_boxes[sv][0], 1)
+        assert np.allclose(mesh.vertices_zyx.max(axis=0), object_boxes[sv][1], 1)
+
+
+def test_createmeshes_to_keyvalue(setup_createmeshes_config, disable_auto_retry):
+    template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
+     
+    kv_instance = 'test_createmeshes_to_keyvalue'
+    config['output'] = {'keyvalue':
+                            {'instance': kv_instance,
+                             'create-if-necessary': True}}
+    YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
+
+    _execution_dir, _workflow = launch_flow(template_dir, 1)
+    
+    server = config['input']['dvid']['server']
+    uuid = config['input']['dvid']['uuid']
+    for sv in [100,200,300]:
+        mesh_bytes = fetch_key(server, uuid, kv_instance, f'{sv}.obj')
+        mesh = Mesh.from_buffer(mesh_bytes, fmt='obj')
+        assert np.allclose(mesh.vertices_zyx.min(axis=0), object_boxes[sv][0], 1)
+        assert np.allclose(mesh.vertices_zyx.max(axis=0), object_boxes[sv][1], 1)
+
+
 def test_createmeshes_subset_svs(setup_createmeshes_config, disable_auto_retry):
     template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
     config['createmeshes']['subset-supervoxels'] = [100,300]
@@ -244,6 +284,7 @@ def test_createmeshes_subset_bodies(setup_createmeshes_config, disable_auto_retr
     assert 200 not in df['sv'].values
 
     check_outputs(execution_dir, object_boxes, subset_labels=[100,300])
+
 
 def test_createmeshes_bad_subset_bodies(setup_createmeshes_config, disable_auto_retry):
     """
@@ -325,5 +366,5 @@ if __name__ == "__main__":
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_createmeshes']
     #args += ['-x']
     #args += ['-Werror']
-    #args += ['-k', 'createmeshes_bad_subset_svs']
+    #args += ['-k', 'createmeshes_to_keyvalue']
     pytest.main(args)
