@@ -328,7 +328,7 @@ class CreateMeshes(Workflow):
                    "Use a labelmap input source, and set supervoxels: true")
             raise RuntimeError(msg)
 
-        existing_instances = fetch_repo_instances(self.server, self.uuid)
+        existing_instances = fetch_repo_instances(server, uuid)
         if instance in existing_instances:
             # Instance exists -- nothing to do.
             return
@@ -693,7 +693,7 @@ class CreateMeshes(Workflow):
                     with open(path, 'wb') as f:
                         f.write(mesh_bytes)
             else:
-                instance = (destination[destination_type][k] for k in ('server', 'uuid', 'instance'))
+                instance = [destination[destination_type][k] for k in ('server', 'uuid', 'instance')]
                 with resource_mgr.access_context(instance[0], False, 1, sum(filesizes)):
                     if destination_type == 'tarsupervoxels':
                         post_load(*instance, keyvalues)
