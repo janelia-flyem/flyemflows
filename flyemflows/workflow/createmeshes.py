@@ -347,6 +347,15 @@ class CreateMeshes(Workflow):
 
         ## tarsupervoxels output
         sync_instance = output_cfg["tarsupervoxels"]["sync-to"]
+
+        
+        if not sync_instance:
+            # Auto-fill a default 'sync-to' instance using the input segmentation, if possible.
+            base_input = self.input_service.base_service
+            if isinstance(base_input, DvidVolumeService):
+                if base_input.instance_name in existing_instances:
+                    sync_instance = base_input.instance_name
+
         if not sync_instance:
             msg = ("Can't create a tarsupervoxels instance unless "
                    "you specify a 'sync-to' labelmap instance name.")
