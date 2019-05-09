@@ -53,8 +53,7 @@ class CreateMeshes(Workflow):
             },
             "instance": {
                 "description": "Name of the instance to create",
-                "type": "string",
-                "default": ""
+                "type": "string"
             },
             "sync-to": {
                 "description": "When creating a tarsupervoxels instance, it should be sync'd to a labelmap instance.\n"
@@ -298,7 +297,23 @@ class CreateMeshes(Workflow):
 
         server = output_cfg[instance_type]['server']
         uuid = output_cfg[instance_type]['uuid']
-        instance = output_cfg[instance_type]['uuid']
+        instance = output_cfg[instance_type]['instance']
+
+        # If the output server or uuid is left blank,
+        # we assume it should be auto-filled from the input settings.
+        if server == "" or uuid == "":
+            base_input = self.input_service.base_service
+            if not isinstance(base_input, DvidVolumeService):
+                # Can't copy from the input if the input ain't a dvid source
+                raise RuntimeError("Output destination server/uuid was left blank.")
+
+            if server == "":
+                server = base_input.server
+                output_cfg[instance_type]['server'] = server
+
+            if uuid == "":
+                uuid = base_input.uuid
+                output_cfg[instance_type]['uuid'] = uuid
 
         if is_locked(server, uuid):
             info = fetch_server_info(server)
