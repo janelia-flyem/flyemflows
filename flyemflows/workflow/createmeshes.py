@@ -5,6 +5,7 @@ from itertools import chain
 
 import numpy as np
 import pandas as pd
+from requests import HTTPError
 
 import dask.bag as db
 import dask.dataframe as ddf
@@ -382,9 +383,27 @@ class CreateMeshes(Workflow):
             with Timer("Fetching supervoxel set for labelmap bodies", logger):
                 seg_instance = self.input_service.base_service.instance_triple
                 def fetch_svs(body):
-                    return fetch_supervoxels(*seg_instance, body)
-                svs = db.from_sequence(subset_bodies, npartitions=512).map(fetch_svs).compute()
-                subset_supervoxels = list(chain(*svs))
+                    try:
+                        svs = fetch_supervoxels(*seg_instance, body)
+                        return (body, svs)
+                    except HTTPError as ex:
+                        if (ex.response is not None) and (ex.response.status_code == 404):
+                            # Body doesn't exist (any more)
+                            return (body, np.array([], np.uint64))
+                        raise
+
+                bodies_and_svs = db.from_sequence(subset_bodies, npartitions=512).map(fetch_svs).compute()
+                bad_bodies = [body for body, svs in bodies_and_svs if len(svs) == 0]
+                if bad_bodies:
+                    pd.Series(bad_bodies, name='body').to_csv('missing-bodies.csv', index=False, header=True)
+                    if len(bad_bodies) < 100:
+                        logger.warning(f"Could not fetch supervoxel list for {len(bad_bodies)} bodies: {bad_bodies}")
+                    else:
+                        logger.warning(f"Could not fetch supervoxel list for {len(bad_bodies)} bodies.  See missing-bodies.csv")
+
+                subset_supervoxels = list(chain(*(svs for body, svs in bodies_and_svs)))
+                if len(subset_supervoxels) == 0:
+                    raise RuntimeError("None of the listed bodies could be found.  No supervoxels to process.")
 
         if self.input_is_labelmap_bodies():
             assert len(subset_supervoxels) == 0, \
@@ -544,6 +563,7 @@ class CreateMeshes(Workflow):
                 dtypes = {'sv': np.uint64, 'sv_size': np.uint64,
                           'body': np.uint64, 'body_size': np.uint64}
                 stats_df = stats_df.astype(dtypes)
+
                 brick_meshes_df = compute_meshes_for_brick(row.brick, stats_df, options)
                 brick_meshes_df['lz0'] = row.lz0
                 brick_meshes_df['ly0'] = row.ly0
@@ -589,7 +609,7 @@ class CreateMeshes(Workflow):
             except Exception as ex:
                 # Re-raise with the whole input
                 # (Can't use exception chaining, sadly.)
-                raise Exception('WrappedError:', type(ex), sv_brick_meshes_df.index, sv_brick_meshes_df.columns.tolist(), str(sv_brick_meshes_df))
+                raise Exception('WrappedError:', type(ex), sv_brick_meshes_df.index, sv_brick_meshes_df.columns.tolist(), str(sv_brick_meshes_df.iloc[0]))
 
             assert (sv_brick_meshes_df['sv'] == sv).all()
 

@@ -207,6 +207,32 @@ def test_createmeshes_subset_svs(setup_createmeshes_config, disable_auto_retry):
     check_outputs(execution_dir, object_boxes, subset_labels=[100,300])
 
 
+def test_createmeshes_bad_subset_svs(setup_createmeshes_config, disable_auto_retry):
+    """
+    If one (or more) of the listed supervoxels no longer exists,
+    DVID will return a 0 for that supervoxel's mapping,
+    and its sparsevol cannot be determined.
+    The job should complete anyway, for the other supervoxels.
+    """
+    template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
+    config['createmeshes']['subset-supervoxels'] = [100,999]
+    YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
+    
+    execution_dir, _workflow = launch_flow(template_dir, 1)
+
+    # List of bad svs is reported in this CSV file.
+    # See DvidVolumeService.sparse_brick_coords_for_labels()
+    assert pd.read_csv(f'{execution_dir}/labels-without-sparsevols.csv')['sv'].tolist() == [999]
+
+    df = pd.DataFrame( np.load(f'{execution_dir}/final-mesh-stats.npy') )
+    assert 100 in df['sv'].values
+    assert 200 not in df['sv'].values
+    assert 300 not in df['sv'].values
+    assert 999 not in df['sv'].values
+
+    check_outputs(execution_dir, object_boxes, subset_labels=[100])
+
+
 def test_createmeshes_subset_bodies(setup_createmeshes_config, disable_auto_retry):
     template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
     config['createmeshes']['subset-bodies'] = [100,300]
@@ -218,6 +244,27 @@ def test_createmeshes_subset_bodies(setup_createmeshes_config, disable_auto_retr
     assert 200 not in df['sv'].values
 
     check_outputs(execution_dir, object_boxes, subset_labels=[100,300])
+
+def test_createmeshes_bad_subset_bodies(setup_createmeshes_config, disable_auto_retry):
+    """
+    If one (or more) of the listed bodies no longer exists, DVID returns a 404 when we try to fetch its supervoxels.
+    The job should complete anyway, for the other bodies.
+    """
+    template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
+    config['createmeshes']['subset-bodies'] = [100,999]
+    YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
+    
+    execution_dir, _workflow = launch_flow(template_dir, 1)
+
+    assert pd.read_csv(f'{execution_dir}/missing-bodies.csv')['body'].tolist() == [999]
+
+    df = pd.DataFrame( np.load(f'{execution_dir}/final-mesh-stats.npy') )
+    assert 100 in df['sv'].values
+    assert 200 not in df['sv'].values
+    assert 300 not in df['sv'].values
+    assert 999 not in df['sv'].values
+
+    check_outputs(execution_dir, object_boxes, subset_labels=[100])
 
 
 def test_createmeshes_filter_supervoxels(setup_createmeshes_config, disable_auto_retry):
@@ -277,5 +324,6 @@ if __name__ == "__main__":
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_createmeshes']
     #args += ['-x']
-    #args += ['-k', 'createmeshes_skip_existing']
+    #args += ['-Werror']
+    #args += ['-k', 'createmeshes_bad_subset_svs']
     pytest.main(args)
