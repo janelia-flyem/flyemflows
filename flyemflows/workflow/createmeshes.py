@@ -563,10 +563,10 @@ class CreateMeshes(Workflow):
                                        "All possible meshes already exist in the destination location.\n"
                                        "To regenerate them anyway, use 'skip-existing: false'")
 
-        np.save('fitlered-brick-counts.npy', brick_counts_df.to_records(index=False))
+        np.save('filtered-brick-counts.npy', brick_counts_df.to_records(index=False))
 
-        num_bodies = pd.unique(brick_counts_df['body'])
-        num_svs = pd.unique(brick_counts_df['sv'])
+        num_bodies = len(pd.unique(brick_counts_df['body']))
+        num_svs = len(pd.unique(brick_counts_df['sv']))
         logger.info(f"After filtering, {num_svs} supervoxels remain, from {num_bodies} bodies.")
 
         with Timer("Grouping counts", logger):
