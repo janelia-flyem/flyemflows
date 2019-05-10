@@ -209,7 +209,12 @@ def launch_flow(template_dir, num_workers, kill_cluster=True, _custom_execute_fn
             # On NFS, sometimes it takes a while for it to flush the file cache to disk,
             # which means your terminal doesn't see the new directory for a minute or two.
             # That's slightly annoying, so let's call sync right away to force the flush.
-            os.system('sync')
+            #
+            # Edit: This seems to cause problems if ANY files are deleted during the sync
+            #       (even files not in the execution directory)
+            #       Unless I can sort that out (or figure out how to sync ONLY the execution directory),
+            #       it's best not to execute this sync.
+            #os.system('sync')
             
             workflow_inst = _run_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster, _custom_execute_fn)
             return execution_dir, workflow_inst
