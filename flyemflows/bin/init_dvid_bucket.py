@@ -26,7 +26,7 @@ DVID_CONSOLE_DIR = f'{sys.prefix}/http/dvid-web-console'
 
 LOG_DIR='/tmp/dvid-logs'
 
-def get_toml_text(bucket_name, dvid_console_dir, log_dir):
+def get_toml_text(bucket_name, dvid_console_dir, log_dir, repo_uuid):
     return textwrap.dedent("""\
         [server]
         httpAddress = ":8000"
@@ -49,7 +49,7 @@ def get_toml_text(bucket_name, dvid_console_dir, log_dir):
         [store]
             [store.mutable]
                 engine = "gbucket"
-                bucket= "{bucket_name}"
+                bucket= "{bucket_name}" # Repo UUID: {repo_uuid}
         """.format(**locals()))
 
 def main():
@@ -81,7 +81,7 @@ def main():
 
     print("Writing TOML to {}".format(args.toml_path))
     with open(args.toml_path, 'w') as f_toml:
-        f_toml.write(get_toml_text(args.bucket_name, DVID_CONSOLE_DIR, LOG_DIR))
+        f_toml.write(get_toml_text(args.bucket_name, DVID_CONSOLE_DIR, LOG_DIR, "<unknown>"))
 
     print("Wrote {}".format(args.toml_path))
 
@@ -102,10 +102,16 @@ def main():
         print(cmd)
         response = subprocess.check_output(cmd, shell=True).strip()
         print(response.decode('utf-8'))
-        #repo_uuid = response.split()[-1]
+        repo_uuid = response.strip().split()[-1]
+        
+        print("Writing TOML to {}".format(args.toml_path))
+        with open(args.toml_path, 'w') as f_toml:
+            f_toml.write(get_toml_text(args.bucket_name, DVID_CONSOLE_DIR, LOG_DIR, repo_uuid))
+
     finally:
         dvid_proc.terminate()
         dvid_proc.wait()
+
 
 
 if __name__ == "__main__":
