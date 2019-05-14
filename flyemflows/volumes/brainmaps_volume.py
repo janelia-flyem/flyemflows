@@ -14,6 +14,8 @@ import snappy
 #import httplib2
 #httplib2.debuglevel = 1
 
+# Brainmaps Docs:
+# https://developers.google.com/brainmaps
 BRAINMAPS_API_VERSION = 'v1'
 BRAINMAPS_BASE_URL = f'https://brainmaps.googleapis.com/{BRAINMAPS_API_VERSION}'
 
