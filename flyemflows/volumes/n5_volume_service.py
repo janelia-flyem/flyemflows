@@ -61,7 +61,7 @@ class N5VolumeServiceReader(VolumeServiceReader):
         self._n5_file = None
         self._n5_datasets = {}
         
-        if self.n5_file.is_group(self._dataset_name):
+        if isinstance(self.n5_dataset(0), z5py.group.Group):
             raise RuntimeError("The N5 dataset you specified appears to be a 'group', not a volume.\n"
                                "Please pass the complete dataset name.  If your dataset is multi-scale,\n"
                                "pass scale 0 ('s0') as the dataset name.\n")
