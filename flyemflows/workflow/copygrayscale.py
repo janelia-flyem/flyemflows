@@ -359,21 +359,26 @@ def write_brick(output_service, scale, brick):
     if not isinstance( output_service.base_service, DvidVolumeService):
         output_service.write_subvolume(brick.volume, brick.physical_box[0], scale)
 
-    # For dvid outputs, we add some special checks/optimizations
+    # For dvid outputs, implement a special optimization.
+    # We trim empty blocks from the left/right of the brick.
     else:
-        shape = np.array(brick.volume.shape)
-        assert (shape[0:2] == output_service.block_width).all()
-        assert shape[2] % output_service.block_width == 0
+        # Typically, users will prefer bricks of shape (64,64,N).
+        # However, if the bricks wider than 64, this code still works,
+        # but all blocks for a given X must be empty for the brick to be trimmed.
+        
+        block_width = output_service.block_width
+        assert np.array(brick.volume.shape)[2] % block_width == 0, \
+            "Brick X-dimension is not a multiple of the DVID block-shape"
         
         # Omit leading/trailing empty blocks
-        block_width = output_service.block_width
         assert (np.array(brick.volume.shape) % block_width).all() == 0
         blockwise_view = view_as_blocks( brick.volume, brick.volume.shape[0:2] + (block_width,) )
         
         # blockwise view has shape (1,1,X/bx, bz, by, bx)
         assert blockwise_view.shape[0:2] == (1,1)
         blockwise_view = blockwise_view[0,0] # drop singleton axes
-        
+
+        # Compute max in each block to determine the non-empty blocks
         block_maxes = blockwise_view.max( axis=(1,2,3) )
         assert block_maxes.ndim == 1
         
