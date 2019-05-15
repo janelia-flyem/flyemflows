@@ -238,8 +238,7 @@ def drop_empty_bag_partitions(bag):
     lengths_and_partitions = zip(partition_lengths, bag.to_delayed())
     
     # Drop the ones with empty partitions
-    lengths_and_partitions = filter(lambda l_p: l_p[0], lengths_and_partitions)
-    _lengths, partitions = zip(*lengths_and_partitions)
+    partitions = (p for l,p in lengths_and_partitions if l > 0)
     
     # Convert from list of delayed objects back into a Bag.
     return dask.bag.from_delayed(partitions)
