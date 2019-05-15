@@ -194,7 +194,7 @@ class CopyGrayscale(Workflow):
             "Output bounding box must match the input bounding box exactly. (No translation permitted)."
 
         if options["pyramid-source"] == "copy":
-            assert not (set(range(options["max-pyramid-scale"])) - set(self.output_service.available_scales)), \
+            assert not (set(range(options["max-pyramid-scale"])) - set(self.input_service.available_scales)), \
                 ("Can't use 'copy' for pyramid-source.  Not all scales are available in the input.\n"
                 f"Available scales are: {self.output_service.available_scales}")
 
