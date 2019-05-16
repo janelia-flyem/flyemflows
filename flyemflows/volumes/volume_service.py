@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 class VolumeService(metaclass=ABCMeta):
 
-    SUPPORTED_SERVICES = ['hdf5', 'dvid', 'brainmaps', 'n5', 'slice-files', 'zarr']
+    SUPPORTED_SERVICES = ['hdf5', 'dvid', 'boss', 'brainmaps', 'n5', 'slice-files', 'zarr']
 
     @abstractproperty
     def dtype(self):
@@ -61,6 +61,7 @@ class VolumeService(metaclass=ABCMeta):
     def create_from_config( cls, volume_config, resource_manager_client=None ):
         from .hdf5_volume_service import Hdf5VolumeService
         from .dvid_volume_service import DvidVolumeService
+        from .boss_volume_service import BossVolumeServiceReader
         from .brainmaps_volume_service import BrainMapsVolumeServiceReader
         from .n5_volume_service import N5VolumeServiceReader
         from .zarr_volume_service import ZarrVolumeService
@@ -71,12 +72,14 @@ class VolumeService(metaclass=ABCMeta):
         service_keys = set(volume_config.keys()).intersection( set(VolumeService.SUPPORTED_SERVICES) )
         if len(service_keys) != 1:
             raise RuntimeError(f"Unsupported service (or too many specified): {service_keys}")
-        
+
         # Choose base service
         if "hdf5" in volume_config:
             service = Hdf5VolumeService( volume_config )
         elif "dvid" in volume_config:
             service = DvidVolumeService( volume_config, resource_manager_client )
+        elif "boss" in volume_config:
+            service = BossVolumeServiceReader( volume_config, resource_manager_client )
         elif "brainmaps" in volume_config:
             service = BrainMapsVolumeServiceReader( volume_config, resource_manager_client )
         elif "n5" in volume_config:
@@ -102,7 +105,7 @@ class VolumeService(metaclass=ABCMeta):
 
         if 'labelmap' in adapter_config:
             raise RuntimeError("Bad key for volume service: 'labelmap' -- did you mean 'apply-labelmap'?")
-        
+
         # Wrap with labelmap service
         from . import LabelmappedVolumeService
         if ("apply-labelmap" in adapter_config) and (adapter_config["apply-labelmap"]["file-type"] != "__invalid__"):
@@ -137,7 +140,7 @@ class VolumeService(metaclass=ABCMeta):
 
 
 class VolumeServiceReader(VolumeService):
-    
+
     @abstractproperty
     def bounding_box_zyx(self):
         raise NotImplementedError
@@ -162,7 +165,7 @@ class VolumeServiceReader(VolumeService):
         Determine which bricks (each with our ``preferred_message_shape``)
         would need to be accessed download all data for the given labels,
         and return the result as a ``SparseBlockMask`` object.
-        
+
         This function uses a dask to fetch the coarse sparsevols in parallel.
         The sparsevols are extracted directly from the labelindex.
         If the ``self.supervoxels`` is True, the labels are grouped
@@ -173,20 +176,20 @@ class VolumeServiceReader(VolumeService):
             labels:
                 A list of body IDs (if ``self.supervoxels`` is False),
                 or supervoxel IDs (if ``self.supervoxels`` is True).
-            
+
             clip:
                 If True, filter the results to exclude any coordinates
                 that fall outside this service's bounding-box.
                 Otherwise, all brick coordinates that encompass the given label groups
                 will be returned, whether or not they fall within the bounding box.
-        
+
         Returns:
             ``SparseBlockMask``
         """
         from neuclease.util import SparseBlockMask
         coords_df = self.sparse_brick_coords_for_labels(labels, clip)
         coords_df.drop_duplicates(['z', 'y', 'x'], inplace=True)
-        
+
         brick_shape = self.preferred_message_shape
         coords_df[['z', 'y', 'x']] //= brick_shape
 
@@ -198,22 +201,22 @@ class VolumeServiceReader(VolumeService):
         """
         Given a list of label pairs, determine which bricks in
         the volume contain both labels from at least one of the given pairs.
-        
+
         If you're interested in examining adjacencies between
         pre-determined pairs of bodies (or supervoxels),
         this function tells you which bricks contain both labels in the pair,
         and thus might encompass the coordinates at which the labels are adjacent.
-        
+
         Args:
             label_pairs:
                 array of shape (N,2) listing the pairs of labels you're interested in.
-        
+
             clip:
                 If True, filter the results to exclude any coordinates
                 that fall outside this service's bounding-box.
                 Otherwise, all brick coordinates that encompass the given label pairs
                 will be returned, whether or not they fall within the bounding box.
-                
+
         Returns:
             DataFrame with columns ``[z, y, x, group, label]``,
             where ``[z, y, x]`` are brick coordinates (starting corners).
@@ -230,30 +233,30 @@ class VolumeServiceReader(VolumeService):
         """
         Given a set of label groups, determine which bricks in
         the volume contain at least N labels from any group (or groups).
-        
+
         For instance, suppose you have two groups of labels [1,2,3], [4,5,6] and you're only
         interested in those bricks which contain at least two labels from one (or both)
         of those groups.  A brick that contains only labels [1,4] is not of interest,
         but a brick containing [1,3] is of interest, and so is a brick containing [5,6],
         or [1,2,4,5] etc.
-        
+
         Args:
             label_groups_df:
                 DataFrame with columns ['label', 'group'],
                 where the labels are either body IDs or supervoxel IDs
                 (depending on ``self.supervoxels``), and the group IDs
                 are arbitrary integers.
-            
+
             min_subset_size:
                 The minimum number of labels (N) which must be present from any
                 single group to qualify the brick for inclusion in the results.
-        
+
             clip:
                 If True, filter the results to exclude any coordinates
                 that fall outside this service's bounding-box.
                 Otherwise, all brick coordinates that encompass the given label groups
                 will be returned, whether or not they fall within the bounding box.
-                
+
         Returns:
             DataFrame with columns ``[z, y, x, group, label]``,
             where ``[z, y, x]`` are brick indexes, not full-scale coordinates.
@@ -269,23 +272,23 @@ class VolumeServiceReader(VolumeService):
         with Timer(f"Filtering bricks for groups of size >= {min_subset_size}", logger):
             combined_df = coords_df.merge(label_groups_df, 'inner', 'label')
             combined_df = combined_df[['z', 'y', 'x', 'group', 'label']]
-    
+
             if min_subset_size == 1:
                 logger.info(f"Keeping {len(combined_df)} label+group combinations")
                 return combined_df
-            
+
             # Count the number of labels per group in each block
             labelcounts = combined_df.groupby(['z', 'y', 'x', 'group'], as_index=False).agg('count')
             labelcounts = labelcounts.rename(columns={'label': 'labelcount'})
-            
+
             # Keep brick/group combinations that have enough labels.
             brick_groups_to_keep = labelcounts.query('labelcount >= @min_subset_size')[['z', 'y', 'x', 'group']]
             filtered_df = combined_df.merge(brick_groups_to_keep, 'inner', ['z', 'y', 'x', 'group'])
             assert filtered_df.columns.tolist() == ['z', 'y', 'x', 'group', 'label']
-            
+
             logger.info(f"Keeping {len(filtered_df)} label+group combinations")
             return filtered_df
-        
+
 
 class VolumeServiceWriter(VolumeService):
 

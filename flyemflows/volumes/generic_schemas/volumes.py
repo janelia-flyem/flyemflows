@@ -1,7 +1,7 @@
 from .. import ( Hdf5ServiceSchema, ZarrServiceSchema,
                  DvidGrayscaleServiceSchema, SliceFilesServiceSchema, N5ServiceSchema,
-                 DvidSegmentationServiceSchema, BrainMapsServiceSchema,
-                 GrayscaleAdapters, SegmentationAdapters )
+                 DvidSegmentationServiceSchema, BossServiceSchema,
+                 BrainMapsServiceSchema, GrayscaleAdapters, SegmentationAdapters )
 
 from .geometry import GeometrySchema
 
@@ -9,8 +9,8 @@ from .geometry import GeometrySchema
 #
 # - Service: Arbitrary source (or sink) of voxels, with no defined bounding box or access pattern
 # - Geometry: Bounding box, access pattern, available-scales of the BASE service (before any adapters are applied)
-# - Adatpers: Optional wrapper services to transform the base data.
-# - Volume: Combines a Service with a (base) Geometry, and (optionally) adapters. 
+# - Adapters: Optional wrapper services to transform the base data.
+# - Volume: Combines a Service with a (base) Geometry, and (optionally) adapters.
 
 
 #
@@ -24,6 +24,7 @@ GrayscaleVolumeSchema = \
     "type": "object",
     "default": {},
     "oneOf": [
+        { "properties": { "boss": BossServiceSchema } },
         { "properties": { "brainmaps": BrainMapsServiceSchema } },
         { "properties": { "hdf5": Hdf5ServiceSchema } },
         { "properties": { "dvid": DvidGrayscaleServiceSchema } },
@@ -52,6 +53,7 @@ SegmentationVolumeSchema = \
         { "properties": { "zarr": ZarrServiceSchema }, "required": ["zarr"] },
         { "properties": { "hdf5": Hdf5ServiceSchema }, "required": ["hdf5"] },
         { "properties": { "dvid": DvidSegmentationServiceSchema }, "required": ["dvid"] },
+        { "properties": { "boss": BossServiceSchema }, "required": ["boss"] },
         { "properties": { "brainmaps": BrainMapsServiceSchema }, "required": ["brainmaps"] }
     ],
     "properties": {
