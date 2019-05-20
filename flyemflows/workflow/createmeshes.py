@@ -205,7 +205,8 @@ class CreateMeshes(Workflow):
             
             # TODO
             "max-body-vertices": {
-                "description": "If necessary, dynamically increase decimation on a per-body, per-brick basis so that\n"
+                "description": "NOT YET IMPLEMENTED.\n"
+                               "If necessary, dynamically increase decimation on a per-body, per-brick basis so that\n"
                                "the total vertex count for each mesh (across all bricks) final mesh will not exceed\n"
                                "this total vertex count.\n"
                                "If omitted, no maximum is used.\n",
@@ -385,11 +386,35 @@ class CreateMeshes(Workflow):
         """
         This workflow is designed for generating supervoxel meshes from a labelmap input (with supervoxels: true).
         But other sources. In those cases, each object is treated as a 'supervoxel', and each 'body' has only one supervoxel.
+        
         NOTE:
             If your input is a labelmap, but you have configured it to read body labels (i.e. supervoxels: false),
             then it is treated like any other non-supervoxel-aware datasource, such as HDF5.
             That is, in the code below, 'supervoxels' and 'bodies' refer to the same thing.
             The real underlying supervoxel IDs in the labelmap instance are not used.
+        
+        TODO:
+            - Apply skip-existing as soon as possible (and don't apply it more than once)
+            - Refactor into smaller functions
+            - max-body-vertices option
+            - Post empty meshes for 'evaporated' supervoxels,
+              or follow up with a post-processing step to handle them at scale 0,
+              or at least emit a list of the meshes that were not generated.
+            - Rethink terminolgy (supervoxel vs label vs body)
+            - Rethink brick_counts_df (label counts) - how can I reduce the size of that data?
+              -- drop unnecessary 'label' column?
+              -- Require/encourage bigger brick sizes?
+              -- Reduce lz0/ly0/lx0 columns to a single index?
+              -- Write it to disk (database) instead of collecting it back to the driver?
+              -- Distinguish between supervoxels on the surface vs. completely internal supervoxels?
+              -- Make brick_counts_df a distributed DF...
+                -- probably the most easily scalable option
+                -- requires sending subset_supervoxels to all workers,
+                   possibly more efficient to filter as an inner merge,
+                   depending on the efficiency of that operation when the
+                   merge col isn't the index.
+              -- Process bodies in batches
+            - 
         """
         self._sanitize_config()
         options = self.config["createmeshes"]
@@ -447,6 +472,8 @@ class CreateMeshes(Workflow):
         bricks_ddf = bricks_ddf[['lz0', 'ly0', 'lx0', 'brick']]
         bricks_ddf = bricks_ddf.persist()
         
+        # TODO: Pre-filter these counts according to subset-supervoxels before returning,
+        #       to speed up the merge step, below.
         def compute_brick_labelcounts(brick_df):
             brick_counts_dfs = []
             for row in brick_df.itertuples():
@@ -530,9 +557,9 @@ class CreateMeshes(Workflow):
             if len(brick_counts_df) == 0:
                 raise RuntimeError("Based on your current settings, no meshes will be generated at all.\n"
                                    "See sv-sizes.npy and body-sizes.npy")
-            
+
             # Filter for already existing
-            # TODO: This should occurr earlier, so we can avoid fetching unneeded bricks in the first place.
+            # TODO: This should occur earlier, so we can avoid fetching unneeded bricks in the first place.
             if options["skip-existing"]:
                 with Timer("Determining which meshes are already stored (skip-existing)", logger):
                     fmt = options["format"]
@@ -627,6 +654,8 @@ class CreateMeshes(Workflow):
             # to_csv() blocks, so this triggers the computation.
             brick_stats_ddf.to_csv('brick-mesh-stats/partition-*.csv', index=False, header=True)
             del brick_stats_ddf
+
+        # TODO: max-body-vertices (before assembly...)
 
         final_smoothing = options["post-stitch-parameters"]["smoothing"]
         final_decimation = options["post-stitch-parameters"]["decimation"]
