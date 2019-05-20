@@ -115,6 +115,7 @@ DvidServiceSchema = \
             "type": "boolean",
             "default": False
         },
+        "creation-settings": DvidInstanceCreationSettingsSchema,
         "accept-throttling": {
             "description": "Whether to send throttle=true when requesting data from DVID.\n"
                            "This allows DVID to respond with 503 errors, in which case the local service will pause before retrying.\n"
@@ -123,8 +124,7 @@ DvidServiceSchema = \
                            "See the 'resource-manager' section of the Workflow config, and use that instead.\n",
             "type": "boolean",
             "default": False
-        },
-        "creation-settings": DvidInstanceCreationSettingsSchema
+        }
     }
 }
 
