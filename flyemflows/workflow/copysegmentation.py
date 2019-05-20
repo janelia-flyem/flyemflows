@@ -59,6 +59,7 @@ class CopySegmentation(Workflow):
     OptionsSchema = {
         "type": "object",
         "additionalProperties": False,
+        "default": {},
         "properties": {
             "block-statistics-file": {
                 "description": "Where to store block statistics for the INPUT segmentation\n"
