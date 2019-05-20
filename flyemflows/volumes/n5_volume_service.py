@@ -4,10 +4,13 @@ import z5py
 import numpy as np
 
 from confiddler import validate
-from neuclease.util import box_to_slicing
+from neuclease.util import box_to_slicing, Timer
 
 from ..util import replace_default_entries
 from . import VolumeServiceReader, GeometrySchema
+
+import logging
+logger = logging.getLogger(__name__)
 
 N5ServiceSchema = \
 {
@@ -127,7 +130,9 @@ class N5VolumeServiceReader(VolumeServiceReader):
 
     def get_subvolume(self, box_zyx, scale=0):
         box_zyx = np.asarray(box_zyx)
-        return self.n5_dataset(scale)[box_to_slicing(*box_zyx.tolist())]
+        # (This log message goes to the worker output, for debug.)
+        with Timer(f"Fetching N5 volume (XYZ): {box_zyx[:,::-1].tolist()}", logger):
+            return self.n5_dataset(scale)[box_to_slicing(*box_zyx.tolist())]
 
     @property
     def n5_file(self):

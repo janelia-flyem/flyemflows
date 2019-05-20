@@ -296,10 +296,11 @@ class CopyGrayscale(Workflow):
             logger.info(f"Slab {slab_index}: Not writing scale {scale}")
             return padded_slab_wall
 
-        logger.info(f"Slab {slab_index}: Writing scale {scale}", extra={"status": f"Writing {slab_index}/{num_slabs}"})
         def _write(brick):
             write_brick(output_service, scale, brick)
-        padded_slab_wall.bricks.map(_write).compute()
+
+        with Timer(f"Slab {slab_index}: Writing scale {scale}"):
+            padded_slab_wall.bricks.map(_write).compute()
 
         return padded_slab_wall
 
