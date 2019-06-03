@@ -95,12 +95,6 @@ class FindAdjacencies(Workflow):
                 "oneOf": [{"type": "integer"}, {"type": "null"}],
                 "default": None
             },
-            "compute-cc": {
-                "description": "Once the edges have been found, run connected components on the\n"
-                               "resulting graph, and export the component ID in the results.\n",
-                "type": "boolean",
-                "default": True
-            },
             "cc-distance-threshold": {
                 "description": "When computing the connected components, don't use edges that exceed this distance threshold.\n"
                                "A threshold of 1.0 indicates that only direct adjacencies should be used.\n"
