@@ -92,10 +92,10 @@ def load_label_groups(config_data):
     
     if path.endswith('.csv'):
         df = pd.read_csv(path, dtype=np.uint64)
-        if df.columns.tolist() != ['label', 'group']:
+        if not (set(df.columns) >= set(['label', 'group'])):
             msg = f"Label group CSV file does not have the expected columns 'label' and 'group':\n{path}"
             raise RuntimeError(msg)
-        return df.drop_duplicates().reset_index(drop=True)
+        return df[['label', 'group']].drop_duplicates().reset_index(drop=True)
 
     with open(path, 'r') as f:
         groups = ujson.load(f)
