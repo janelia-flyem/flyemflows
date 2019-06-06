@@ -8,9 +8,9 @@ from requests import HTTPError
 from confiddler import validate
 from dvid_resource_manager.client import ResourceManagerClient
 
-from neuclease.util import Timer, choose_pyramid_depth, SparseBlockMask, round_box
+from neuclease.util import Timer, choose_pyramid_depth, round_box
 from neuclease.dvid import ( fetch_repo_instances, fetch_instance_info, fetch_volume_box,
-                             fetch_raw, post_raw, fetch_labelarray_voxels, post_labelmap_voxels,
+                             fetch_raw, post_raw, fetch_labelarray_voxels, encode_labelarray_volume, post_labelmap_blocks,
                              update_extents, extend_list_value, create_voxel_instance, create_labelmap_instance,
                              fetch_mapping )
 
@@ -573,9 +573,14 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         try:
             # Labelarray data can be posted very efficiently if the request is block-aligned
             if self._instance_type in ('labelarray', 'labelmap') and is_block_aligned:
+                # Encode and post in two separate steps, so that the compression
+                # can be peformed before obtaining a token from the resource manager.
+                encoded = encode_labelarray_volume(offset_zyx, subvolume)
                 with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
-                    post_labelmap_voxels( self._server, self._uuid, instance_name, offset_zyx, subvolume, scale,
-                                            self.enable_downres, self.disable_indexing, self._throttle )
+                    # Post pre-encoded data with 'is_raw'
+                    post_labelmap_blocks( self._server, self._uuid, instance_name, None, encoded, scale,
+                                          self.enable_downres, self.disable_indexing, self._throttle,
+                                          is_raw=True )
             else:
                 assert not self.enable_downres, \
                     "Can't use enable-downres: You are attempting to post non-block-aligned data."
