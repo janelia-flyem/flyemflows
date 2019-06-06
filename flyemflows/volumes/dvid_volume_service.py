@@ -184,6 +184,12 @@ DvidSegmentationServiceSchema = \
             "description": "When scale-0 data is posted, tell the server to update the low-resolution downsample pyramids.\n",
             "type": "boolean",
             "default": False
+        },
+        "gzip-level": {
+            "description": "When posting labelmap data, each block is encoded and compressed with gzip.\n"
+                           "This sets the gzip compression level, from 0 (no compression) to 9 (max).\n",
+            "type": "integer",
+            "default": 6
         }
     }
 }
@@ -285,16 +291,20 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             assert (bs_x == bs_y == bs_z), "Expected blocks to be cubes."
             block_width = bs_x
 
-
         if "disable-indexing" in volume_config["dvid"]:
             self.disable_indexing = volume_config["dvid"]["disable-indexing"]
         else:
-            self.disable_indexing = False
+            self.disable_indexing = DvidSegmentationServiceSchema["properties"]["disable-indexing"]["default"]
 
         if "enable-downres" in volume_config["dvid"]:
             self.enable_downres = volume_config["dvid"]["enable-downres"]
         else:
-            self.enable_downres = False
+            self.enable_downres = DvidSegmentationServiceSchema["properties"]["enable-downres"]["default"]
+
+        if "gzip-level" in volume_config["dvid"]:
+            self.gzip_level = volume_config["dvid"]["gzip-level"]
+        else:
+            self.gzip_level = DvidSegmentationServiceSchema["properties"]["gzip-level"]["default"]
 
         # Whether or not to read the supervoxels from the labelmap instance instead of agglomerated labels.
         self.supervoxels = ("supervoxels" in volume_config["dvid"]) and (volume_config["dvid"]["supervoxels"])
@@ -575,7 +585,7 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             if self._instance_type in ('labelarray', 'labelmap') and is_block_aligned:
                 # Encode and post in two separate steps, so that the compression
                 # can be peformed before obtaining a token from the resource manager.
-                encoded = encode_labelarray_volume(offset_zyx, subvolume)
+                encoded = encode_labelarray_volume(offset_zyx, subvolume, self.gzip_level)
                 with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
                     # Post pre-encoded data with 'is_raw'
                     post_labelmap_blocks( self._server, self._uuid, instance_name, None, encoded, scale,
