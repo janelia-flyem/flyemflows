@@ -2,7 +2,6 @@ import numpy as np
 
 from confiddler import validate
 from dvid_resource_manager.client import ResourceManagerClient
-from intern.remote.boss import BossRemote
 from intern.remote.boss.remote import BossRemote
 
 from ..util import auto_retry, replace_default_entries
@@ -85,7 +84,7 @@ class BossVolumeServiceReader(VolumeServiceReader):
         if block_width == -1:
             # FIXME: I don't think that the Boss uses a cube for blocks internally...
             # specifically (x, y, z) dimensions are (512, 512, 16)
-            block_width = 64
+            block_width = 16
 
         preferred_message_shape_zyx = np.array( volume_config["geometry"]["message-block-shape"][::-1] )
         replace_default_entries(preferred_message_shape_zyx, [64, 64, 6400])
@@ -149,7 +148,7 @@ class BossVolumeServiceReader(VolumeServiceReader):
             y_bounds = [box[0][1], box[1][1]]
             z_bounds = [box[0][0], box[1][0]]
             return self._boss.get_cutout(
-                    channel,
+                    self._channel,
                     scale,
                     x_bounds,
                     y_bounds,
