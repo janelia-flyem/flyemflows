@@ -90,7 +90,9 @@ class BossVolumeServiceReader(VolumeServiceReader):
         replace_default_entries(preferred_message_shape_zyx, [64, 64, 6400])
 
         bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
-        replace_default_entries(bounding_box_zyx, self._boss_client.bounding_box)
+        if -1 in bounding_box_zyx.flat:
+            raise RuntimeError("For BOSS volumes, you must explicity supply the entire bounding box in your config.")
+        #replace_default_entries(bounding_box_zyx, self._boss.get_coordinate_frame....)
 
         assert  (bounding_box_zyx[0] >= self._boss_client.bounding_box[0]).all() \
             and (bounding_box_zyx[1] <= self._boss_client.bounding_box[1]).all(), \
