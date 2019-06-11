@@ -1,3 +1,4 @@
+import os
 import numpy as np
 
 from confiddler import validate
@@ -15,6 +16,10 @@ BossServiceSchema = \
     "default": {},
     #"additionalProperties": False, # Can't use this in conjunction with 'oneOf' schema feature
     "properties": {
+        "host": {
+            "description": "BOSS host url, e.g. api.bossdb.org",
+            "type": "string"
+        },
         "collection": {
             "description": "BOSS Collection",
             "type": "string",
@@ -57,12 +62,18 @@ class BossVolumeServiceReader(VolumeServiceReader):
             # Dummy client
             resource_manager_client = ResourceManagerClient("", 0)
 
+        try:
+            token = os.environ["BOSS_TOKEN"]
+        except KeyError:
+            raise RuntimeError("You must define the BOSS_TOKEN environment variable to use BossVolumeService")
+
         self._boss = BossRemote(
                 {
                         "protocol": "https",
                         "host": volume_config["boss"]["host"],
-                        "token": volume_config["boss"]["token"],
+                        "token": token
                 })
+
         self._channel = self._boss.get_channel(
                         volume_config["boss"]["channel"],
                         volume_config["boss"]["collection"],
