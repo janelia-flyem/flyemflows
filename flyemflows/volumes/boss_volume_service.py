@@ -2,6 +2,8 @@ import numpy as np
 
 from confiddler import validate
 from dvid_resource_manager.client import ResourceManagerClient
+from intern.remote.boss import BossRemote
+from intern.remote.boss.remote import BossRemote
 
 from ..util import auto_retry, replace_default_entries
 from . import VolumeServiceReader, GeometrySchema, SegmentationAdapters
@@ -42,12 +44,12 @@ BossServiceSchema = \
 
 BossVolumeSchema = \
 {
-    "description": "Describes a segmentation volume from BrainMaps.",
+    "description": "Describes a segmentation volume from Boss.",
     "type": "object",
     "default": {},
 #    "additionalProperties": False,
     "properties": {
-        "boss": BrainMapsServiceSchema,
+        "boss": BossServiceSchema,
         "geometry": GeometrySchema,
         "adapters": SegmentationAdapters # Boss supports both segmentation and grayscale.
                                          # SegmentationAdapters is a superset of GrayscaleAdapters.
@@ -61,24 +63,28 @@ class BossVolumeServiceReader(VolumeServiceReader):
     """
 
     def __init__(self, volume_config, resource_manager_client=None):
-        validate(volume_config, BrainMapsVolumeSchema, inject_defaults=True)
+        validate(volume_config, BossVolumeSchema, inject_defaults=True)
 
         if resource_manager_client is None:
             # Dummy client
             resource_manager_client = ResourceManagerClient("", 0)
 
-        self._boss_client = BossVolume(
-                                                  volume_config["boss"]["collection"],
-                                                  volume_config["boss"]["experiment"],
-                                                  volume_config["boss"]["channel"],
-                                                  dtype=None )
-
-        # Force client to fetch dtype now, so it isn't fetched after pickling.
-        self._boss_client.dtype
+        self._boss = BossRemote(
+                {
+                        "protocol": "https",
+                        "host": volume_config["boss"]["host"],
+                        "token": volume_config["boss"]["token"],
+                })
+        self._channel = self._boss.get_channel(
+                        volume_config["boss"]["channel"],
+                        volume_config["boss"]["collection"],
+                        volume_config["boss"]["experiment"],
+                )
 
         block_width = volume_config["geometry"]["block-width"]
         if block_width == -1:
             # FIXME: I don't think that the Boss uses a cube for blocks internally...
+            # specifically (x, y, z) dimensions are (512, 512, 16)
             block_width = 64
 
         preferred_message_shape_zyx = np.array( volume_config["geometry"]["message-block-shape"][::-1] )
@@ -108,7 +114,7 @@ class BossVolumeServiceReader(VolumeServiceReader):
 
     @property
     def dtype(self):
-        return self._boss_client.dtype
+        return self._channel.datatype
 
     @property
     def preferred_message_shape(self):
@@ -139,4 +145,12 @@ class BossVolumeServiceReader(VolumeServiceReader):
     def get_subvolume(self, box, scale=0):
         req_bytes = 8 * np.prod(box[1] - box[0])
         with self._resource_manager_client.access_context('boss', True, 1, req_bytes):
-            return self._boss_client.get_subvolume(box, scale)
+            x_bounds = [box[0][2], box[1][2]]
+            y_bounds = [box[0][1], box[1][1]]
+            z_bounds = [box[0][0], box[1][0]]
+            return self._boss.get_cutout(
+                    channel,
+                    scale,
+                    x_bounds,
+                    y_bounds,
+                    z_bounds)
