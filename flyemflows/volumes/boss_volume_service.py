@@ -15,28 +15,17 @@ BossServiceSchema = \
     "default": {},
     #"additionalProperties": False, # Can't use this in conjunction with 'oneOf' schema feature
     "properties": {
-        "project": {
-            "description": "Project ID",
+        "collection": {
+            "description": "BOSS Collection",
             "type": "string",
         },
-        "dataset": {
-            "description": "Dataset identifier",
+        "experiment": {
+            "description": "BOSS Experiment",
             "type": "string"
         },
-        "volume-id": {
-            "description": "Volume ID",
+        "channel": {
+            "description": "BOSS channel",
             "type": "string"
-        },
-        "change-stack-id": {
-            "description": "Change Stack ID. Specifies a set of changes to apple on top of the volume\n"
-                           "(e.g. a set of agglomeration steps).",
-            "type": "string",
-            "default": ""
-        },
-        "use-gzip": {
-            "description": "Whether or not to use gzip transfer encoding (on top of the snappy compression)",
-            "type": "boolean",
-            "default": True
         }
     }
 }
