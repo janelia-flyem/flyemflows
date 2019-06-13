@@ -289,6 +289,10 @@ def _run_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cl
     orig_dir = os.getcwd()
     try:
         os.chdir(execution_dir)
+        
+        # Export complete config (with defaults injected) for debugging
+        dump_config(config_data, 'full-workflow-config.yaml')
+
         workflow_inst = workflow_cls(config_data, num_workers)
         
         if _custom_execute_fn is not None:
