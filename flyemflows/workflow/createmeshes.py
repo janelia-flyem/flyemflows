@@ -216,8 +216,10 @@ class CreateMeshes(Workflow):
 
             "rescale-before-write": {
                 "description": "How much to rescale the meshes before writing to DVID.\n"
-                               "Specified as a multiplier, not power-of-2 'scale'.\n",
-                "type": "number",
+                               "Specified as a multiplier, not power-of-2 'scale'.\n"
+                               "For anisotropic scaling, provide a list of [X,Y,Z] scaling multipliers.\n",
+                "oneOf": [{"type": "number"},
+                          {"type": "array", "items": {"type": "number"}}],
                 "default": 1.0
             },
             "format": {
@@ -810,6 +812,10 @@ def compute_meshes_for_brick(brick, stats_df, options):
     smoothing = options["pre-stitch-parameters"]["smoothing"]
     decimation = options["pre-stitch-parameters"]["decimation"]
     rescale_factor = options["rescale-before-write"]
+    if isinstance(rescale_factor, list):
+        rescale_factor = np.array( rescale_factor[::-1] ) # zyx
+    else:
+        rescale_factor = np.array(3*[rescale_factor])
 
     # TODO: max-body-vertices
 
@@ -846,7 +852,7 @@ def generate_mesh(volume, box, label, smoothing, decimation, rescale_factor):
         # TODO: Implement a timeout here for the in-memory case (use multiprocessing)?
         mesh.simplify(decimation, in_memory=True)
     
-    if rescale_factor != 1.0:
+    if (rescale_factor != 1.0).any():
         mesh.vertices_zyx[:] *= rescale_factor
     
     vertex_count = len(mesh.vertices_zyx)

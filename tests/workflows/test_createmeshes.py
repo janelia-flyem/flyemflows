@@ -327,7 +327,7 @@ def test_createmeshes_filter_supervoxels(setup_createmeshes_config, disable_auto
     check_outputs(execution_dir, object_boxes, subset_labels=[200])
 
 
-def test_createmeshes_rescale(setup_createmeshes_config, disable_auto_retry):
+def test_createmeshes_rescale_isotropic(setup_createmeshes_config, disable_auto_retry):
     template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
     config['createmeshes']['rescale-before-write'] = 2
     YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
@@ -335,6 +335,18 @@ def test_createmeshes_rescale(setup_createmeshes_config, disable_auto_retry):
     execution_dir, _workflow = launch_flow(template_dir, 1)
 
     scaled_boxes = { label: box * 2 for label, box in object_boxes.items() }
+    check_outputs(execution_dir, scaled_boxes)
+
+
+def test_createmeshes_rescale_anisotropic(setup_createmeshes_config, disable_auto_retry):
+    template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
+    config['createmeshes']['rescale-before-write'] = [2,3,4]
+    YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
+     
+    execution_dir, _workflow = launch_flow(template_dir, 1)
+
+    # Note xyz vs zyx
+    scaled_boxes = { label: box * [4,3,2] for label, box in object_boxes.items() }
     check_outputs(execution_dir, scaled_boxes)
 
 
@@ -366,5 +378,5 @@ if __name__ == "__main__":
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_createmeshes']
     #args += ['-x']
     #args += ['-Werror']
-    #args += ['-k', 'createmeshes_to_keyvalue']
+    #args += ['-k', 'createmeshes_rescale_anisotropic or createmeshes_rescale_isotropic']
     pytest.main(args)
