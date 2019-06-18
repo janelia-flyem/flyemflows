@@ -12,7 +12,7 @@ BossServiceSchema = \
 {
     "description": "Parameters to use the Boss as a source of voxel data",
     "type": "object",
-    "required": ["project", "dataset", "volume-id", "change-stack-id"],
+    "required": ["host", "collection", "experiment", "channel"],
     "default": {},
     #"additionalProperties": False, # Can't use this in conjunction with 'oneOf' schema feature
     "properties": {
@@ -94,10 +94,10 @@ class BossVolumeServiceReader(VolumeServiceReader):
             raise RuntimeError("For BOSS volumes, you must explicity supply the entire bounding box in your config.")
         #replace_default_entries(bounding_box_zyx, self._boss.get_coordinate_frame....)
 
-        assert  (bounding_box_zyx[0] >= self._boss_client.bounding_box[0]).all() \
-            and (bounding_box_zyx[1] <= self._boss_client.bounding_box[1]).all(), \
-            f"Specified bounding box ({bounding_box_zyx.tolist()}) extends outside the "\
-            f"Boss volume geometry ({self._boss_client.bounding_box.tolist()})"
+        # assert  (bounding_box_zyx[0] >= self._boss_client.bounding_box[0]).all() \
+            # and (bounding_box_zyx[1] <= self._boss_client.bounding_box[1]).all(), \
+            # f"Specified bounding box ({bounding_box_zyx.tolist()}) extends outside the "\
+            # f"Boss volume geometry ({self._boss_client.bounding_box.tolist()})"
 
         available_scales = list(volume_config["geometry"]["available-scales"])
 
