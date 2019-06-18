@@ -108,7 +108,7 @@ class ScaledVolumeService(VolumeServiceReader):
             orig_box_zyx = box_zyx * 2**delta_from_best
             orig_data = self.original_volume_service.get_subvolume(orig_box_zyx, best_base_scale)
 
-            if self.dtype == np.uint64:
+            if np.dtype(self.dtype) == np.uint64:
                 # Assume that uint64 means labels.
                 
                 ## FIXME: Our C++ method for downsampling ('labels')
