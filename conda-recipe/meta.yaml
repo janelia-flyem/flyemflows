@@ -62,6 +62,7 @@ requirements:
     - h5py
     - zarr >=2.2
     - z5py
+    - intern # APL Boss service
     
     # Needed for brainmaps support:
     - httplib2
