@@ -115,7 +115,7 @@ class BossVolumeServiceReader(VolumeServiceReader):
 
     @property
     def dtype(self):
-        return self._channel.datatype
+        return np.dtype(self._channel.datatype)
 
     @property
     def preferred_message_shape(self):

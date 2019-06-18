@@ -50,7 +50,7 @@ def test_read():
     # Just verify that the 'service' wrapper is consistent with the low-level handle
     service = BossVolumeServiceReader(config)
     #assert (service.bounding_box_zyx == boss_remote.bounding_box).all()
-    assert service.dtype == channel.datatype
+    assert service.dtype == np.dtype(channel.datatype)
 
     start_xyz = np.array([5000, 4000, 3000])
     start_zyx = start_xyz[::-1]
