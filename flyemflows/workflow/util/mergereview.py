@@ -10,7 +10,7 @@ from neuclease.util import Timer, tqdm_proxy, swap_df_cols
 from neuclease.dvid import (fetch_instance_info, fetch_labels_batched, determine_bodies_of_interest,
                             fetch_combined_roi_volume, determine_point_rois)
 
-from neuclease.mergereview.mergereview import generate_mergereview_assignment_from_groups
+from neuclease.mergereview.mergereview import generate_mergereview_assignments
 
 from flyemflows.workflow.findadjacencies import select_central_edges, select_closest_edges
 
@@ -64,7 +64,7 @@ def extract_assignment_fragments( server, uuid, syn_instance,
     return focused_fragments_df, mr_fragments_df
 
 
-def generate_mergereview_assignments_from_df(server, uuid, instance, mr_fragments_df, bois, output_path=None):
+def generate_mergereview_assignments_from_df(server, uuid, instance, mr_fragments_df, bois, assignment_size, output_dir):
     # Sort table by task size (edge count)
     group_sizes = mr_fragments_df.groupby(['group_cc', 'cc_task']).size().rename('group_size')
     mr_fragments_df = mr_fragments_df.merge(group_sizes, 'left', left_on=['group_cc', 'cc_task'], right_index=True)
@@ -79,7 +79,8 @@ def generate_mergereview_assignments_from_df(server, uuid, instance, mr_fragment
 
         num_bodies = group_size+1
         logger.info(f"{len(sv_groups)} tasks of size {num_bodies}")
-        assignments[num_bodies] = generate_mergereview_assignment_from_groups(server, uuid, instance, sv_groups, bois, output_path)
+        output_subdir = f'{output_dir}/{num_bodies:02}-bodies'
+        assignments[num_bodies] = generate_mergereview_assignments(server, uuid, instance, sv_groups, bois, assignment_size, output_subdir)
 
     return assignments
 
