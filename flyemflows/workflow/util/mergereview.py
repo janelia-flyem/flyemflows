@@ -50,10 +50,11 @@ def extract_assignment_fragments( server, uuid, syn_instance,
 
     # Fetch the supervoxel IDs if necessary.
     if {'sv_a', 'sv_b'} - {*fragment_edges_df.columns}:
-        points_a = fragment_edges_df[['za', 'ya', 'xa']].values
-        points_b = fragment_edges_df[['zb', 'yb', 'xb']].values
-        fragment_edges_df['sv_a'] = fetch_labels_batched(*ref_seg, points_a, True, processes=processes)
-        fragment_edges_df['sv_b'] = fetch_labels_batched(*ref_seg, points_b, True, processes=processes)
+        with Timer("Sampling supervoxel IDs", logger):
+            points_a = fragment_edges_df[['za', 'ya', 'xa']].values
+            points_b = fragment_edges_df[['zb', 'yb', 'xb']].values
+            fragment_edges_df['sv_a'] = fetch_labels_batched(*ref_seg, points_a, True, processes=processes)
+            fragment_edges_df['sv_b'] = fetch_labels_batched(*ref_seg, points_b, True, processes=processes)
     
     # Divide into 'focused' and 'merge review' fragments,
     # i.e. single-edge fragments and multi-edge fragments
@@ -128,6 +129,11 @@ def update_localized_edges(server, uuid, seg_instance, edges_df, processes=16):
         nearby_edges_df = edges_df.query('distance > 1.0')
         nearby_edges_df = select_closest_edges(nearby_edges_df)
 
+    # FIXME: Should we also update the group_cc?
+    # If any splits have occurred, I guess the group_cc is no longer a single component.
+    # Bu when we analyze it for 'fragments', the results will be correct.
+    # append_group_ccs(...)
+
     # Combine (direct first)
     edges_df = pd.concat((direct_edges_df, nearby_edges_df))
     
@@ -145,7 +151,7 @@ def filter_groups_for_min_boi_count(edges_df, bois, min_boi_count=2):
         cc_boi_counts = {}
         for cc, cc_df in tqdm_proxy(edges_df.groupby('group_cc'), total=len(edges_df['group_cc'].unique()), leave=False):
             labels = pd.unique(cc_df[['label_a', 'label_b']].values.reshape(-1))
-            count = sum(label in bois for label in labels)
+            count = sum((label in bois) for label in labels)
             cc_boi_counts[cc] = count
     
         boi_counts_df = pd.DataFrame(list(cc_boi_counts.items()), columns=['group_cc', 'boi_count'])
@@ -159,21 +165,23 @@ def filter_groups_for_min_boi_count(edges_df, bois, min_boi_count=2):
 def compute_fragment_edges(edges_df, bois):
     fragments = extract_fragments(edges_df, bois)
     
-    edges_df = edges_df.query('group_cc in @fragments.keys()')
+    with Timer("Extracting edges for each fragment from full table", logger):
+        edges_df = edges_df.query('group_cc in @fragments.keys()')
+        
+        fragment_edges_dfs = []
+        for group_cc,  group_df in tqdm_proxy(edges_df.groupby('group_cc')):
+            frag_list = fragments[group_cc]
+            for task_index, frag in enumerate(frag_list):
+                frag_edges = list(zip(frag[:-1], frag[1:]))
+                frag_edges = np.sort(frag_edges, axis=1)
     
-    fragment_edges_dfs = []
-    for group_cc,  group_df in tqdm_proxy(edges_df.groupby('group_cc')):
-        frag_list = fragments[group_cc]
-        for task_index, frag in enumerate(frag_list):
-            frag_edges = list(zip(frag[:-1], frag[1:]))
-            frag_edges = np.sort(frag_edges, axis=1)
+                frag_edges_df = pd.DataFrame(frag_edges, columns=['label_a', 'label_b'])
+                frag_edges_df = frag_edges_df.merge(group_df, 'left', ['label_a', 'label_b'])
+                frag_edges_df['cc_task'] = task_index
+                fragment_edges_dfs.append(frag_edges_df)
+    
+        fragment_edges_df = pd.concat(fragment_edges_dfs, ignore_index=True)
 
-            frag_edges_df = pd.DataFrame(frag_edges, columns=['label_a', 'label_b'])
-            frag_edges_df = frag_edges_df.merge(group_df, 'left', ['label_a', 'label_b'])
-            frag_edges_df['cc_task'] = task_index
-            fragment_edges_dfs.append(frag_edges_df)
-
-    fragment_edges_df = pd.concat(fragment_edges_dfs, ignore_index=True)
     return fragment_edges_df
 
 
@@ -186,13 +194,13 @@ def extract_fragments(edges_df, bois):
     groups = edges_df.groupby('group_cc')
     num_groups = edges_df['group_cc'].nunique()
 
-    fragments = {}
-    for group_cc, cc_df in tqdm_proxy(groups, total=num_groups):
-        fragments[group_cc] = extract_fragments_for_cc(cc_df, bois)
-    
+    with Timer("Extracting fragments from each group", logger):
+        fragments = {}
+        for group_cc, cc_df in tqdm_proxy(groups, total=num_groups):
+            fragments[group_cc] = extract_fragments_for_cc(cc_df, bois)
+        
     num_fragments = sum(len(frags) for frags in fragments.values())
     logger.info(f"Extracted {num_fragments} fragments")
-    
     return fragments
 
 
