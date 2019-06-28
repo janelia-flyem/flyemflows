@@ -27,6 +27,9 @@ def extract_assignment_fragments( server, uuid, syn_instance,
                                   *,
                                   synapse_table=None,
                                   seg_instance=None ):
+    """
+    TODO: Docs!
+    """
     if seg_instance is None:
         syn_info = fetch_instance_info(server, uuid, syn_instance)
         seg_instance = syn_info["Base"]["Syncs"][0]
@@ -36,11 +39,13 @@ def extract_assignment_fragments( server, uuid, syn_instance,
     edges_df = load_edges(edge_table)
     edges_df = update_localized_edges(*ref_seg, edges_df, processes)
     
-    bois = determine_bodies_of_interest( server, uuid, syn_instance,
-                                         boi_rois,
-                                         min_tbars_in_roi, min_psds_in_roi,
-                                         processes,
-                                         synapse_table=synapse_table )
+    boi_table = determine_bodies_of_interest( server, uuid, syn_instance,
+                                              boi_rois,
+                                              min_tbars_in_roi, min_psds_in_roi,
+                                              processes,
+                                              synapse_table=synapse_table )
+
+    bois = set(boi_table.index)
 
     edges_df = filter_groups_for_min_boi_count(edges_df, bois, 2)
     fragment_edges_df = compute_fragment_edges(edges_df, bois)
