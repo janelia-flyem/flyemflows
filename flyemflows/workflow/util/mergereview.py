@@ -61,7 +61,7 @@ def extract_assignment_fragments( server, uuid, syn_instance,
     focused_fragments_df = fragment_edges_df.groupby(['group_cc', 'cc_task']).filter(lambda task_df: len(task_df) == 1).copy()
     mr_fragments_df = fragment_edges_df.groupby(['group_cc', 'cc_task']).filter(lambda task_df: len(task_df) > 1).copy()
 
-    return focused_fragments_df, mr_fragments_df
+    return focused_fragments_df, mr_fragments_df, bois
 
 
 def generate_mergereview_assignments_from_df(server, uuid, instance, mr_fragments_df, bois, assignment_size, output_dir):
