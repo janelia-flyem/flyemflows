@@ -223,11 +223,16 @@ class CreateMeshes(Workflow):
                 "default": 1.0
             },
             "format": {
-                "description": "Format to save the meshes in. ",
+                "description": "Format to save the meshes in. Either obj, drc, or ngmesh.\n"
+                               "Note: Neuroglancer meshes are expected to be saved using nm units,\n"
+                               "      but the meshes from this workflow will use voxel units by default.\n"
+                               "      When using the ngmesh format, use rescale-before-write to multiply all mesh coordinates accordingly.\n"
+                               "      For example, use rescale-before-write: [16,16,16] if your volume is stored at is at 8nm resolution,\n"
+                               "      and you are fetching from scale 1 (2x).\n",
                 "type": "string",
                 "enum": ["obj",     # Wavefront OBJ (.obj)
                          "drc",     # Draco (compressed) (.drc)
-                         "ngmesh"], # "neuroglancer mesh" format -- a custom binary format.  Note: Data is presumed to be 8nm resolution
+                         "ngmesh"], # "neuroglancer mesh" format -- a custom binary format.  See note above about scaling.
                 "default": "obj"
             },
             "include-empty": {
@@ -272,9 +277,6 @@ class CreateMeshes(Workflow):
         if options['stitch-method'] == 'stitch' and options['halo'] != 1:
             logger.warn("Your config uses 'stitch' aggregation, but your halo != 1.\n"
                         "This will waste CPU and/or lead to unintuitive results.")
-
-        assert options["format"] != 'ngmesh', \
-            "FIXME: The ngmesh serialization code doesn't properly convert to nanometers yet!"
 
     def _init_input(self): 
         input_config = self.config["input"]
