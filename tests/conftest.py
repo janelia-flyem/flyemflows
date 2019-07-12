@@ -88,8 +88,11 @@ def _init_test_repo(dvid_address, reuse_existing=True):
 @pytest.fixture
 def disable_auto_retry():
     """
-    For most tests, retries are not expected and only delay failures.
-    Tests can include this fixture to ensure timely failures.
+    Tests can include this fixture in their parameter list to ensure timely failures.
+
+    For most tests, auto-retries are not expected to be necessary
+    and would only delay failures, slowing down the test
+    suite when something is wrong.
     """
     try:
         import flyemflows.util._auto_retry #@UnusedImport

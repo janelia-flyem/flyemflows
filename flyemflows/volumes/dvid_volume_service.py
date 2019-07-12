@@ -74,8 +74,9 @@ DvidInstanceCreationSettingsSchema = \
             "default": -1
         },
         "voxel-size": {
-            "description": "Voxel width, stored in DVID's metadata for the instance.",
-            "type": "number",
+            "description": "Voxel dimensions, stored in DVID's metadata for the instance.",
+            "oneOf": [{ "type": "number" },
+                      { "type": "array", "items:": { "type": "number" }}], 
             "default": 8.0
         },
         "voxel-units": {

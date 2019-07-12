@@ -6,7 +6,7 @@ import numpy as np
 from ruamel.yaml import YAML
 
 from neuclease.util import extract_subvol, overwrite_subvol
-from neuclease.dvid import fetch_repo_instances
+from neuclease.dvid import fetch_repo_instances, fetch_instance_info
 
 from flyemflows.util import downsample
 from flyemflows.volumes import VolumeService
@@ -18,6 +18,7 @@ def test_dvid_volume_service_grayscale(setup_dvid_repo, disable_auto_retry):
 
     volume = np.random.randint(100, size=(256, 192, 128), dtype=np.uint8)
     max_scale = 2
+    voxel_dimensions = [4.0, 4.0, 32.0]
 
     config_text = textwrap.dedent(f"""\
         dvid:
@@ -28,6 +29,7 @@ def test_dvid_volume_service_grayscale(setup_dvid_repo, disable_auto_retry):
           create-if-necessary: true
           creation-settings:
             max-scale: {max_scale}
+            voxel-size: {voxel_dimensions}
        
         geometry:
           bounding-box: [[0,0,0], {list(volume.shape[::-1])}]
@@ -42,6 +44,9 @@ def test_dvid_volume_service_grayscale(setup_dvid_repo, disable_auto_retry):
     service = VolumeService.create_from_config( volume_config )
 
     repo_instances = fetch_repo_instances(server, uuid)
+    
+    info = fetch_instance_info(server, uuid, instance_name)
+    assert info["Extended"]["VoxelSize"] == voxel_dimensions
     
     scaled_volumes = {}
     for scale in range(max_scale+1):
@@ -72,6 +77,7 @@ def test_dvid_volume_service_labelmap(setup_dvid_repo, disable_auto_retry):
 
     volume = np.random.randint(100, size=(256, 192, 128), dtype=np.uint64)
     max_scale = 2
+    voxel_dimensions = [4.0, 4.0, 32.0]
 
     config_text = textwrap.dedent(f"""\
         dvid:
@@ -83,6 +89,7 @@ def test_dvid_volume_service_labelmap(setup_dvid_repo, disable_auto_retry):
           create-if-necessary: true
           creation-settings:
             max-scale: {max_scale}
+            voxel-size: {voxel_dimensions}
        
         geometry:
           bounding-box: [[0,0,0], {list(volume.shape[::-1])}]
@@ -100,6 +107,9 @@ def test_dvid_volume_service_labelmap(setup_dvid_repo, disable_auto_retry):
 
     assert instance_name in repo_instances
     assert repo_instances[instance_name] == 'labelmap'
+
+    info = fetch_instance_info(server, uuid, instance_name)
+    assert info["Extended"]["VoxelSize"] == voxel_dimensions
     
     scaled_volumes = {}
     for scale in range(max_scale+1):
