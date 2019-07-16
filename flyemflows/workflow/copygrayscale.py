@@ -32,8 +32,9 @@ class CopyGrayscale(Workflow):
     
     Slab boundaries must be aligned to the input/output grid, but the corresponding
     slab boundaries for the downsample pyramid volumes need not be perfectly aligned.
-    If they end up unaligned after downsampling, the existing data at the output will
-    be used to "pad" the slab before it is uploaded.
+    
+    If they end up unaligned after downsampling, the existing data at the output can
+    be used to "pad" the slab before it is uploaded.  (See "fill-blocks" setting.)
     """
     ##
     ## TODO: Optionally persist the previous slab so it can be used when
@@ -114,6 +115,14 @@ class CopyGrayscale(Workflow):
                 "items": {"type": "integer"},
                 "minItems": 2,
                 "default": [-1] + HEMIBRAIN_TAB_BOUNDARIES[1:].tolist() # Must begin with -1, not 0
+            },
+            
+            "fill-blocks": {
+                "description": "Some output services do not support writing partial blocks, even on volume boundaries,\n"
+                               "in which case we must 'pad' partial blocks using existing data (or zeros) before writing them.\n"
+                               "Use this setting to specify whether such padding is required.\n",
+                "type": "boolean",
+                "default": "true" # FIXME: This is the default because that's what DVID needs, but most sources don't.
             }
         }
     }
@@ -269,40 +278,41 @@ class CopyGrayscale(Workflow):
         output_grid = Grid(output_service.preferred_message_shape)
         output_slab_wall = bricked_slab_wall.realign_to_new_grid( output_grid )
         
-        # Pad from previously-existing pyramid data until
-        # we have full storage blocks, e.g. (64,64,64),
-        # but not necessarily full bricks, e.g. (64,64,6400)
-        output_accessor_func = partial(output_service.get_subvolume, scale=scale)
-
-        # But don't bother fetching real data for scale 0
-        # the input slabs are already block-aligned, and the edges of each slice will be zeros anyway.
-        if scale == 0:
-            output_accessor_func = lambda _box: 0
-
-        if isinstance( output_service.base_service, DvidVolumeService):
-            # For DVID, we use minimum padding (just pad up to the
-            # nearest block boundary, not the whole brick boundary).
-            padding_grid = Grid( 3*(output_service.block_width,), output_grid.offset )
-        else:
-            padding_grid = output_slab_wall.grid
+        if options["fill-blocks"]:
+            # Pad from previously-existing pyramid data until
+            # we have full storage blocks, e.g. (64,64,64),
+            # but not necessarily full bricks, e.g. (64,64,6400)
+            output_accessor_func = partial(output_service.get_subvolume, scale=scale)
+    
+            # But don't bother fetching real data for scale 0
+            # the input slabs are already block-aligned, and the edges of each slice will be zeros anyway.
+            if scale == 0:
+                output_accessor_func = lambda _box: 0
+    
+            if isinstance( output_service.base_service, DvidVolumeService):
+                # For DVID, we use minimum padding (just pad up to the
+                # nearest block boundary, not the whole brick boundary).
+                padding_grid = Grid( 3*(output_service.block_width,), output_grid.offset )
+            else:
+                padding_grid = output_slab_wall.grid
         
-        padded_slab_wall = output_slab_wall.fill_missing(output_accessor_func, padding_grid)
-        padded_slab_wall.persist_and_execute(f"Slab {slab_index}: Assembling scale {scale} bricks", logger)
+            output_slab_wall = output_slab_wall.fill_missing(output_accessor_func, padding_grid)
+            output_slab_wall.persist_and_execute(f"Slab {slab_index}: Assembling scale {scale} bricks", logger)
 
         # Discard original bricks
         del bricked_slab_wall
 
         if scale < min_scale:
             logger.info(f"Slab {slab_index}: Not writing scale {scale}")
-            return padded_slab_wall
+            return output_slab_wall
 
         def _write(brick):
             write_brick(output_service, scale, brick)
 
         with Timer(f"Slab {slab_index}: Writing scale {scale}"):
-            padded_slab_wall.bricks.map(_write).compute()
+            output_slab_wall.bricks.map(_write).compute()
 
-        return padded_slab_wall
+        return output_slab_wall
 
 
     def adjust_contrast(self, bricked_slab_wall, slab_index):
