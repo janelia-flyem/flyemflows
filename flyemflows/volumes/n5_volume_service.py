@@ -4,10 +4,10 @@ import z5py
 import numpy as np
 
 from confiddler import validate
-from neuclease.util import box_to_slicing, Timer
+from neuclease.util import box_to_slicing
 
 from ..util import replace_default_entries
-from . import VolumeServiceReader, GeometrySchema
+from . import VolumeServiceWriter, GeometrySchema, GrayscaleAdapters
 
 import logging
 logger = logging.getLogger(__name__)
@@ -32,6 +32,22 @@ N5ServiceSchema = \
                            "In this config, please list the scale-0 name, e.g. 'my-grayscale0', or '22-34/s0', etc.\n",
             "type": "string",
             "minLength": 1
+        },
+        "dtype": {
+            "description": "Datatype of the volume.  Must be specified when creating a new volume.",
+            "type": "string",
+            "enum": ["auto", "uint8", "uint16", "uint32", "uint64", "int8", "int16", "int32", "int64", "float32", "float64"],
+            "default": "auto"
+        },
+        "writable": {
+            "description": "Open the array in read/write mode.\n"
+                           "If the directory (or dataset) doesn't exist yet, create it upon initialization.\n"
+                           "(Requires an explicit dtype and bounding box.)\n"
+                           "Note: \n"
+                           "  It is not safe for multiple processes to write to the same brick simultaneously.\n"
+                           "  Clients should ensure that each process is responsible for writing brick-aligned portions of the dataset.\n",
+            "type": "boolean",
+            "default": False
         }
     }
 }
@@ -43,36 +59,52 @@ N5VolumeSchema = \
     "default": {},
     "properties": {
         "n5": N5ServiceSchema,
-        "geometry": GeometrySchema
+        "geometry": GeometrySchema,
+        "adapters": GrayscaleAdapters
     }
 }
 
-class N5VolumeServiceReader(VolumeServiceReader):
+class N5VolumeService(VolumeServiceWriter):
 
     def __init__(self, volume_config):
         validate(volume_config, N5VolumeSchema, inject_defaults=True)
         
         # Convert path to absolute if necessary (and write back to the config)
-        self._path = os.path.abspath(volume_config["n5"]["path"])
+        path = os.path.abspath(volume_config["n5"]["path"])
+        self._path = path
         volume_config["n5"]["path"] = self._path
 
-        self._dataset_name = volume_config["n5"]["dataset"]
+        dataset_name = volume_config["n5"]["dataset"]
+        self._dataset_name = dataset_name
         if self._dataset_name.startswith('/'):
             self._dataset_name = self._dataset_name[1:]
         volume_config["n5"]["dataset"] = self._dataset_name
+        writable = volume_config["n5"]["writable"]
+        dtype = volume_config["n5"]["dtype"]
+
+        mode = 'r'
+        if writable:
+            mode = 'a'
+        self._filemode = mode
 
         self._n5_file = None
         self._n5_datasets = {}
         
+        bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
+        preferred_message_shape_zyx = np.array(volume_config["geometry"]["message-block-shape"][::-1])
+        available_scales = list(volume_config["geometry"]["available-scales"])
+        
+        self._ensure_datasets_exist(writable, dtype, bounding_box_zyx, preferred_message_shape_zyx, available_scales)
+
         if isinstance(self.n5_dataset(0), z5py.group.Group):
             raise RuntimeError("The N5 dataset you specified appears to be a 'group', not a volume.\n"
                                "Please pass the complete dataset name.  If your dataset is multi-scale,\n"
                                "pass scale 0 ('s0') as the dataset name.\n")
+
         chunk_shape = np.array(self.n5_dataset(0).chunks)
         assert len(chunk_shape) == 3
 
         # Replace -1's in the message-block-shape with the corresponding chunk_shape dimensions.
-        preferred_message_shape_zyx = np.array(volume_config["geometry"]["message-block-shape"][::-1])
         replace_default_entries(preferred_message_shape_zyx, chunk_shape)
         missing_shape_dims = (preferred_message_shape_zyx == -1)
         preferred_message_shape_zyx[missing_shape_dims] = chunk_shape[missing_shape_dims]
@@ -94,8 +126,6 @@ class N5VolumeServiceReader(VolumeServiceReader):
         # Replace -1 bounds with auto
         missing_bounds = (bounding_box_zyx == -1)
         bounding_box_zyx[missing_bounds] = auto_bb[missing_bounds]
-
-        available_scales = list(volume_config["geometry"]["available-scales"])
 
         # Store members
         self._bounding_box_zyx = bounding_box_zyx
@@ -130,17 +160,23 @@ class N5VolumeServiceReader(VolumeServiceReader):
 
     def get_subvolume(self, box_zyx, scale=0):
         box_zyx = np.asarray(box_zyx)
-        # (This log message goes to the worker output, for debug.)
-        with Timer(f"Fetching N5 volume (XYZ): {box_zyx[:,::-1].tolist()}", logger):
-            return self.n5_dataset(scale)[box_to_slicing(*box_zyx.tolist())]
+        return self.n5_dataset(scale)[box_to_slicing(*box_zyx.tolist())]
+    
+
+    def write_subvolume(self, subvolume, offset_zyx, scale=0):
+        offset_zyx = np.asarray(offset_zyx)
+        box = np.array([offset_zyx, offset_zyx+subvolume.shape])
+        self.n5_dataset(scale)[box_to_slicing(*box)] = subvolume
+
 
     @property
     def n5_file(self):
         # This member is memoized because that makes it
         # easier to support pickling/unpickling.
         if self._n5_file is None:
-            self._n5_file = z5py.File(self._path)
+            self._n5_file = z5py.File(self._path, self._filemode)
         return self._n5_file
+
 
     def n5_dataset(self, scale):
         if scale not in self._n5_datasets:
@@ -155,6 +191,45 @@ class N5VolumeServiceReader(VolumeServiceReader):
             self._n5_datasets[scale] = self.n5_file[name]
 
         return self._n5_datasets[scale]
+
+
+    def _ensure_datasets_exist(self, writable, dtype, bounding_box_zyx, preferred_message_shape_zyx, available_scales):
+        if not writable and not os.path.exists(self._path):
+            raise RuntimeError(f"File does not exist: {self._path}\n"
+                               "You did not specify 'writable' in the config, so I won't create it.:\n")
+
+        if not writable and self._dataset_name and not os.path.exists(f"{self._path}/{self._dataset_name}"):
+            raise RuntimeError(f"File does not exist: {self._path}\n"
+                               "You did not specify 'writable' in the config, so I won't create it.:\n")
+
+        for scale in available_scales:
+            if scale == 0:
+                name = self._dataset_name
+            else:
+                name = self._dataset_name[:-1] + f'{scale}'
+
+            if name not in self.n5_file:
+                if not writable:
+                    raise RuntimeError(f"Dataset for scale {scale} does not exist, and you "
+                                       "didn't specify 'writable' in the config, so I won't create it.")
+
+                if dtype == "auto":
+                    raise RuntimeError(f"Can't create N5 array {self._path}/{self._dataset_name}: No dtype specified in the config.")
+
+                if -1 in bounding_box_zyx.flat:
+                    raise RuntimeError(f"Can't create N5 array {self._path}/{self._dataset_name}: Bounding box is not completely specified in the config.")
+
+                # Use 128 if the user didn't specify a chunkshape
+                replace_default_entries(preferred_message_shape_zyx, [128]*len(preferred_message_shape_zyx))
+
+                # z5py complains if the chunks are larger than the shape,
+                # which could happen here if we aren't careful (for higher scales).
+                shape = (bounding_box_zyx[1] // (2**scale)).tolist()
+                chunks = np.minimum(shape, preferred_message_shape_zyx).tolist()
+                
+                # TODO: enable compression?
+                self._n5_datasets[scale] = self.n5_file.create_dataset(name, shape, np.dtype(dtype), chunks=chunks)
+
 
     def __getstate__(self):
         """

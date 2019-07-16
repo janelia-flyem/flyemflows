@@ -1,3 +1,5 @@
+import os
+import copy
 import tempfile
 
 import pytest
@@ -6,7 +8,7 @@ import numpy as np
 from neuclease.util import box_to_slicing
 
 from flyemflows.util.n5 import export_to_multiscale_n5
-from flyemflows.volumes import N5VolumeServiceReader
+from flyemflows.volumes import N5VolumeService
 
 
 @pytest.fixture(scope="module")
@@ -30,7 +32,7 @@ def volume_setup():
     
 def test_full_volume(volume_setup):
     config, volume = volume_setup
-    reader = N5VolumeServiceReader(config)
+    reader = N5VolumeService(config)
     assert (reader.bounding_box_zyx == [(0,0,0), (256,256,256)]).all()
     full_from_n5 = reader.get_subvolume(reader.bounding_box_zyx)
     assert full_from_n5.shape == volume.shape
@@ -43,7 +45,7 @@ def test_slab(volume_setup):
     
     slab_from_raw = volume[box_to_slicing(*box)]
 
-    reader = N5VolumeServiceReader(config)
+    reader = N5VolumeService(config)
     slab_from_n5 = reader.get_subvolume(box)
 
     assert slab_from_n5.shape == slab_from_raw.shape, \
@@ -53,13 +55,40 @@ def test_slab(volume_setup):
 
 def test_multiscale(volume_setup):
     config, volume = volume_setup
-    reader = N5VolumeServiceReader(config)
+    reader = N5VolumeService(config)
     assert (reader.bounding_box_zyx == [(0,0,0), (256,256,256)]).all()
     
     full_from_n5 = reader.get_subvolume(reader.bounding_box_zyx // 4, 2)
     
     assert (full_from_n5.shape == np.array(volume.shape) // 4).all()
     assert (full_from_n5 == volume[::4, ::4, ::4]).all()
+
+
+def test_multiscale_write(volume_setup):
+    read_config, volume = volume_setup
+    reader = N5VolumeService(read_config)
+    
+    new_path = os.path.splitext(read_config["n5"]["path"])[0] + '_WRITE_TEST.n5'
+
+    config = copy.deepcopy(read_config)
+    config["n5"]["path"] = new_path
+    config["n5"]["dtype"] = str(volume.dtype)
+    config["n5"]["writable"] = True
+    config["geometry"]["bounding-box"] = [[0,0,0], [*volume.shape[::-1]]]
+    config["geometry"]["available-scales"] = [*range(4)]
+    
+    writer = N5VolumeService(config)
+    writer.write_subvolume(volume, (0,0,0), 0)
+    
+    for scale in range(1,4):
+        vol = reader.get_subvolume(reader.bounding_box_zyx // 2**scale, scale)
+        writer.write_subvolume(vol, (0,0,0), scale)
+    
+    for scale in range(4):
+        box = reader.bounding_box_zyx // 2**scale
+        orig_vol = reader.get_subvolume(box, scale)
+        written_vol = writer.get_subvolume(box, scale)
+        assert (orig_vol == written_vol).all(), f"Failed at scale {scale}"
 
 
 if __name__ == "__main__":

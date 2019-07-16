@@ -63,7 +63,7 @@ class VolumeService(metaclass=ABCMeta):
         from .dvid_volume_service import DvidVolumeService
         from .boss_volume_service import BossVolumeServiceReader
         from .brainmaps_volume_service import BrainMapsVolumeServiceReader
-        from .n5_volume_service import N5VolumeServiceReader
+        from .n5_volume_service import N5VolumeService
         from .zarr_volume_service import ZarrVolumeService
         from .slice_files_volume_service import SliceFilesVolumeService
 
@@ -83,7 +83,7 @@ class VolumeService(metaclass=ABCMeta):
         elif "brainmaps" in volume_config:
             service = BrainMapsVolumeServiceReader( volume_config, resource_manager_client )
         elif "n5" in volume_config:
-            service = N5VolumeServiceReader( volume_config )
+            service = N5VolumeService( volume_config )
         elif "zarr" in volume_config:
             service = ZarrVolumeService( volume_config )
         elif "slice-files" in volume_config:

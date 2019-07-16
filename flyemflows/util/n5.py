@@ -36,7 +36,7 @@ def export_to_multiscale_n5(volume, path, dataset_scale_0_name='s0', chunks=256,
             volume = downsample(volume, 2, downsample_method)
             assert volume.flags.c_contiguous
         
-        chunks = np.minimum( chunks, (volume.shape) )
-        ds = f.create_dataset(f'{dataset_prefix}{scale}', dtype=volume.dtype, shape=volume.shape, chunks=(*chunks,), compressor='raw')
+        chunks = np.minimum( chunks, (volume.shape) ).tolist()
+        ds = f.create_dataset(f'{dataset_prefix}{scale}', dtype=volume.dtype, shape=volume.shape, chunks=(*chunks,))
         ds[:] = volume
         assert (ds[:] == volume).all(), "z5py appears broken..."

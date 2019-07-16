@@ -217,7 +217,7 @@ class ZarrVolumeService(VolumeServiceReader, VolumeServiceWriter):
     
     def get_subvolume(self, box_zyx, scale=0):
         assert scale == 0, \
-            ("Zarr volume service only supports scale 0 for now.]\n"
+            ("Zarr volume service only supports scale 0 for now.\n"
              "As a workaround, try wrapping in a ScaledVolumeService by adding 'rescale-level: 0' to your 'adapters' config section.")
         return self._dataset[box_to_slicing(*box_zyx)]
     
