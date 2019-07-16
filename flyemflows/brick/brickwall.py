@@ -1,6 +1,6 @@
 import numpy as np
 
-from neuclease.util import Grid, SparseBlockMask, round_box
+from neuclease.util import Grid, SparseBlockMask, round_box, extract_subvol
 
 from ..util import persist_and_execute, downsample, DebugClient
 from .brick import ( Brick, generate_bricks_from_volume_source, realign_bricks_to_new_grid, pad_brick_data_from_volume_source )
@@ -296,18 +296,32 @@ class BrickWall:
     def downsample(self, block_shape, method):
         """
         See util.downsample for available methods
+        
+        Note:
+            If the downsampling block_shape does not
+            perfectly divide into the brick's physical_box start or stop,
+            voxels on the edge of the volume will be discarded before downsampling. 
         """
         assert block_shape[0] == block_shape[1] == block_shape[2], \
             "Currently, downsampling must be isotropic"
 
         factor = block_shape[0]
         def downsample_brick(brick):
-            assert (brick.physical_box % factor == 0).all()
             assert (brick.logical_box % factor == 0).all()
+
+            # If the factor doesn't perfectly divide into
+            # the brick's physical dimensions,
+            # then chop off the edges until it does.
+            if (brick.physical_box % factor != 0).any():
+                clipped_box = round_box(brick.physical_box, factor, 'in')
+                volume = extract_subvol(brick.volume, clipped_box - brick.physical_box[0])
+            else:
+                clipped_box = brick.physical_box
+                volume = brick.volume
         
-            downsampled_volume = downsample(brick.volume, factor, method)
+            downsampled_volume = downsample(volume, factor, method)
             downsampled_logical_box = brick.logical_box // factor
-            downsampled_physical_box = brick.physical_box // factor
+            downsampled_physical_box = clipped_box // factor
             
             return Brick(downsampled_logical_box, downsampled_physical_box, downsampled_volume, compression=brick.compression)
 
