@@ -7,7 +7,7 @@ import numpy as np
 
 from .util import downsample
 
-def export_to_multiscale_n5(volume, path, dataset_scale_0_name='s0', chunks=256, max_scale=0, downsample_method='subsample'):
+def export_to_multiscale_n5(volume, path, dataset_scale_0_name='s0', chunks=256, max_scale=0, downsample_method='subsample', compression='raw'):
     """
     Export the given ndarray to N5, creating a series of datasets (one for each scale).
     """
@@ -37,6 +37,6 @@ def export_to_multiscale_n5(volume, path, dataset_scale_0_name='s0', chunks=256,
             assert volume.flags.c_contiguous
         
         chunks = np.minimum( chunks, (volume.shape) ).tolist()
-        ds = f.create_dataset(f'{dataset_prefix}{scale}', dtype=volume.dtype, shape=volume.shape, chunks=(*chunks,))
+        ds = f.create_dataset(f'{dataset_prefix}{scale}', dtype=volume.dtype, shape=volume.shape, chunks=(*chunks,), compression=compression)
         ds[:] = volume
         assert (ds[:] == volume).all(), "z5py appears broken..."
