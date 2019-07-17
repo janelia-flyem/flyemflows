@@ -228,7 +228,7 @@ class N5VolumeService(VolumeServiceWriter):
                 chunks = np.minimum(shape, preferred_message_shape_zyx).tolist()
                 
                 # TODO: enable compression?
-                self._n5_datasets[scale] = self.n5_file.create_dataset(name, shape, np.dtype(dtype), chunks=chunks)
+                self._n5_datasets[scale] = self.n5_file.create_dataset(name, shape, np.dtype(dtype), chunks=chunks, compression='raw')
 
 
     def __getstate__(self):
