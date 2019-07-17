@@ -3,13 +3,13 @@ import tempfile
 
 import h5py
 import numpy as np
-import scipy.ndimage
 
 import pytest
 from skimage.util.shape import view_as_blocks
 
 from neuclease.util import box_to_slicing
 
+from flyemflows.util import downsample
 from flyemflows.volumes import VolumeService, Hdf5VolumeService, ScaledVolumeService, GrayscaleVolumeSchema
 from confiddler import validate
 
@@ -100,7 +100,7 @@ def test_full_volume_downsample_1(setup_hdf5_service):
     assert scaled_reader.dtype == h5_reader.dtype
 
     full_scaled = scaled_reader.get_subvolume(scaled_reader.bounding_box_zyx)
-    assert (full_scaled == scipy.ndimage.interpolation.zoom(full_from_h5, 0.5)).all()
+    assert (full_scaled == downsample(full_from_h5, 2, 'grayscale')).all()
     assert full_scaled.flags.c_contiguous
     
 def test_full_volume_upsample_1(setup_hdf5_service):
@@ -138,7 +138,7 @@ def test_subvolume_downsample_1(setup_hdf5_service):
     down_box = np.array([[13, 15, 20], [20, 40, 41]])
     up_box = 2*down_box
     up_subvol_from_h5 = full_from_h5[box_to_slicing(*up_box)]
-    down_subvol_from_h5 = scipy.ndimage.interpolation.zoom(up_subvol_from_h5, 0.5)
+    down_subvol_from_h5 = downsample(up_subvol_from_h5, 2, 'grayscale')
     
     # Scale 1
     scaled_reader = ScaledVolumeService(h5_reader, 1)

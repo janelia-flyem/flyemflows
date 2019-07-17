@@ -22,7 +22,6 @@ requirements:
     - python {{ python }}
     - requests
     - psutil
-
     - numpy
     - pandas
     - numba
@@ -85,6 +84,7 @@ requirements:
 #    - pytest
 #    - numpy-allocation-tracking
 #    - dvid
+#    - scipy
 #
 #  imports:
 #    - flyemflows

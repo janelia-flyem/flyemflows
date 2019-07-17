@@ -14,9 +14,10 @@ from ctypes.util import find_library
 from contextlib import contextmanager
 from subprocess import Popen, PIPE, TimeoutExpired
 
+import vigra
 import psutil
-import scipy.ndimage
 import numpy as np
+import scipy.ndimage
 from skimage.util import view_as_blocks
 
 from dvidutils import downsample_labels
@@ -62,8 +63,23 @@ def downsample(volume, factor, method):
     if method == 'subsample':
         sl = slice(None, None, factor)
         return volume[(sl,)*volume.ndim].copy('C')
+
     if method in ('zoom', 'grayscale'): # synonyms
-        return scipy.ndimage.zoom(volume, 1/factor)
+        # vigra is 2.7x faster than scipy, but it complains for small images:
+        # 
+        #  Precondition violation!
+        #  resizeImage(): Each output axis must have length > 1.)
+        #
+        # Furthermore, it seems to be somewhat unstable even for small
+        # images that satisfy the above condition.
+        # Therefore, use vigra for non-tiny images,
+        # and use scipy for the tiny stuff.
+        newshape = np.array(volume.shape) // factor
+        if (newshape >= 10).all():
+            return vigra_sampling_resize(volume, newshape)
+        else:
+            return scipy.ndimage.zoom(volume, 1/factor)
+
     if method == 'mode':
         return downsample_labels(volume, factor, False)
     if method in ('labels', 'label'): # synonyms
@@ -73,6 +89,16 @@ def downsample(volume, factor, method):
         return reduced_output
 
     raise AssertionError("Shouldn't get here.")
+
+def vigra_sampling_resize(volume, newshape):
+    newshape = tuple(newshape)
+    volume_f = np.asarray(volume, dtype=np.float32)
+    
+    axes = 'zyx'[3-volume_f.ndim:]
+    volume_f = vigra.taggedView(volume_f, axes)
+    
+    resized = vigra.sampling.resize(volume_f, newshape)
+    return np.asarray(resized, dtype=volume.dtype)
 
 
 def upsample(volume, factor):
