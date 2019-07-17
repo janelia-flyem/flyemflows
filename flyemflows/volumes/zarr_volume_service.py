@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 
 ZarrServiceSchema = \
 {
-    "description": "Parameters specify an Zarr volume (a directory on the filesystem).",
+    "description": "Parameters specify an Zarr volume (a directory on the filesystem).\n"
+                   "We always use zarr's NestedDirectoryStore, not the default DirectoryStore.\n",
     "type": "object",
     "required": ["path", "dataset"],
 
@@ -110,7 +111,9 @@ class ZarrVolumeService(VolumeServiceReader, VolumeServiceWriter):
                 self._group = None
                 self._dataset = zarr.open(path, mode)
             else:
-                self._group = zarr.open(path, mode)
+                #self._group = zarr.open(path, mode)
+                store = zarr.NestedDirectoryStore(path)
+                self._group = zarr.open(store=store, mode=mode)
                 self._dataset = self._group[dataset_name]
         else:
             if not writable:
@@ -133,7 +136,9 @@ class ZarrVolumeService(VolumeServiceReader, VolumeServiceWriter):
                 self._group = None
                 self._dataset = zarr.open(path, mode)
             else:
-                self._group = zarr.open(path, mode)
+                #self._group = zarr.open(path, mode)
+                store = zarr.NestedDirectoryStore(path)
+                self._group = zarr.open(store=store, mode=mode)
                 self._dataset = self._group.create_dataset( dataset_name,
                                                             shape=bounding_box_zyx[1],
                                                             dtype=np.dtype(dtype),

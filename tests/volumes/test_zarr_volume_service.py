@@ -14,7 +14,7 @@ def volume_setup():
     tmpdir = tempfile.mkdtemp()
     path = f"{tmpdir}/test_zarr_service_testvol.zarr"
     dataset = "/some/volume"
-    
+
     config = {
         "zarr": {
             "path": path,
@@ -24,7 +24,9 @@ def volume_setup():
     }
     
     volume = np.random.randint(100, size=(512, 256, 128))
-    f = zarr.open(path, 'w')
+
+    store = zarr.NestedDirectoryStore(path)
+    f = zarr.open(store=store, mode='w')
     f.create_dataset(dataset, data=volume, chunks=(64,64,64))
 
     return config, volume
@@ -44,6 +46,7 @@ def test_read(volume_setup):
     box = [(30,40,50), (50,60,70)]
     subvol = service.get_subvolume(box)
     
+
     assert (subvol == volume[box_to_slicing(*box)]).all()
 
 
