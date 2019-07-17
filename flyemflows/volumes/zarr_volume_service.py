@@ -16,7 +16,8 @@ logger = logging.getLogger(__name__)
 ZarrServiceSchema = \
 {
     "description": "Parameters specify an Zarr volume (a directory on the filesystem).\n"
-                   "We always use zarr's NestedDirectoryStore, not the default DirectoryStore.\n",
+                   "We always use zarr's NestedDirectoryStore, not the default DirectoryStore.\n"
+                   "For now, no compression is used.\n",
     "type": "object",
     "required": ["path", "dataset"],
 
@@ -142,7 +143,8 @@ class ZarrVolumeService(VolumeServiceReader, VolumeServiceWriter):
                 self._dataset = self._group.create_dataset( dataset_name,
                                                             shape=bounding_box_zyx[1],
                                                             dtype=np.dtype(dtype),
-                                                            chunks=tuple(chunks) )
+                                                            chunks=tuple(chunks),
+                                                            compressor=None )
 
         ###
         ### bounding_box_zyx
