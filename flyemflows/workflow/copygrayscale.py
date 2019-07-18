@@ -1,4 +1,3 @@
-import os
 import copy
 import logging
 from functools import partial
@@ -10,7 +9,7 @@ from dvidutils import destripe #@UnresolvedImport
 from dvid_resource_manager.client import ResourceManagerClient
 
 from neuclease.util import Grid, slabs_from_box, Timer, box_to_slicing
-from neuclease.dvid import update_extents, reload_metadata, extend_list_value, create_voxel_instance, fetch_repo_instances
+from neuclease.dvid import reload_metadata
 from neuclease.focused.hotknife import HEMIBRAIN_TAB_BOUNDARIES
 
 from ..util import replace_default_entries
@@ -275,8 +274,9 @@ class CopyGrayscale(Workflow):
             bricked_slab_wall = self.adjust_contrast(bricked_slab_wall, slab_index)
         
         # Remap to output bricks
-        output_grid = Grid(output_service.preferred_message_shape)
-        output_slab_wall = bricked_slab_wall.realign_to_new_grid( output_grid )
+        with Timer("Realigning to output grid", logger):
+            output_grid = Grid(output_service.preferred_message_shape)
+            output_slab_wall = bricked_slab_wall.realign_to_new_grid( output_grid )
         
         if options["fill-blocks"]:
             # Pad from previously-existing pyramid data until

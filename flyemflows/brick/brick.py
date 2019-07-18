@@ -283,7 +283,7 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
         for worker, length in sorted(workers_and_lens):
             logger.info(f"{worker}: {length}")
 
-    def make_bricks( logical_and_physical_box ):
+    def make_brick( logical_and_physical_box ):
         logical_box, physical_box = logical_and_physical_box
         location_id = tuple(logical_box[0] // grid.block_shape)
         if lazy:
@@ -292,7 +292,7 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
             volume = volume_accessor_func(physical_box)
             return Brick(logical_box, physical_box, volume, location_id=location_id, compression=compression)
     
-    bricks = boxes_bag.map( make_bricks )
+    bricks = boxes_bag.map( make_brick )
     return bricks, num_bricks
 
 

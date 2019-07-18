@@ -1,6 +1,6 @@
 import numpy as np
 
-from neuclease.util import box_to_slicing, SparseBlockMask
+from neuclease.util import box_to_slicing
 
 from ...util import downsample, upsample
 from .. import VolumeServiceReader
