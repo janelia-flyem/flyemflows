@@ -74,6 +74,9 @@ def extract_assignment_fragments( server, uuid, syn_instance,
             DVID synapse (annotation) instance
     
         edge_table:
+            A DataFrame as explained below, or a filepath to a
+            .npy file that can be loaded into one.
+        
             The FindAdjacencies workflow finds the sites at which
             preselected bodies are adjacent to one another.
             
@@ -181,9 +184,15 @@ def extract_assignment_fragments( server, uuid, syn_instance,
 
     ref_seg = (server, uuid, seg_instance)
     
+    # Load edges (if necessary), pre-filter, normalize
     edges_df = load_edges(edge_table)
+    
+    # Update the table for consistency with the given UUID,
+    # and re-post-process it to find the correct "central" and "closest" edges,
+    # (in case some groups were merged).
     edges_df = update_localized_edges(*ref_seg, edges_df, processes)
     
+    # Fetch synapse labels and determine the set of BOIs
     boi_table = determine_bodies_of_interest( server, uuid, syn_instance,
                                               boi_rois,
                                               min_tbars_in_roi, min_psds_in_roi,
@@ -192,26 +201,38 @@ def extract_assignment_fragments( server, uuid, syn_instance,
 
     bois = set(boi_table.index)
 
+    # We're trying to connect BOIs to each other.
+    # Therefore, we're not interested in groups of bodies
+    # that don't contain at least 2 BOIs. 
     edges_df = filter_groups_for_min_boi_count(edges_df, bois, 2)
+
+    # Find the paths ('fragments', a.k.a. 'tasks') that connect BOIs within each group.
     fragment_edges_df = compute_fragment_edges(edges_df, bois)
 
     if fragment_rois is not None:
+        # Drop fragments that extend outside of the specified ROIs.
         fragment_edges_df = filter_fragments_for_roi(server, uuid, fragment_rois, fragment_edges_df)
 
-    # Fetch the supervoxel IDs if necessary.
-    if {'sv_a', 'sv_b'} - {*fragment_edges_df.columns}:
-        with Timer("Sampling supervoxel IDs", logger):
-            points_a = fragment_edges_df[['za', 'ya', 'xa']].values
-            points_b = fragment_edges_df[['zb', 'yb', 'xb']].values
-            fragment_edges_df['sv_a'] = fetch_labels_batched(*ref_seg, points_a, True, processes=processes)
-            fragment_edges_df['sv_b'] = fetch_labels_batched(*ref_seg, points_b, True, processes=processes)
+    # Fetch the supervoxel IDs for each edge.
+    with Timer("Sampling supervoxel IDs", logger):
+        points_a = fragment_edges_df[['za', 'ya', 'xa']].values
+        points_b = fragment_edges_df[['zb', 'yb', 'xb']].values
+        fragment_edges_df['sv_a'] = fetch_labels_batched(*ref_seg, points_a, True, processes=processes)
+        fragment_edges_df['sv_b'] = fetch_labels_batched(*ref_seg, points_b, True, processes=processes)
     
     # Divide into 'focused' and 'merge review' fragments,
     # i.e. single-edge fragments and multi-edge fragments
-    focused_fragments_df = fragment_edges_df.groupby(['group_cc', 'cc_task']).filter(lambda task_df: len(task_df) == 1).copy()
-    mr_fragments_df = fragment_edges_df.groupby(['group_cc', 'cc_task']).filter(lambda task_df: len(task_df) > 1).copy()
+    focused_fragments_df = (fragment_edges_df
+                               .groupby(['group_cc', 'cc_task'])
+                               .filter(lambda task_df: len(task_df) == 1) # exactly one edge
+                               .copy())
 
-    return focused_fragments_df, mr_fragments_df, bois
+    mr_fragments_df = (fragment_edges_df
+                          .groupby(['group_cc', 'cc_task'])
+                          .filter(lambda task_df: len(task_df) > 1) # multiple edges
+                          .copy())
+
+    return focused_fragments_df, mr_fragments_df, boi_table
 
 
 def generate_mergereview_assignments_from_df(server, uuid, instance, mr_fragments_df, bois, assignment_size, output_dir):
@@ -236,6 +257,13 @@ def generate_mergereview_assignments_from_df(server, uuid, instance, mr_fragment
 
 
 def load_edges(edge_table):
+    """
+    - Read the edges from a file (if necessary)
+    - Verify that the necessary columns are present
+    - Drop any that were marked with group_cc == -1
+      (they aren't part of any group_cc)
+    - Normalize columns so that label_a < label_b
+    """
     if isinstance(edge_table, str):
         assert edge_table.endswith('.npy')
         edges_df = pd.DataFrame(np.load(edge_table))
@@ -257,6 +285,14 @@ def load_edges(edge_table):
 
 
 def update_localized_edges(server, uuid, seg_instance, edges_df, processes=16):
+    """
+    Use the coordinates in the edge table to update the label_a/label_b
+    columns (by fetching the labels from dvid at the given UUID).
+    
+    Then, since the labels MAY have changed, re-compute the central-most
+    edges (for "direct" adjacencies) and closest-approaching edges (for
+    nearby "adjacencies").  This takes a few minutes.
+    """
     ref_seg = (server, uuid, seg_instance)
 
     # Update to latest node
@@ -314,6 +350,12 @@ def filter_groups_for_min_boi_count(edges_df, bois, min_boi_count=2):
 
 
 def compute_fragment_edges(edges_df, bois):
+    """
+    For each edge group, search for paths that can connect the BOIs in the group.
+    Each group is a "fragment", a.k.a. "task".
+    Return a new edge DataFrame, where each edge is associated with a group and
+    a fragment within that group, indicated by group_cc and cc_task, respectively.
+    """
     fragments = extract_fragments(edges_df, bois)
     
     with Timer("Extracting edges for each fragment from full table", logger):
@@ -338,7 +380,9 @@ def compute_fragment_edges(edges_df, bois):
 
 def extract_fragments(edges_df, bois):
     """
-    For each connected component (pre-labeled) in the given 
+    For each connected component group (pre-labeled) in the given DataFrame,
+    Search for paths that can connect the groups's BOIs to each other,
+    possibly passing through non-BOI nodes in the group.
     """
     assert edges_df.duplicated(['group', 'label_a', 'label_b']).sum() == 0
     
