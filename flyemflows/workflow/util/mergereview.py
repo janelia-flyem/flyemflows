@@ -28,8 +28,153 @@ def extract_assignment_fragments( server, uuid, syn_instance,
                                   synapse_table=None,
                                   seg_instance=None ):
     """
-    TODO: Docs!
+    Using the edge table emitted from the FindAdjacencies workflow,
+    emit a table of "fragments" (sets of bodies) which connect two
+    "bodies of interest" (BOIs, described below).
+    
+    The emitted fragments be used to generate
+    focused assignments and/or merge review assignments.
+    
+    Essentially, we construct an adjacency graph from the edge table,
+    and then search for any paths that can connect two BOIs:
+    
+        BOI - b - b - b - ... - b - BOI
+    
+    The path from one BOI to another is called a "fragment".
+    
+    If the path contains only the two BOIs and no other bodies, then 
+    the two BOIs are directly adjacent, with no intervening bodies:
+    
+        BOI - BOI
+
+    In those cases, it is possible to create a "focused proofreading" task
+    from the body pair.  In all other cases, you can create a "merge review"
+    task for the fragment.  See the following functions:
+    
+        generate_mergereview_assignments_from_df()
+        neuclease.focused.asssignments.generate_focused_assignments()
+    
+    Exactly which bodies are considered "bodies of interest" is determined
+    by the presence of T-bars and PSDs within the specified ROIs (boi_rois,
+     if provided), thresholded by the given criteria.  If no boi_rois are
+    specified, then all T-bars and PSDs in the given bodies are counted.
+    
+    Additionally, the final fragment set can be filtered to exclude
+    fragments that travel outside of a given list of ROIs.
+
+    See the explanation of the edge_table parameter for an explanation of
+    the FindAdjacencies output.
+
+    Tip:
+        To visualize the adjacency graph for a subset of rows in either
+        the input edge table or the output tables, see display_graph(), below.
+
+    Args:
+        server, uuid, syn_instance:
+            DVID synapse (annotation) instance
+    
+        edge_table:
+            The FindAdjacencies workflow finds the sites at which
+            preselected bodies are adjacent to one another.
+            
+            The user provides a list of body "groups" which are analyzed independently.
+            In addition to "direct" adjacencies between touching bodies (distance=1.0),
+            the workflow can be configured to also search for near-adjacencies,
+            in which bodies come close to each other without physically touching (distance > 1.0).
+            Each adjacency is referred to as an edge, and the results are emitted as
+            an "edge table" with the following columns:
+        
+                [label_a, label_b, za, ya, xa, zb, yb, xb, distance, group, group_cc]
+        
+            with the following definitions:
+            
+                label_a, label_b:
+                    Body IDs (assuming the FindAdjacencies workflow was executed on a body input source)
+    
+                 za, ya, xa, zb, yb, xb:
+                    Coordinates that fall within the body on each side of the edge.
+    
+                distance:
+                    The euclidean distance between the two coordinates.
+                    For "direct" adjacencies, distance is always 1.0.
+                    For "nearby" adjacencies, distance is always > 1.0.
+    
+                group:
+                    The original body groups the user selected for adjacency analysis.
+                    The exact group ID values are arbitrary (not necessarily consecutive),
+                    and were provided by the user that ran the FindAdjacencies workflow.
+                    Note that one body may exist in more than one group.
+                
+                group_cc:
+                    An independent subgraph is constructed for each group (from the group's 'edges').
+                    A connected components analysis is then performed on each subgraph,
+                    and a unique ID is assigned to each CC.
+    
+                    Although the connected components are computed on each group in isolation,
+                    the assigned group_cc values are unique across all of the groups in the table.
+    
+                    The group_cc values are otherwise arbitrary. (That is, they aren't necessarily
+                    consecutive, or related to the other CC IDs in their group.)
+                    For example, group 123 might be found to contain two connected components,
+                    labeled group_cc=53412 and group_cc=82344
+
+        boi_rois:
+            Optional.  List of ROI instance names.
+            If provided, only T-bars and PSDs that fall within the given list of ROIs will be
+            counted when determining which bodies are considered BOIs.  Otherwise, all synapses
+            in the volume are considered.
+        
+        min_tbars_in_roi, min_psds_in_roi:
+            The criteria for determining what counts as a BOI.
+            As indicated in the argument names, only synapse points WITHIN the ROI(s)
+            will be counted towards these requirements. 
+        
+        fragment_rois:
+            Optional.  Any fragments that extend outside of the given list of ROIs
+            will be discarded from the result, even though they contained BOIs
+            that matched the BOI criteria.
+        
+        processes:
+            Various steps in this function can be parallelized.
+            This specifies how much parallelism to use.
+        
+        synapse_table:
+            Optional.  If you already fetched the synapses from DVID
+            (via fetch_synapses_in_batches() or fetch_roi_synapses()),
+            you can provide it here (or a file path to a stored .npy file),
+            in which case this function will not need to fetch the synapses from DVID.
+        
+        seg_instance:
+            By default, this BOIs in this table will be extracted from the segmentation
+            instance that is associated with the given synapse annotation instance.
+            But if you would like to use a different segmentation instance, provide it here.
+    
+    Returns:
+        (focused_fragments_df, mr_fragments_df, bois), where:
+        
+        focused_fragments_df:
+            A DataFrame consisting of rows suitable for "focused proofreading",
+            i.e. every row (edge) is a single-edge fragment.
+        
+        mr_fragments_df:
+            A DataFrame consisting of edges that belong to fragments with more
+            than one edge, meaning they are not suitable for "focused proofreading"
+            and are instead suitable for "merge review".
+            The fragment IDs are the (group_cc, cc_task) columns.
+            Edges with the same fragment ID should be grouped together into the
+            same merge review task.
+        
+        bois:
+            The bodies that are considered BOIs based on the criteria given above.
+            Note that the fragments in the above results do not necessarily cover
+            every BOI in this list.
     """
+    if isinstance(boi_rois, str):
+        boi_rois = [boi_rois]
+
+    if isinstance(fragment_rois, str):
+        fragment_rois = [fragment_rois]
+    
     if seg_instance is None:
         syn_info = fetch_instance_info(server, uuid, syn_instance)
         seg_instance = syn_info["Base"]["Syncs"][0]
