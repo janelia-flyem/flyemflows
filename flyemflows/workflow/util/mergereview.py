@@ -241,6 +241,10 @@ def extract_assignment_fragments( server, uuid, syn_instance,
                 f"{num_mr_fragments} merge-review fragments, "
                 f"covering {num_fragment_bois} BOIs out of {len(boi_table)}.")
     
+    # Convert boi_table columns from categorical index to normal index,
+    # so the caller can append their own columns if they want.
+    boi_table.columns = boi_table.columns.tolist()
+    
     return focused_fragments_df, mr_fragments_df, boi_table
 
 
