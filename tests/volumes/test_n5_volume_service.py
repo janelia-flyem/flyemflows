@@ -72,8 +72,14 @@ def test_multiscale_write(volume_setup):
 
     config = copy.deepcopy(read_config)
     config["n5"]["path"] = new_path
-    config["n5"]["dtype"] = str(volume.dtype)
-    config["n5"]["writable"] = True
+    config["n5"]["create-if-necessary"] = True
+    config["n5"]["creation-settings"] = {
+        "shape": [*volume.shape[::-1]],
+        "dtype": str(volume.dtype),
+        "block-shape": [64,64,64],
+        "max-scale": 3,
+        "compression": "gzip"
+    }
     config["geometry"]["bounding-box"] = [[0,0,0], [*volume.shape[::-1]]]
     config["geometry"]["available-scales"] = [*range(4)]
     
@@ -102,8 +108,14 @@ def test_multiscale_write_nonaligned(volume_setup):
 
     config = copy.deepcopy(read_config)
     config["n5"]["path"] = new_path
-    config["n5"]["dtype"] = str(volume.dtype)
-    config["n5"]["writable"] = True
+    config["n5"]["create-if-necessary"] = True
+    config["n5"]["creation-settings"] = {
+        "shape": [250, 225, 200],
+        "dtype": str(volume.dtype),
+        "block-shape": [64,64,64],
+        "max-scale": 3,
+        "compression": "gzip"
+    }
     
     config["geometry"]["bounding-box"] = [[0,0,0], [250, 225, 200]]
     config["geometry"]["available-scales"] = [*range(4)]

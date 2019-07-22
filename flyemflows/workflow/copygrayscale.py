@@ -150,16 +150,22 @@ class CopyGrayscale(Workflow):
         self.mgr_client = ResourceManagerClient( mgr_options["server"], mgr_options["port"] )
         self.input_service = VolumeService.create_from_config( input_config, self.mgr_client )
 
-        max_pyramid_scale = self.config["copygrayscale"]["max-pyramid-scale"]
-        if "dvid" in output_config and output_config["dvid"]["create-if-necessary"]:
-            max_creation_scale = output_config["dvid"]["creation-settings"]["max-scale"]
-            if max_creation_scale == -1:
-                output_config["dvid"]["creation-settings"]["max-scale"] = max_pyramid_scale
-            elif max_creation_scale < max_pyramid_scale:
-                msg = (f"Your dvid instance creation-settings specify a lower max-scale ({max_creation_scale}) "
-                       f"than your CopyGrayscale config max-pyramid-scale ({max_pyramid_scale}).\n"
-                       "Change your creation-settings max-scale or remove it from the config so a default can be chosen.")
-                raise RuntimeError(msg)
+        # For services that support the 'max-scale' creation setting (n5 and dvid),
+        # auto-set the max-scale based on the max-pyramid-scale config setting.
+        VolumeService.remove_default_service_configs(output_config)
+        multiscale_service = {*output_config.keys()} & {'dvid', 'n5'}
+        if multiscale_service:
+            svc = [*multiscale_service][0]
+            if output_config[svc]["create-if-necessary"]:
+                max_pyramid_scale = self.config["copygrayscale"]["max-pyramid-scale"]
+                max_creation_scale = output_config[svc]["creation-settings"]["max-scale"]
+                if max_creation_scale == -1:
+                    output_config[svc]["creation-settings"]["max-scale"] = max_pyramid_scale
+                elif max_creation_scale < max_pyramid_scale:
+                    msg = (f"Your volume creation-settings specify a lower max-scale ({max_creation_scale}) "
+                           f"than your CopyGrayscale config max-pyramid-scale ({max_pyramid_scale}).\n"
+                           "Change your creation-settings max-scale or remove it from the config so a default can be chosen.")
+                    raise RuntimeError(msg)
 
         replace_default_entries(output_config["geometry"]["bounding-box"], self.input_service.bounding_box_zyx[:, ::-1])
         self.output_service = VolumeService.create_from_config( output_config, self.mgr_client )

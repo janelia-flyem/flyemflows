@@ -295,11 +295,13 @@ def test_copygrayscale_from_hdf5_to_n5(disable_auto_retry):
           n5:
             path: output.n5
             dataset: s0
-            writable: true
-            dtype: uint8
+            create-if-necessary: true
+            creation-settings:
+              dtype: uint8
+              # max-scale: 2 # Should be set automatically from max-pyramid-scale
 
           geometry:
-            message-block-shape: [128,128,128]
+            message-block-shape: [256,128,128]
             available-scales: [0,1,2]
         
         copygrayscale:

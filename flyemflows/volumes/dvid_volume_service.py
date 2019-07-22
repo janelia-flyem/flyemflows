@@ -111,8 +111,7 @@ DvidServiceSchema = \
         "create-if-necessary": {
             "description": "Whether or not to create the instance if it doesn't already exist.\n"
                            "If you expect the instance to exist on the server already, leave this\n"
-                           "set to False to avoid confusion in the case of typos, UUID mismatches, etc.\n"
-                           "Note: When creating grayscale instances, ",
+                           "set to False to avoid confusion in the case of typos, UUID mismatches, etc.\n",
             "type": "boolean",
             "default": False
         },

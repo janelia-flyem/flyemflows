@@ -67,7 +67,7 @@ class VolumeService(metaclass=ABCMeta):
         from .zarr_volume_service import ZarrVolumeService
         from .slice_files_volume_service import SliceFilesVolumeService
 
-        VolumeService._remove_default_service_configs(volume_config)
+        VolumeService.remove_default_service_configs(volume_config)
 
         service_keys = set(volume_config.keys()).intersection( set(VolumeService.SUPPORTED_SERVICES) )
         if len(service_keys) != 1:
@@ -126,7 +126,7 @@ class VolumeService(metaclass=ABCMeta):
         return service
 
     @classmethod
-    def _remove_default_service_configs(cls, volume_config):
+    def remove_default_service_configs(cls, volume_config):
         """
         The validate_and_inject_defaults() function will insert default
         settings for all possible service configs, but we are only interested
