@@ -265,21 +265,22 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
 
     # Distribute data across the cluster NOW, to force even distribution.
     boxes_bag = dask.bag.from_sequence( logical_and_physical_boxes, npartitions=num_partitions )
-    with Timer() as scatter_timer:
-        boxes_bag = client.scatter(boxes_bag).result()
+    boxes_bag = boxes_bag.persist()
+    #with Timer() as scatter_timer:
+    #    boxes_bag = client.scatter(boxes_bag).result()
 
     total_volume = sum(map(brick_size, logical_and_physical_boxes))
     logger.info(f"Initializing RDD of {num_bricks} Bricks "
-                f"(over {boxes_bag.npartitions} partitions) with total volume {total_volume/1e9:.1f} Gvox "
-                f"(scatter took {scatter_timer.timedelta})")
+                f"(over {boxes_bag.npartitions} partitions) with total volume {total_volume/1e9:.1f} Gvox ")
+                #f"(scatter took {scatter_timer.timedelta})")
 
+    def worker_address(part):
+        from distributed import get_worker
+        return [(get_worker().address, len(part))]
+
+    workers_and_lens = boxes_bag.map_partitions(worker_address).compute()
     if os.environ.get("DEBUG_FLOW", "0") != "0":
-        def worker_address(part):
-            from distributed import get_worker
-            return [(get_worker().address, len(part))]
-
         logger.info("Workers and assigned partition lengths:")
-        workers_and_lens = boxes_bag.map_partitions(worker_address).compute()
         for worker, length in sorted(workers_and_lens):
             logger.info(f"{worker}: {length}")
 
