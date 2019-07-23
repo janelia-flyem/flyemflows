@@ -10,7 +10,6 @@ from ..util import replace_default_entries
 from . import VolumeServiceWriter, GeometrySchema, GrayscaleAdapters
 
 import logging
-from dask.array import creation
 logger = logging.getLogger(__name__)
 
 
