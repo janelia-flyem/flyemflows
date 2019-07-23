@@ -121,7 +121,7 @@ class CopyGrayscale(Workflow):
                                "in which case we must 'pad' partial blocks using existing data (or zeros) before writing them.\n"
                                "Use this setting to specify whether such padding is required.\n",
                 "type": "boolean",
-                "default": "true" # FIXME: This is the default because that's what DVID needs, but most sources don't.
+                "default": True # FIXME: This is the default because that's what DVID needs, but most sources don't.
             }
         }
     }
