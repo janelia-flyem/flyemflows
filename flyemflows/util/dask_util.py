@@ -311,6 +311,9 @@ class DebugClient:
         else:
             return FakeFuture(result, task.key)
 
+    def rebalance(self, *args, **kwargs):
+        pass
+
 
 class FakeFuture:
     """

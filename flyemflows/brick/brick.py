@@ -266,6 +266,9 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
     # Distribute data across the cluster NOW, to force even distribution.
     boxes_bag = dask.bag.from_sequence( logical_and_physical_boxes, npartitions=num_partitions )
     boxes_bag = boxes_bag.persist()
+    
+    client.rebalance(boxes_bag)
+
     #with Timer() as scatter_timer:
     #    boxes_bag = client.scatter(boxes_bag).result()
 
@@ -274,15 +277,16 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
                 f"(over {boxes_bag.npartitions} partitions) with total volume {total_volume/1e9:.1f} Gvox ")
                 #f"(scatter took {scatter_timer.timedelta})")
 
-    def worker_address(part):
-        from distributed import get_worker
-        return [(get_worker().address, len(part))]
-
-    workers_and_lens = boxes_bag.map_partitions(worker_address).compute()
-    if os.environ.get("DEBUG_FLOW", "0") != "0":
-        logger.info("Workers and assigned partition lengths:")
-        for worker, length in sorted(workers_and_lens):
-            logger.info(f"{worker}: {length}")
+    if not isinstance(client, DebugClient):
+        def worker_address(part):
+            from distributed import get_worker
+            return [(get_worker().address, len(part))]
+    
+        workers_and_lens = boxes_bag.map_partitions(worker_address).compute()
+        if os.environ.get("DEBUG_FLOW", "0") != "0":
+                logger.info("Workers and assigned partition lengths:")
+                for worker, length in sorted(workers_and_lens):
+                    logger.info(f"{worker}: {length}")
 
     def make_brick( logical_and_physical_box ):
         logical_box, physical_box = logical_and_physical_box
