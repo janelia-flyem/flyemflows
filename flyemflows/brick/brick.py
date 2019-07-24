@@ -1,4 +1,5 @@
 import os
+import time
 import logging
 from functools import partial
 
@@ -263,14 +264,25 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
 
     num_partitions = int(np.ceil(len(logical_and_physical_boxes) / partition_size))
 
+    # Avoid powers-of-two partition sizes, since they hash poorly.
+    if 2**np.log2(num_partitions) == num_partitions:
+        logger.info("Changing num_partitions to avoid power of two")
+        if num_partitions < len(logical_and_physical_boxes):
+            num_partitions += 1
+        else:
+            num_partitions -= 1
+
     # Distribute data across the cluster NOW, to force even distribution.
     boxes_bag = dask.bag.from_sequence( logical_and_physical_boxes, npartitions=num_partitions )
-    boxes_bag = boxes_bag.persist()
-    
-    client.rebalance(boxes_bag)
+    if boxes_bag.npartitions != num_partitions:
+        boxes_bag = boxes_bag.repartition(num_partitions)
 
-    #with Timer() as scatter_timer:
-    #    boxes_bag = client.scatter(boxes_bag).result()
+    # Try really hard to scatter the data???
+    with Timer() as scatter_timer:
+        boxes_bag = client.scatter(boxes_bag).result()
+    time.sleep(2.0)
+    boxes_bag = boxes_bag.persist()
+    boxes_bag.compute()
 
     total_volume = sum(map(brick_size, logical_and_physical_boxes))
     logger.info(f"Initializing RDD of {num_bricks} Bricks "
@@ -296,8 +308,14 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
         else:
             volume = volume_accessor_func(physical_box)
             return Brick(logical_box, physical_box, volume, location_id=location_id, compression=compression)
+
+    def make_partition_bricks(part):
+        newpart = []
+        for item in part:
+            newpart.append(make_brick(item))
+        return newpart
     
-    bricks = boxes_bag.map( make_brick )
+    bricks = boxes_bag.map_partitions( make_partition_bricks )
     return bricks, num_bricks
 
 
