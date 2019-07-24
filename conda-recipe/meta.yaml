@@ -34,8 +34,11 @@ requirements:
     # Simple python-only RAG data structure.
     - ilastikrag
 
-    - dask
-    - dask-jobqueue
+    # Note: Can't upgrade to dask/distributed 2.x until dask-jobqueue >0.6 is released.
+    #       https://github.com/dask/dask-jobqueue/pull/291
+    - dask=1.2*
+    - dask-jobqueue=0.6*
+    - distributed=1.28*
 
     # Misc. serialization tools
 
