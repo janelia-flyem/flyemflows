@@ -419,12 +419,18 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
 
     def _create_instance(self, volume_config):
         if 'segmentation-name' in volume_config["dvid"]:
-            self._create_labelmap_instance(volume_config)
+            self._create_segmentation_instance(volume_config)
         if 'grayscale-name' in volume_config["dvid"]:
             self._create_grayscale_instances(volume_config) 
             
 
-    def _create_labelmap_instance(self, volume_config):
+    def _create_segmentation_instance(self, volume_config):
+        """
+        Create a segmentation volume in DVID according to the given configuration.
+        In DVID, segmentation instances are stored via a special instance type, 'labelmap',
+        which has several features, including built-in multiscale support, supervoxel-to-body
+        mapping, and sparse retrieval of body locations.
+        """
         if self.instance_name in fetch_repo_instances(self.server, self.uuid):
             logger.info(f"'{self.instance_name}' already exists, skipping creation")
             return
@@ -457,6 +463,22 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
 
 
     def _create_grayscale_instances(self, volume_config):
+        """
+        Create the grayscale instance(s) in DVID for the given volume configuration.
+
+        In DVID, grayscale data is stored in instances of type 'uint8blk',
+        which has no concept of scale.
+
+        Instead, multi-scale volumes are represented by creating multiple instances,
+        with the scale indicated by a suffix (except for scale 0).
+        
+        For example:
+            - grayscale # scale 0
+            - grayscale_1
+            - grayscale_2
+            - grayscale_3
+            - ...
+        """
         settings = volume_config["dvid"]["creation-settings"]
         
         block_width = volume_config["geometry"]["block-width"]
@@ -501,7 +523,8 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
 
     # Two-levels of auto-retry:
     # 1. Auto-retry up to three time for any reason.
-    # 2. If that fails due to 504 or 503 (probably cloud VMs warming up), wait 5 minutes and try again.
+    # 2. If that fails due to 504 or 503 (e.g. due to throttling or due to cloud VMs warming up),
+    #    wait 5 minutes and try again.
     @auto_retry(2, pause_between_tries=5*60.0, logging_name=__name__,
                 predicate=lambda ex: '503' in str(ex.args[0]) or '504' in str(ex.args[0]))
     @auto_retry(3, pause_between_tries=60.0, logging_name=__name__)
@@ -553,7 +576,8 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         
     # Two-levels of auto-retry:
     # 1. Auto-retry up to three time for any reason.
-    # 2. If that fails due to 504 or 503 (probably cloud VMs warming up), wait 5 minutes and try again.
+    # 2. If that fails due to 504 or 503 (e.g. due to throttling or due to cloud VMs warming up),
+    #    wait 5 minutes and try again.
     @auto_retry(2, pause_between_tries=5*60.0, logging_name=__name__,
                 predicate=lambda ex: '503' in str(ex.args[0]) or '504' in str(ex.args[0]))
     @auto_retry(3, pause_between_tries=60.0, logging_name=__name__)
