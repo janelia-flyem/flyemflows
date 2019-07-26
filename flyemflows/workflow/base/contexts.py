@@ -431,10 +431,16 @@ class WorkflowClusterContext:
             self.workflow.client = Client(self.workflow.cluster, timeout='60s') # Note: Overrides config value: distributed.comm.timeouts.connect
 
             # Wait for the workers to spin up.
-            with Timer(f"Waiting for {self.workflow.num_workers} workers to launch", logger):
+            max_wait_minutes = self.config["cluster-max-wait"]
+            with Timer(f"Waiting for {self.workflow.num_workers} workers to launch", logger) as wait_timer:
                 while ( self.wait_for_workers
                         and self.workflow.client.status == "running"
                         and len(self.workflow.cluster.scheduler.workers) < self.workflow.num_workers ):
+
+                    if wait_timer.seconds > (60 * max_wait_minutes):
+                        msg = (f"Not all cluster workers could be launched within the allotted time ({max_wait_minutes} minutes).\n"
+                                "Try again or adjust the 'cluster-max-wait' setting in your workflow config.\n")
+                        raise RuntimeError(msg)
                     time.sleep(0.1)
 
             if self.wait_for_workers and self.config["cluster-type"] == "lsf":

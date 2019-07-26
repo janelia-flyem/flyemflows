@@ -141,6 +141,13 @@ BaseSchema = \
             "enum": [*JOBQUEUE_CLUSTERS, "local-cluster", "synchronous", "processes"]
             # No default
         },
+        "cluster-max-wait": {
+            "description": "How many minutes to wait for all cluster workers to become available.\n"
+                           "If it takes longer than this, the workflow will be aborted.\n"
+                           "This timer doesn't start until the main client process starts.\n",
+            "type": "integer",
+            "default": 60
+        },
         "resource-manager": ResourceManagerSchema,
         "worker-initialization": WorkerInitSchema,
         "environment-variables": EnvironmentVariablesSchema,
