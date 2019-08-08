@@ -182,13 +182,13 @@ class ConnectedComponents(Workflow):
             
             return new_brick, cc_overlaps
 
-        # Now relabel each cc_brick so that no labels overlap
+        # Now relabel each cc_brick so that label ids in different bricks never coincide
         offset_cc_results = bag_zip(cc_bricks, cc_overlaps).map(add_cc_offsets)
         offset_cc_results.persist()
         cc_bricks, cc_overlaps = offset_cc_results.unzip(2)
 
-        # Compute halos.        
-        # Note: No need to compute ALL halos: outer-lower will overlap
+        # Extract halos.        
+        # Note: No need to extract halos on all sides: outer-lower will overlap
         #       with inner-upper, which is good enough for computing CC.
         outer_halos = extract_halos(cc_bricks, input_wall.grid, 'outer', 'lower')
         inner_halos = extract_halos(cc_bricks, input_wall.grid, 'inner', 'upper')
@@ -196,8 +196,9 @@ class ConnectedComponents(Workflow):
         outer_halos_df = BrickWall.bricks_as_ddf(outer_halos, logical=False, physical=True, names='long')
         inner_halos_df = BrickWall.bricks_as_ddf(inner_halos, logical=False, physical=True, names='long')
         
-        # Combine halo DFs along physical boxes, so that each outer halo is paired with it's partner (an inner halo).
-        # This is an pandas 'inner' merge, not to be confused with the 'inner' halos!
+        # Combine halo DFs along physical boxes, so that each outer halo is paired
+        # with its overlapping partner (an inner halo, extracted from a different original brick).
+        # Note: This is a pandas 'inner' merge, not to be confused with the 'inner' halos!
         combined_halos_df = outer_halos_df.merge(inner_halos_df, 'inner', PB_COLS, suffixes=['_outer', '_inner'])
 
         def find_pairwise_links(outer_brick, inner_brick):
@@ -261,6 +262,11 @@ class ConnectedComponents(Workflow):
             #     linked_nodes_orig = set(links_df['orig_outer'].values) | set(links_df['orig_inner'].values)
             #     node_df = cc_mapping_df.query(orig in @repeated_orig_labels or orig in @linked_nodes_orig')
 
+            # FIXME: Wouldn't the following be faster?  (Too lazy to test right now.)
+            #
+            #        keep_rows = cc_mapping_df['orig'].duplicated(keep=False)
+            #        node_df = cc_mapping_df.loc[keep_rows]
+            # 
             repeated_orig_labels = (cc_mapping_df['orig'].value_counts() > 2).index #@UnusedVariable
             node_df = cc_mapping_df.query('orig in @repeated_orig_labels')
 

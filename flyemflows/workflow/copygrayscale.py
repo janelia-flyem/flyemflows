@@ -280,7 +280,7 @@ class CopyGrayscale(Workflow):
             bricked_slab_wall = self.adjust_contrast(bricked_slab_wall, slab_index)
         
         # Remap to output bricks
-        with Timer("Realigning to output grid", logger):
+        with Timer(f"Slab {slab_index}: Realigning to output grid", logger):
             output_grid = Grid(output_service.preferred_message_shape)
             output_slab_wall = bricked_slab_wall.realign_to_new_grid( output_grid )
         

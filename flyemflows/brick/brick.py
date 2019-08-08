@@ -135,8 +135,9 @@ class Brick:
 
     def compress(self):
         """
-        Compress the volume.
+        Compress the volume using the compression type specified for this brick.
         Will be uncompressed again automatically on first access.
+        If self.compression is None, this function is a no-op.
         """
         if self._destroyed:
             raise RuntimeError("Attempting to compress data for a brick that has already been explicitly destroyed:\n"
@@ -266,7 +267,7 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
 
     # Avoid powers-of-two partition sizes, since they hash poorly.
     if 2**np.log2(num_partitions) == num_partitions:
-        logger.info("Changing num_partitions to avoid power of two")
+        #logger.info("Changing num_partitions to avoid power of two")
         if num_partitions < len(logical_and_physical_boxes):
             num_partitions += 1
         else:
@@ -571,19 +572,22 @@ def assemble_brick_fragments( fragments ):
     together into a final Brick that contains a full volume containing all of
     the fragments.
     
-    Note: Brick 'fragments' are also just Bricks, whose physical_box does
-          not cover the entire logical_box for the brick.
+    Note:
+        Brick 'fragments' are also just Bricks, whose physical_box does
+        not cover the entire logical_box for the brick.
+        Each fragment's physical_box indicates where that fragment's data
+        should be located within the final returned Brick.
     
-    Each fragment's physical_box indicates where that fragment's data
-    should be located within the final returned Brick.
+    Returns:
+        A Brick containing the data from all fragments,
+        UNLESS the fully assembled fragments would not intersect
+        with the Brick's own logical_box (i.e. all fragments fall
+        within the halo), in which case None is returned.
     
-    Returns: A Brick containing the data from all fragments,
-            UNLESS the fully assembled fragments would not intersect
-            with the Brick's own logical_box (i.e. all fragments fall
-            within the halo), in which case None is returned.
-    
-    Note: If the fragment physical_boxes are not disjoint, the results
-          are undefined.
+    Note:
+        If the fragment physical_boxes are not disjoint, the results
+        are undefined.  That is, if two fragments overlap, there's
+        no guarantee about which one "wins" for the overlapping region.
     """
     fragments = list(fragments)
 
@@ -640,11 +644,42 @@ def assemble_brick_fragments( fragments ):
 
 def extract_halos( bricks, grid, halo_type, sides='all' ):
     """
-    Extract the 'halo' volume from all sides of the given dask.Bag of bricks.
+    Extract the 'halo' volumes from the sides of the given dask.Bag of bricks.
     
     If a given brick's physical box does not extend the full length of
     its logical box for a given dimension, it will be zero-padded to ensure
     that all halos extracted across a given axis have the same dimensions.
+
+    Note: 
+        In the arguments below, 'lower' and 'upper' refer to low/high coordinate
+        values (i.e. not necessarily how you would display them in an image viewer,
+        where low Y values are typically shown at the top of the screen.)
+
+    Here's a visual map indicating outer vs. inner (O/I) and lower vs. upper (L/U).
+    The boundaries of the logical box are indicated by solid lines;
+    the halos by dashed lines.
+
+    In this diagram, the physical box exactly corresponds to the requested halo width,
+    but you are also permitted to request a smaller halo (not a larger one).
+    
+
+       physical_box[0] ---> •   + - - - - - - - - - +   
+                                |        O L        |
+                            + - *-------------------* - +
+                            |   |   |    I L    |   |   |
+                                | - + - - - - - + - |    
+                            |   |   |           |   |   |
+                                |                   |    
+                            | O | I |           | I | O |
+                                |                   |    
+                            | L | L |           | U | U |
+                                |                   |    
+                            |   |   |           |   |   |
+                                | - + - - - - - + - |    
+                            |   |   |    I U    |   |   |
+                            + - *-------------------* - +
+                                |        O U        |
+                                + - - - - - - - - - +   • <--- physical_box[1]
     
     Args:
         bricks:
