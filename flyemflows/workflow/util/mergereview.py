@@ -234,8 +234,8 @@ def extract_assignment_fragments( server, uuid, syn_instance,
 
     num_focused_fragments = len(focused_fragments_df)
     num_mr_fragments = len(mr_fragments_df.drop_duplicates(['group_cc', 'cc_task']))
-    fragment_bodies = pd.unique(fragment_edges_df['label_a', 'label_b'].values.reshape(-1))
-    num_fragment_bois = set(fragment_bodies).intersection(set(boi_table.index))
+    fragment_bodies = pd.unique(fragment_edges_df[['label_a', 'label_b']].values.reshape(-1))
+    num_fragment_bois = len(set(fragment_bodies).intersection(set(boi_table.index)))
     
     logger.info(f"Emitting {num_focused_fragments} focused fragments and "
                 f"{num_mr_fragments} merge-review fragments, "
