@@ -191,7 +191,13 @@ def extract_assignment_fragments( server, uuid, syn_instance,
     # and re-post-process it to find the correct "central" and "closest" edges,
     # (in case some groups were merged).
     edges_df = update_localized_edges(*ref_seg, edges_df, processes)
-    
+
+    # Technically, you could provide 0 for either of these,
+    # but that's probably a mistake on your part.
+    # (Unless you specifically appended some 0-synapse bodies to your
+    # synapse table, and expect those to be considered BOIs.)
+    assert min_tbars_in_roi >= 1 and min_psds_in_roi >= 1
+
     # Fetch synapse labels and determine the set of BOIs
     boi_table = determine_bodies_of_interest( server, uuid, syn_instance,
                                               boi_rois,
