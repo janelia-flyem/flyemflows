@@ -58,6 +58,18 @@ def init_cluster(num_workers, wait_for_all_workers=True):
     return client
 
 def main():
+    USER = getpass.getuser()
+    
+    # See example-dask-config.yaml for explanations.
+    dask.config.set({'jobqueue':
+                        {'lsf':
+                          {'cores': 1,
+                           'memory': '15GB',
+                           'walltime': '01:00',
+                           'log-directory': 'redecimation-dask-logs',
+                           'local-directory': f'/scratch/{USER}',
+                    }}})
+    
     client = init_cluster(2)
     
     try:
