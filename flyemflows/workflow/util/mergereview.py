@@ -1,3 +1,6 @@
+import os
+import zlib
+import json
 import logging
 
 import numpy as np
@@ -7,7 +10,7 @@ import networkx as nx
 from dvidutils import LabelMapper
 
 from neuclease.util import Timer, tqdm_proxy, swap_df_cols
-from neuclease.dvid import (fetch_instance_info, fetch_labels_batched, determine_bodies_of_interest,
+from neuclease.dvid import (fetch_instance_info, fetch_mapping, fetch_labels_batched, determine_bodies_of_interest,
                             fetch_combined_roi_volume, determine_point_rois)
 
 from neuclease.mergereview.mergereview import generate_mergereview_assignments
@@ -254,7 +257,7 @@ def extract_assignment_fragments( server, uuid, syn_instance,
     return focused_fragments_df, mr_fragments_df, boi_table
 
 
-def generate_mergereview_assignments_from_df(server, uuid, instance, mr_fragments_df, bois, assignment_size, output_dir):
+def generate_mergereview_assignments_from_df_OLD(server, uuid, instance, mr_fragments_df, bois, assignment_size, output_dir):
     # Sort table by task size (edge count)
     group_sizes = mr_fragments_df.groupby(['group_cc', 'cc_task']).size().rename('group_size')
     mr_fragments_df = mr_fragments_df.merge(group_sizes, 'left', left_on=['group_cc', 'cc_task'], right_index=True)
@@ -275,6 +278,121 @@ def generate_mergereview_assignments_from_df(server, uuid, instance, mr_fragment
     return assignments
 
 
+def generate_mergereview_assignments_from_df(server, uuid, instance, mr_fragments_df, bois, assignment_size, output_dir):
+    # Sort table by task size (edge count)
+    group_sizes = mr_fragments_df.groupby(['group_cc', 'cc_task']).size().rename('group_size')
+    mr_fragments_df = mr_fragments_df.merge(group_sizes, 'left', left_on=['group_cc', 'cc_task'], right_index=True)
+    mr_fragments_df = mr_fragments_df.sort_values(['group_size', 'group_cc', 'cc_task'])
+
+    mr_fragments_df['body_a'] = fetch_mapping(server, uuid, instance, mr_fragments_df['sv_a']).values
+    mr_fragments_df['body_b'] = fetch_mapping(server, uuid, instance, mr_fragments_df['sv_b']).values
+    
+    mr_fragments_df['is_boi_a'] = mr_fragments_df.eval('body_a in @bois')
+    mr_fragments_df['is_boi_b'] = mr_fragments_df.eval('body_b in @bois')
+    
+    # Group assignments by task size and emit an assignment for each group
+    all_tasks = {}
+    for group_size, same_size_tasks_df in mr_fragments_df.groupby('group_size'):
+        group_tasks = []
+        for (group_cc, cc_task), task_df in same_size_tasks_df.groupby(['group_cc', 'cc_task']):
+            svs = pd.unique(task_df[['sv_a', 'sv_b']].values.reshape(-1))
+            svs = np.sort(svs)
+            
+            boi_svs  = set(task_df[task_df['is_boi_a']]['sv_a'].tolist())
+            boi_svs |= set(task_df[task_df['is_boi_b']]['sv_b'].tolist())
+            
+            task_bodies = pd.unique(task_df[['body_a', 'body_b']].values.reshape(-1)).tolist()
+            
+            task = {
+                # neu3 fields
+                'task type': "merge review",
+                'task id': hex(zlib.crc32(svs)),
+                'supervoxel IDs': svs.tolist(),
+                'boi supervoxel IDs': sorted(boi_svs),
+                
+                # Encode edge table as json
+                "supervoxel IDs A": task_df['sv_a'].tolist(),
+                "supervoxel IDs B": task_df['sv_b'].tolist(),
+                "supervoxel points A": task_df[['xa', 'ya', 'za']].values.tolist(),
+                "supervoxel points B": task_df[['xb', 'yb', 'zb']].values.tolist(),
+                
+                # Debugging fields
+                'group_cc': int(group_cc),
+                'cc_task': int(cc_task),
+                'original_bodies': sorted(task_bodies),
+                'total_body_count': len(task_bodies),
+                'original_uuid': uuid,
+            }
+            group_tasks.append(task)
+
+        num_bodies = group_size+1
+        all_tasks[num_bodies] = group_tasks
+
+    for num_bodies, group_tasks in all_tasks.items():
+        output_subdir = f'{output_dir}/{num_bodies:02}-bodies'
+        os.makedirs(output_subdir, exist_ok=True)
+        for i, batch_start in enumerate(tqdm_proxy(range(0, len(group_tasks), assignment_size), leave=False)):
+            ouput_path = f"{output_dir}/{num_bodies:02}-bodies/assignment-{i:04d}.json"
+
+            batch_tasks = group_tasks[batch_start:batch_start+assignment_size]
+            assignment = {
+                "file type":"Neu3 task list",
+                "file version":1,
+                "task list": batch_tasks
+            }
+
+            with open(ouput_path, 'w') as f:
+                #json.dump(assignment, f, indent=2)
+                pretty_print_assignment_json_items(assignment.items(), f)
+    
+    return all_tasks
+
+
+def pretty_print_assignment_json_items(items, f, cur_indent=0):
+    """
+    Python's standard pretty-print is quite ugly if your data involves lots of lists.
+    This function is hand-tuned to write a json assignment in a reasonably pretty way.
+    """
+    f.write(' '*cur_indent + '{\n')
+    items = list(items)
+
+    cur_indent += 2
+    for i, (k,v) in enumerate(items):
+        f.write(' '*cur_indent + f'"{k}": ')
+
+        if k == 'task list':
+            f.write('\n')
+            cur_indent += 2
+            f.write(' '*cur_indent + '[\n')
+            cur_indent += 2
+            for task_index, task in enumerate(v):
+                pretty_print_assignment_json_items(task.items(), f, cur_indent)
+                if task_index != len(v)-1:
+                    f.write(',')
+                f.write('\n')
+            cur_indent -= 2
+            f.write(' '*cur_indent + ']\n')
+            cur_indent -= 2
+        elif isinstance(v, str):
+            f.write(f'"{v}"')
+        elif isinstance(v, (int, float)):
+            f.write(str(v))
+        elif isinstance(v, list):
+            json.dump(v, f)
+        else:
+            raise AssertionError(f"Can't pretty-print arbitrary values of type {type(v)}")
+        
+        if i != len(items)-1:
+            f.write(',')
+
+        f.write('\n')
+
+    cur_indent -= 2
+    f.write(' '*cur_indent + '}')
+    if cur_indent == 0:
+        f.write('\n')
+    
+    
 def load_edges(edge_table):
     """
     - Read the edges from a file (if necessary)
@@ -529,3 +647,12 @@ def display_graph(cc_df, bois, width=500, hv=True):
     if hv:
         p = p.opts(plot=dict(width=width, height=width))
     return p
+
+
+if __name__ == "__main__":
+    df = pd.DataFrame(np.load('/tmp/philip_small_not_tiny_df.npy', allow_pickle=True))
+    df['body_a'] = fetch_mapping('emdata4:8900', '28e6', 'segmentation', df['sv_a']).values    
+    df['body_b'] = fetch_mapping('emdata4:8900', '28e6', 'segmentation', df['sv_b']).values
+    bois = set(df[['body_a', 'body_b']].values.reshape(-1))
+    generate_mergereview_assignments_from_df('emdata4:8900', '28e6', 'segmentation', df, bois, 10, '/tmp/philip-assignments')
+
