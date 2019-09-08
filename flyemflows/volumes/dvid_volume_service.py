@@ -718,7 +718,7 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
 
         with Timer(f"Fetching coarse sparsevols for {len(labels)} labels ({len(bodies_and_svs)} bodies)", logger=logger):
             import dask.bag as db
-            bodies_and_coords = (db.from_sequence(bodies_and_svs.items(), npartitions=512) # Instead of fancy heuristics, just pick 512
+            bodies_and_coords = (db.from_sequence(bodies_and_svs.items(), npartitions=2048) # Instead of fancy heuristics, just pick 2048
                                  .starmap(fetch_brick_coords)
                                  .compute())
 
