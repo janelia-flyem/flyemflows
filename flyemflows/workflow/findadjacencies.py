@@ -505,6 +505,13 @@ def _find_closest_approaches(volume, closest_scale, subset_groups):
     Args:
         volume:
             3D label volume, np.uint32
+            
+        closest_scale:
+            If closest_scale > 0, then the "closest" points will be computed after
+            downsampling the mask for each object at the given scale.
+            (The returned point is still guaranteed to fall within the object at
+            scale 0, but it may be a pixel or two away from the true point of
+            closest approach.)
 
         subset_groups:
             DataFrame with columns [label, group, group_cc].

@@ -279,6 +279,15 @@ def generate_mergereview_assignments_from_df_OLD(server, uuid, instance, mr_frag
 
 
 def generate_mergereview_assignments_from_df(server, uuid, instance, mr_fragments_df, bois, assignment_size, output_dir):
+    """
+    Generate a set of assignments for the given mergereview fragments.
+    The assignments are written to a nested hierarchy:
+    Grouped first by task size (number of bodies in each task),
+    and then grouped in batches of N tasks (assignment_size).
+    
+    The body IDs emitted in the assignments and their classification as "BOI"
+    or not is determined by fetching the mappings for each supervoxel in the dataframe.
+    """
     # Sort table by task size (edge count)
     group_sizes = mr_fragments_df.groupby(['group_cc', 'cc_task']).size().rename('group_size')
     mr_fragments_df = mr_fragments_df.merge(group_sizes, 'left', left_on=['group_cc', 'cc_task'], right_index=True)
@@ -328,6 +337,9 @@ def generate_mergereview_assignments_from_df(server, uuid, instance, mr_fragment
         num_bodies = group_size+1
         all_tasks[num_bodies] = group_tasks
 
+    # Now that the task json data has been generated and split into groups (by body count),
+    # write them into multiple directories (one per group), each of which has muliple files
+    # (one per task batch, as specified by assignment_size)
     for num_bodies, group_tasks in all_tasks.items():
         output_subdir = f'{output_dir}/{num_bodies:02}-bodies'
         os.makedirs(output_subdir, exist_ok=True)
