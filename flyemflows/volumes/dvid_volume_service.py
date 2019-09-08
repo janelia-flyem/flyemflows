@@ -8,11 +8,13 @@ from requests import HTTPError
 from confiddler import validate
 from dvid_resource_manager.client import ResourceManagerClient
 
+from dvidutils import LabelMapper
+
 from neuclease.util import Timer, choose_pyramid_depth, round_box
 from neuclease.dvid import ( fetch_repo_instances, fetch_instance_info, fetch_volume_box,
                              fetch_raw, post_raw, fetch_labelarray_voxels, encode_labelarray_volume, post_labelmap_blocks,
                              update_extents, extend_list_value, create_voxel_instance, create_labelmap_instance,
-                             fetch_mapping )
+                             fetch_mapping, fetch_mappings )
 
 from ..util import auto_retry, replace_default_entries
 from . import GeometrySchema, VolumeServiceReader, VolumeServiceWriter, GrayscaleAdapters, SegmentationAdapters
@@ -661,7 +663,7 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         Returns:
             DataFrame with columns [z,y,x,label]
         """
-        labels = set(labels)
+        labels = pd.unique(labels)
         is_supervoxels = self.supervoxels
         brick_shape = self.preferred_message_shape
         assert (brick_shape % self.block_width == 0).all(), \
@@ -671,11 +673,26 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         bad_labels = []
 
         if is_supervoxels:
-            # Group by body
-            mapping = fetch_mapping(*self.instance_triple, list(labels))
+            # Arbitrary heuristic for whether to do the body-lookups on DVID or on the client.
+            if len(labels) < 100_000:
+                # If we're only dealing with a few supervoxels,
+                # ask dvid to map them to bodies for us.
+                mapping = fetch_mapping(*self.instance_triple, labels)
+            else:
+                # If we're dealing with a lot of supervoxels, ask for
+                # the entire mapping, and look up the bodies ourselves.
+                complete_mapping = fetch_mappings(*self.instance_triple)
+                mapper = LabelMapper(complete_mapping.index.values, complete_mapping.values)
+
+                labels = np.asarray(labels, np.uint64)
+                bodies = mapper.apply(labels, True)
+                mapping = pd.Series(index=labels, data=bodies, name='body')
+                mapping.index.rename('sv', inplace=True)
+
             bad_svs = mapping[mapping == 0]
             bad_labels.extend( bad_svs.index.tolist() )
 
+            # Group by body
             mapping = mapping[mapping != 0]
             grouped_svs = mapping.reset_index().groupby('body').agg({'sv': list})['sv']
             bodies_and_svs = grouped_svs.to_dict()
