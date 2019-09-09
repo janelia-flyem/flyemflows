@@ -497,7 +497,19 @@ class CreateMeshes(Workflow):
                 brick_counts_df['lx0'] = brick.logical_box[0,2]
                 brick_counts_dfs.append(brick_counts_df)
 
-            return pd.concat(brick_counts_dfs, ignore_index=True)
+            if len(brick_counts_dfs) > 0:
+                return pd.concat(brick_counts_dfs, ignore_index=True)
+            else:
+                # Return empty DataFrame, but with correct columns
+                s = pd.Series(np.zeros((0,), np.int32), index=np.zeros((0,), np.uint64))
+                s.name = 'count'
+                s.index.name = 'label'
+                df = s.reset_index()
+                df['lz0'] = np.zeros((0,), np.int32)
+                df['ly0'] = np.zeros((0,), np.int32)
+                df['lx0'] = np.zeros((0,), np.int32)
+                return df
+
 
         with Timer("Computing brickwise labelcounts", logger):
             dtypes = {'label': np.uint64, 'count': np.int64,
