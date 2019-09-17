@@ -492,6 +492,9 @@ def realign_bricks_to_new_grid(new_grid, original_bricks):
     # Special optimization:
     # If the bricks are already aligned, return immediately
     flags_and_corners = original_bricks.persist().map(check_aligned).compute()
+    if len(flags_and_corners) == 0:
+        return original_bricks # No bricks.  Can happen to small volumes when downsampling several times.
+    
     flags, corners = zip(*flags_and_corners)
     if all(flags) and pd.DataFrame(np.array(corners)).duplicated().sum() == 0:
         return original_bricks
