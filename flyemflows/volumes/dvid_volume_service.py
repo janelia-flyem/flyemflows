@@ -707,6 +707,8 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             Fetch the block coordinates for the given body,
             filter them for the given supervoxels (if any),
             and convert the block coordinates to brick coordinates.
+            
+            TODO: Change this to process batches of bodies at once, and call it with map_partitions().
             """
             assert is_supervoxels or supervoxel_subset is None
 
@@ -739,7 +741,7 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
 
         with Timer(f"Fetching coarse sparsevols for {len(labels)} labels ({len(bodies_and_svs)} bodies)", logger=logger):
             import dask.bag as db
-            bodies_and_coords = (db.from_sequence(bodies_and_svs.items(), npartitions=2048) # Instead of fancy heuristics, just pick 2048
+            bodies_and_coords = (db.from_sequence(bodies_and_svs.items(), npartitions=4096) # Instead of fancy heuristics, just pick 4096
                                  .starmap(fetch_brick_coords)
                                  .compute())
 
