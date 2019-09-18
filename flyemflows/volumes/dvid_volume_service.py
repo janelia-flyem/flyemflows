@@ -14,11 +14,10 @@ from neuclease.util import Timer, choose_pyramid_depth, round_box
 from neuclease.dvid import ( fetch_repo_instances, fetch_instance_info, fetch_volume_box,
                              fetch_raw, post_raw, fetch_labelarray_voxels, encode_labelarray_volume, post_labelmap_blocks,
                              update_extents, extend_list_value, create_voxel_instance, create_labelmap_instance,
-                             fetch_mapping, fetch_mappings )
+                             fetch_mapping, fetch_mappings, fetch_labelindex, convert_labelindex_to_pandas )
 
 from ..util import auto_retry, replace_default_entries
 from . import GeometrySchema, VolumeServiceReader, VolumeServiceWriter, GrayscaleAdapters, SegmentationAdapters
-from neuclease.dvid.labelmap._labelindex import fetch_labelindex
 
 logger = logging.getLogger(__name__)
 
@@ -672,7 +671,11 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
 
         bad_labels = []
 
-        if is_supervoxels:
+        if not is_supervoxels:
+            # No supervoxel filtering.
+            # Sort by body, since that should be slightly nicer for dvid performance.
+            bodies_and_svs = {label: None for label in sorted(labels)}
+        else:
             # Arbitrary heuristic for whether to do the body-lookups on DVID or on the client.
             if len(labels) < 100_000:
                 # If we're only dealing with a few supervoxels,
@@ -695,10 +698,9 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             # Group by body
             mapping = mapping[mapping != 0]
             grouped_svs = mapping.reset_index().groupby('body').agg({'sv': list})['sv']
-            bodies_and_svs = grouped_svs.to_dict()
-        else:
-            # No supervoxel filtering
-            bodies_and_svs = {label: None for label in labels}
+            
+            # Sort by body, since that should be slightly nicer for dvid performance.
+            bodies_and_svs = grouped_svs.sort_index().to_dict()
 
         def fetch_brick_coords(body, supervoxel_subset):
             """
@@ -711,7 +713,9 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             try:
                 mgr = self.resource_manager_client
                 with mgr.access_context(self.server, True, 1, 1):
-                    coords_df = fetch_labelindex(*self.instance_triple, body, 'pandas').blocks
+                    labelindex = fetch_labelindex(*self.instance_triple, body, 'protobuf')
+                coords_df = convert_labelindex_to_pandas(labelindex).blocks
+                    
             except HTTPError as ex:
                 if (ex.response is not None and ex.response.status_code == 404):
                     return (body, None)
