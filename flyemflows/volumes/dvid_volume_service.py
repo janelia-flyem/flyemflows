@@ -1,5 +1,7 @@
 import socket
 import logging
+from itertools import chain
+
 
 import numpy as np
 import pandas as pd
@@ -707,8 +709,6 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             Fetch the block coordinates for the given body,
             filter them for the given supervoxels (if any),
             and convert the block coordinates to brick coordinates.
-            
-            TODO: Change this to process batches of bodies at once, and call it with map_partitions().
             """
             assert is_supervoxels or supervoxel_subset is None
 
@@ -739,19 +739,42 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             coords_df.drop_duplicates(inplace=True)
             return (body, coords_df)
 
+        def concatenate_brick_coords(bodies_and_coords_partition):
+            """
+            To reduce the number of tiny DataFrames on the driver,
+            it's best to concatenate the partitions first, on the workers.
+            
+            Hence, this function that consolidates each partition.
+            """
+            bad_bodies = []
+            coord_dfs = []
+            for body, coords_df in bodies_and_coords_partition:
+                if coords_df is None:
+                    bad_bodies.append(body)
+                else:
+                    coord_dfs.append(coords_df)
+            
+            if coord_dfs:
+                return [(pd.concat(coord_dfs), bad_bodies)]
+            else:
+                return [(None, bad_bodies)]
+
         with Timer(f"Fetching coarse sparsevols for {len(labels)} labels ({len(bodies_and_svs)} bodies)", logger=logger):
             import dask.bag as db
-            bodies_and_coords = (db.from_sequence(bodies_and_svs.items(), npartitions=4096) # Instead of fancy heuristics, just pick 4096
-                                 .starmap(fetch_brick_coords)
-                                 .compute())
+            coords_and_bad_bodies = (db.from_sequence(bodies_and_svs.items(), npartitions=4096) # Instead of fancy heuristics, just pick 4096
+                                       .starmap(fetch_brick_coords)
+                                       .map_partitions(concatenate_brick_coords)
+                                       .compute())
 
-        for body, coords_df in bodies_and_coords:
-            if coords_df is None:
-                if is_supervoxels:
-                    bad_labels.extend( bodies_and_svs[body] )
-                else:
-                    bad_labels.append(body)
-    
+        coords_df_partitions, bad_body_partitions = zip(*coords_and_bad_bodies)
+
+        bad_labels = []
+        for body in chain(*bad_body_partitions):
+            if is_supervoxels:
+                bad_labels.extend( bodies_and_svs[body] )
+            else:
+                bad_labels.append(body)
+
         if bad_labels:
             name = 'sv' if is_supervoxels else 'body'
             pd.Series(bad_labels, name=name).to_csv('labels-without-sparsevols.csv', index=False, header=True)
@@ -762,13 +785,12 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
 
             logger.warning(msg)
 
-            # Drop null groups
-            bodies_and_coords = list( filter(lambda k_v: k_v[1] is not None, bodies_and_coords) )
-
-        if len(bodies_and_coords) == 0:
+        coords_df_partitions = list(filter(lambda df: df is not None, coords_df_partitions))
+        if len(coords_df_partitions) == 0:
             raise RuntimeError("Could not find bricks for any of the given labels")
 
-        coords_df = pd.concat( [kv[1] for kv in bodies_and_coords] )
+        coords_df = pd.concat(coords_df_partitions, ignore_index=True)
+
         if self.supervoxels:
             coords_df['label'] = coords_df['sv']
         else:

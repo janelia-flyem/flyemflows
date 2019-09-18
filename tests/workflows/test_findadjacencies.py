@@ -458,5 +458,10 @@ if __name__ == "__main__":
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_findadjacencies']
     #args += ['-x']
-    #args += ['-k', 'findadjacencies_from_dvid_sparse_groups']
+    #args += ['-k', 'findadjacencies_from_dvid_sparse_groups'
+    #         ' or findadjacencies_different_dvid_blocks_sparse_labels'
+    #         ' or findadjacencies_from_dvid_sparse_edges'
+    #         ' or findadjacencies_different_dvid_blocks_sparse_edges'
+    #         ' or findadjacencies_different_dvid_blocks_sparse_labels'
+    #         ]
     pytest.main(args)
