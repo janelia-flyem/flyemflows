@@ -10,7 +10,7 @@ bash Miniconda3-latest-Linux-x86_64.sh -b -p ${CONDA_BASE}
 ```
 
 Do NOT configure conda to be activated automatically in your `~/.bashrc`.
-That would be problematic for cluster jobs, which you generally want to
+That would be problematic for cluster jobs, for which you generally want to
 keep the same environment as the submitting shell.
 
 Instead, create a handy alias for yourself so you can quickly activate a conda environment:
@@ -38,6 +38,10 @@ less vnc02-to-n5/dask-config.yaml
 
 bsub launchflow -n 124 vnc02-to-n5
 ```
+
+**Note:**  To better understand `dask-config.yaml`, see [`example-dask-config.yaml`][edc]. Also, if you're curious about the settings in `workflow.yaml`, try `launchflow --dump-default-verbose-yaml CopyGrayscale` to see the default config, commented with explanations of each setting.  (Tip: It's quite long, because it will show you all of the possible options for `input` and `output` sections, which includes every possible volume source (e.g. `dvid`, `brainmaps`, `hdf5`, `n5`, etc.).  But you only need one source for `input` and one for `output`.)  
+
+[edc]: https://github.com/janelia-flyem/flyemflows/blob/master/developer-examples/example-dask-config.yaml
 
 LSF will run `launchflow` on a cluster node, which will, in turn, launch a dask-cluster with 124 workers (31*4).  When the job starts, your template directory is copied and used as the working directory for the job.
 
