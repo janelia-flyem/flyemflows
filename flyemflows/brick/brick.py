@@ -266,7 +266,7 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
     num_partitions = int(np.ceil(len(logical_and_physical_boxes) / partition_size))
 
     # Avoid powers-of-two partition sizes, since they hash poorly.
-    if 2**np.log2(num_partitions) == num_partitions:
+    if num_partitions != 1 and 2**np.log2(num_partitions) == num_partitions:
         #logger.info("Changing num_partitions to avoid power of two")
         if num_partitions < len(logical_and_physical_boxes):
             num_partitions += 1
