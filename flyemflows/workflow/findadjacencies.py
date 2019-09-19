@@ -438,8 +438,11 @@ def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requ
         
         And 'edge_area' is the total count of the voxels touching both labels.
     """
-    # ilastikrag requires uint32, so remap to consecutive ints
-    brick_labels = set(pd.unique(brick.volume.reshape(-1)))
+    # Profiling indicates that query('... in ...') spends
+    # most of its time in np.unique, believe it or not.
+    # After looking at the implementation, I think it might help a
+    # little if we sort the array first.
+    brick_labels = np.sort(pd.unique(brick.volume.reshape(-1)))
     if (len(brick_labels) == 1) or (len(brick_labels) == 2 and (0 in brick_labels)):
         return None # brick is solid -- no possible edges
 
