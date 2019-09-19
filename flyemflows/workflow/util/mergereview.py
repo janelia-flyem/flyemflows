@@ -433,7 +433,7 @@ def load_edges(edge_table):
     
     # Edges with group_cc == -1 are 'nearby' edges that are too distant to be included in any group_cc.
     # The FindAdjacencies workflow emits them, but we don't want to use them.
-    edges_df = edges_df.query('group_cc != -1')
+    edges_df = edges_df.query('group_cc != -1').copy()
     
     swap_df_cols(edges_df, None, edges_df.eval('label_a > label_b'), ('a', 'b'))
     assert len(edges_df.query('label_a == label_b')) == 0
