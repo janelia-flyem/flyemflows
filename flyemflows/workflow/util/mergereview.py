@@ -9,7 +9,7 @@ import networkx as nx
 
 from dvidutils import LabelMapper
 
-from neuclease.util import Timer, tqdm_proxy, swap_df_cols
+from neuclease.util import Timer, tqdm_proxy, swap_df_cols, compute_parallel
 from neuclease.dvid import (fetch_instance_info, fetch_mapping, fetch_labels_batched, determine_bodies_of_interest,
                             fetch_combined_roi_volume, determine_point_rois)
 
@@ -216,7 +216,7 @@ def extract_assignment_fragments( server, uuid, syn_instance,
     edges_df = filter_groups_for_min_boi_count(edges_df, bois, 2)
 
     # Find the paths ('fragments', a.k.a. 'tasks') that connect BOIs within each group.
-    fragment_edges_df = compute_fragment_edges(edges_df, bois)
+    fragment_edges_df = compute_fragment_edges(edges_df, bois, processes)
 
     if fragment_rois is not None:
         # Drop fragments that extend outside of the specified ROIs.
@@ -498,7 +498,7 @@ def filter_groups_for_min_boi_count(edges_df, bois, min_boi_count=2):
         return edges_df
 
 
-def compute_fragment_edges(edges_df, bois):
+def compute_fragment_edges(edges_df, bois, processes):
     """
     For each edge group, search for paths that can connect the BOIs in the group.
     Each group is a "fragment", a.k.a. "task".
@@ -510,8 +510,7 @@ def compute_fragment_edges(edges_df, bois):
     with Timer("Extracting edges for each fragment from full table", logger):
         edges_df = edges_df.query('group_cc in @fragments.keys()')
         
-        fragment_edges_dfs = []
-        for group_cc,  group_df in tqdm_proxy(edges_df.groupby('group_cc')):
+        def extract_group_fragment_edges(group_cc,  group_df):
             frag_list = fragments[group_cc]
             for task_index, frag in enumerate(frag_list):
                 frag_edges = list(zip(frag[:-1], frag[1:]))
@@ -520,7 +519,24 @@ def compute_fragment_edges(edges_df, bois):
                 frag_edges_df = pd.DataFrame(frag_edges, columns=['label_a', 'label_b'])
                 frag_edges_df = frag_edges_df.merge(group_df, 'left', ['label_a', 'label_b'])
                 frag_edges_df['cc_task'] = task_index
-                fragment_edges_dfs.append(frag_edges_df)
+            return frag_edges_df
+        
+        if processes <= 1:
+            # Single-threaded
+            fragment_edges_dfs = []
+            for group_cc,  group_df in tqdm_proxy(edges_df.groupby('group_cc')):
+                    frag_edges_df = extract_group_fragment_edges(group_cc, group_df)
+                    fragment_edges_dfs.append(frag_edges_df)
+        else:
+            # Multi-process
+            num_groups = edges_df['group_cc'].nunique()
+            group_iter = iter(edges_df.groupby('group_cc'))
+            fragment_edges_dfs = compute_parallel( extract_group_fragment_edges,
+                                                   group_iter,
+                                                   processes=processes,
+                                                   ordered=False,
+                                                   leave_progress=True,
+                                                   total=num_groups )
     
         fragment_edges_df = pd.concat(fragment_edges_dfs, ignore_index=True)
 
