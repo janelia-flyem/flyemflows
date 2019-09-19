@@ -739,31 +739,33 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             coords_df.drop_duplicates(inplace=True)
             return (body, coords_df)
 
-        def concatenate_brick_coords(bodies_and_coords_partition):
+        def fetch_and_concatenate_brick_coords(bodies_and_supervoxels):
             """
-            To reduce the number of tiny DataFrames on the driver,
-            it's best to concatenate the partitions first, on the workers.
+            To reduce the number of tiny DataFrames collected to the driver,
+            it's best to concatenate the partitions first, on the workers,
+            rather than a straightforward call to starmap(fetch_brick_coords).
             
             Hence, this function that consolidates each partition.
             """
             bad_bodies = []
             coord_dfs = []
-            for body, coords_df in bodies_and_coords_partition:
+            for (body, supervoxel_subset) in bodies_and_supervoxels:
+                _, coords_df = fetch_brick_coords(body, supervoxel_subset)
                 if coords_df is None:
                     bad_bodies.append(body)
                 else:
                     coord_dfs.append(coords_df)
+                    del coords_df
             
             if coord_dfs:
-                return [(pd.concat(coord_dfs), bad_bodies)]
+                return [(pd.concat(coord_dfs, ignore_index=True), bad_bodies)]
             else:
                 return [(None, bad_bodies)]
 
         with Timer(f"Fetching coarse sparsevols for {len(labels)} labels ({len(bodies_and_svs)} bodies)", logger=logger):
             import dask.bag as db
             coords_and_bad_bodies = (db.from_sequence(bodies_and_svs.items(), npartitions=4096) # Instead of fancy heuristics, just pick 4096
-                                       .starmap(fetch_brick_coords)
-                                       .map_partitions(concatenate_brick_coords)
+                                       .map_partitions(fetch_and_concatenate_brick_coords)
                                        .compute())
 
         coords_df_partitions, bad_body_partitions = zip(*coords_and_bad_bodies)
