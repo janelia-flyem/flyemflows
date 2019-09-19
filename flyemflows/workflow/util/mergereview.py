@@ -29,7 +29,8 @@ def extract_assignment_fragments( server, uuid, syn_instance,
                                   processes=16,
                                   *,
                                   synapse_table=None,
-                                  seg_instance=None ):
+                                  seg_instance=None,
+                                  update_edges=False ):
     """
     Using the edge table emitted from the FindAdjacencies workflow,
     emit a table of "fragments" (sets of bodies) which connect two
@@ -154,6 +155,12 @@ def extract_assignment_fragments( server, uuid, syn_instance,
             By default, this BOIs in this table will be extracted from the segmentation
             instance that is associated with the given synapse annotation instance.
             But if you would like to use a different segmentation instance, provide it here.
+        
+        update_edges:
+            If True, re-fetch the body label under each coordinate in the table,
+            and re-select the "best" (most central) edge for body pairs with multiple edges.
+            This takes a while to run. It's only necessary if your edge table is likely to
+            be out-of-date with respect to the given UUID.
     
     Returns:
         (focused_fragments_df, mr_fragments_df, bois), where:
@@ -190,10 +197,11 @@ def extract_assignment_fragments( server, uuid, syn_instance,
     # Load edges (if necessary), pre-filter, normalize
     edges_df = load_edges(edge_table)
     
-    # Update the table for consistency with the given UUID,
-    # and re-post-process it to find the correct "central" and "closest" edges,
-    # (in case some groups were merged).
-    edges_df = update_localized_edges(*ref_seg, edges_df, processes)
+    if update_edges:
+        # Update the table for consistency with the given UUID,
+        # and re-post-process it to find the correct "central" and "closest" edges,
+        # (in case some groups were merged).
+        edges_df = update_localized_edges(*ref_seg, edges_df, processes)
 
     # Technically, you could provide 0 for either of these,
     # but that's probably a mistake on your part.
