@@ -2,6 +2,7 @@ import os
 import zlib
 import json
 import logging
+from functools import partial
 
 import numpy as np
 import pandas as pd
@@ -151,6 +152,7 @@ def extract_assignment_fragments( server, uuid, syn_instance,
             (via fetch_synapses_in_batches() or fetch_roi_synapses()),
             you can provide it here (or a file path to a stored .npy file),
             in which case this function will not need to fetch the synapses from DVID.
+            (Not needed at all if you're providing your own boi_table.)
         
         boi_table:
             Optional.
@@ -535,28 +537,17 @@ def compute_fragment_edges(edges_df, bois, processes):
     with Timer("Extracting edges for each fragment from full table", logger):
         edges_df = edges_df.query('group_cc in @fragments.keys()')
         
-        def extract_group_fragment_edges(group_cc,  group_df):
-            frag_list = fragments[group_cc]
-            for task_index, frag in enumerate(frag_list):
-                frag_edges = list(zip(frag[:-1], frag[1:]))
-                frag_edges = np.sort(frag_edges, axis=1)
-    
-                frag_edges_df = pd.DataFrame(frag_edges, columns=['label_a', 'label_b'])
-                frag_edges_df = frag_edges_df.merge(group_df, 'left', ['label_a', 'label_b'])
-                frag_edges_df['cc_task'] = task_index
-            return frag_edges_df
-        
         if processes <= 1:
             # Single-threaded
             fragment_edges_dfs = []
             for group_cc,  group_df in tqdm_proxy(edges_df.groupby('group_cc')):
-                    frag_edges_df = extract_group_fragment_edges(group_cc, group_df)
+                    frag_edges_df = _extract_group_fragment_edges(fragments, (group_cc, group_df))
                     fragment_edges_dfs.append(frag_edges_df)
         else:
             # Multi-process
             num_groups = edges_df['group_cc'].nunique()
             group_iter = iter(edges_df.groupby('group_cc'))
-            fragment_edges_dfs = compute_parallel( extract_group_fragment_edges,
+            fragment_edges_dfs = compute_parallel( partial(_extract_group_fragment_edges, fragments),
                                                    group_iter,
                                                    processes=processes,
                                                    ordered=False,
@@ -566,6 +557,22 @@ def compute_fragment_edges(edges_df, bois, processes):
         fragment_edges_df = pd.concat(fragment_edges_dfs, ignore_index=True)
 
     return fragment_edges_df
+
+
+def _extract_group_fragment_edges(fragments, group_cc_and_df):
+    """
+    Helper for compute_fragment_edges(), above.
+    """
+    group_cc,  group_df = group_cc_and_df
+    frag_list = fragments[group_cc]
+    for task_index, frag in enumerate(frag_list):
+        frag_edges = list(zip(frag[:-1], frag[1:]))
+        frag_edges = np.sort(frag_edges, axis=1)
+
+        frag_edges_df = pd.DataFrame(frag_edges, columns=['label_a', 'label_b'])
+        frag_edges_df = frag_edges_df.merge(group_df, 'left', ['label_a', 'label_b'])
+        frag_edges_df['cc_task'] = task_index
+    return frag_edges_df
 
 
 def extract_fragments(edges_df, bois):
