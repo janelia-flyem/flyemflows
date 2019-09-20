@@ -2,7 +2,7 @@ import os
 import zlib
 import json
 import logging
-from functools import partial
+from itertools import chain
 
 import numpy as np
 import pandas as pd
@@ -541,30 +541,31 @@ def compute_fragment_edges(edges_df, bois, processes):
             # Single-threaded
             fragment_edges_dfs = []
             for group_cc,  group_df in tqdm_proxy(edges_df.groupby('group_cc')):
-                    frag_edges_df = _extract_group_fragment_edges(fragments, (group_cc, group_df))
-                    fragment_edges_dfs.append(frag_edges_df)
+                fragment_edges_dfs.extend( _extract_group_fragment_edges((fragments[group_cc], group_df)) )
         else:
             # Multi-process
             num_groups = edges_df['group_cc'].nunique()
-            group_iter = iter(edges_df.groupby('group_cc'))
-            fragment_edges_dfs = compute_parallel( partial(_extract_group_fragment_edges, fragments),
+            group_iter = ((fragments[group_cc], group_df) for (group_cc,  group_df) in edges_df.groupby('group_cc'))
+            fragment_edges_dfs = compute_parallel( _extract_group_fragment_edges,
                                                    group_iter,
                                                    processes=processes,
                                                    ordered=False,
                                                    leave_progress=True,
                                                    total=num_groups )
-    
+
+            fragment_edges_dfs = chain(*fragment_edges_dfs)
+
         fragment_edges_df = pd.concat(fragment_edges_dfs, ignore_index=True)
 
     return fragment_edges_df
 
 
-def _extract_group_fragment_edges(fragments, group_cc_and_df):
+def _extract_group_fragment_edges(frag_list_and_group_df):
     """
     Helper for compute_fragment_edges(), above.
     """
-    group_cc,  group_df = group_cc_and_df
-    frag_list = fragments[group_cc]
+    fragment_edges_dfs = []
+    frag_list, group_df = frag_list_and_group_df
     for task_index, frag in enumerate(frag_list):
         frag_edges = list(zip(frag[:-1], frag[1:]))
         frag_edges = np.sort(frag_edges, axis=1)
@@ -572,7 +573,8 @@ def _extract_group_fragment_edges(fragments, group_cc_and_df):
         frag_edges_df = pd.DataFrame(frag_edges, columns=['label_a', 'label_b'])
         frag_edges_df = frag_edges_df.merge(group_df, 'left', ['label_a', 'label_b'])
         frag_edges_df['cc_task'] = task_index
-    return frag_edges_df
+        fragment_edges_dfs.append(frag_edges_df)
+    return fragment_edges_dfs
 
 
 def extract_fragments(edges_df, bois):
