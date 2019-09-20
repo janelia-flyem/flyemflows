@@ -29,6 +29,7 @@ def extract_assignment_fragments( server, uuid, syn_instance,
                                   processes=16,
                                   *,
                                   synapse_table=None,
+                                  boi_table=None,
                                   seg_instance=None,
                                   update_edges=False ):
     """
@@ -151,6 +152,14 @@ def extract_assignment_fragments( server, uuid, syn_instance,
             you can provide it here (or a file path to a stored .npy file),
             in which case this function will not need to fetch the synapses from DVID.
         
+        boi_table:
+            Optional.
+            Normally this function computes the boi_table directly from the synapse points,
+            but if you already have it handy, you can pass it in here.
+            It will still be filtered according to min_tbars_in_roi and min_psds_in_roi,
+            so the BOIs used will be accurate as long as the table contains all of the BOIs
+            you might be interested in, or more.
+        
         seg_instance:
             By default, this BOIs in this table will be extracted from the segmentation
             instance that is associated with the given synapse annotation instance.
@@ -177,9 +186,12 @@ def extract_assignment_fragments( server, uuid, syn_instance,
             Edges with the same fragment ID should be grouped together into the
             same merge review task.
         
-        bois:
-            The bodies that are considered BOIs based on the criteria given above.
-            Note that the fragments in the above results do not necessarily cover
+        boi_table:
+            A DataFrame containing the BOIs (based on the criteria given above)
+            that were used to selecting fragments, indexed by body, with
+            columns ['PreSyn', 'PostSyn'].
+            (See ``neuclease.dvid.annotation.determine_bodies_of_interest()``.)
+            Note that the returned fragments do not necessarily cover
             every BOI in this list.
     """
     if isinstance(boi_rois, str):
@@ -209,12 +221,21 @@ def extract_assignment_fragments( server, uuid, syn_instance,
     # synapse table, and expect those to be considered BOIs.)
     assert min_tbars_in_roi >= 1 and min_psds_in_roi >= 1
 
-    # Fetch synapse labels and determine the set of BOIs
-    boi_table = determine_bodies_of_interest( server, uuid, syn_instance,
-                                              boi_rois,
-                                              min_tbars_in_roi, min_psds_in_roi,
-                                              processes,
-                                              synapse_table=synapse_table )
+    if boi_table is not None:
+        boi_table = boi_table.query('PreSyn >= @min_tbars_in_roi or PostSyn >= @min_psds_in_roi')
+    else:
+        assert not boi_rois, \
+            "You can't specify boi_rois if you're providing your own boi_table"
+        
+        # Fetch synapse labels and determine the set of BOIs
+        boi_table = determine_bodies_of_interest( server, uuid, syn_instance,
+                                                  boi_rois,
+                                                  min_tbars_in_roi, min_psds_in_roi,
+                                                  processes,
+                                                  synapse_table=synapse_table )
+    
+    assert boi_table.index.name == 'body'
+    assert set(boi_table.columns) == {'PreSyn', 'PostSyn'}
 
     bois = set(boi_table.index)
 
@@ -257,10 +278,6 @@ def extract_assignment_fragments( server, uuid, syn_instance,
     logger.info(f"Emitting {num_focused_fragments} focused fragments and "
                 f"{num_mr_fragments} merge-review fragments, "
                 f"covering {num_fragment_bois} BOIs out of {len(boi_table)}.")
-    
-    # Convert boi_table columns from categorical index to normal index,
-    # so the caller can append their own columns if they want.
-    boi_table.columns = boi_table.columns.tolist()
     
     return focused_fragments_df, mr_fragments_df, boi_table
 
