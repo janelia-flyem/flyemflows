@@ -100,7 +100,7 @@ def test_full_volume_downsample_1(setup_hdf5_service):
     assert scaled_reader.dtype == h5_reader.dtype
 
     full_scaled = scaled_reader.get_subvolume(scaled_reader.bounding_box_zyx)
-    assert (full_scaled == downsample(full_from_h5, 2, 'grayscale')).all()
+    assert (full_scaled == downsample(full_from_h5, 2, 'block-mean')).all()
     assert full_scaled.flags.c_contiguous
     
 def test_full_volume_upsample_1(setup_hdf5_service):
@@ -138,7 +138,7 @@ def test_subvolume_downsample_1(setup_hdf5_service):
     down_box = np.array([[13, 15, 20], [20, 40, 41]])
     up_box = 2*down_box
     up_subvol_from_h5 = full_from_h5[box_to_slicing(*up_box)]
-    down_subvol_from_h5 = downsample(up_subvol_from_h5, 2, 'grayscale')
+    down_subvol_from_h5 = downsample(up_subvol_from_h5, 2, 'block-mean')
     
     # Scale 1
     scaled_reader = ScaledVolumeService(h5_reader, 1)

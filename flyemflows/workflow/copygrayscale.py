@@ -18,7 +18,7 @@ from ..volumes import VolumeService, VolumeServiceWriter, GrayscaleVolumeSchema,
 
 from . import Workflow
 
-from flyemflows.util import auto_retry
+from flyemflows.util import auto_retry, DOWNSAMPLE_METHODS
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,7 @@ class CopyGrayscale(Workflow):
                 "description": "How to create the downsampled pyramid volumes, either copied \n"
                                "from the input source (if available) or computed from scale 0.\n",
                 "type": "string",
-                "enum": ["copy", "compute", "compute-as-labels"], # compute-as-labels is for debug and testing.
+                "enum": ["copy", "compute"], # compute-as-labels is for debug and testing.
                 "default": "compute"
             },
             
@@ -92,6 +92,13 @@ class CopyGrayscale(Workflow):
                 "type": "string",
                 "enum": ["x", "y", "z"],
                 "default": "z"
+            },
+            
+            "downsample-method": {
+                "description": "The algorithm to use when downsampling. By default, an appropriate method is chosen",
+                "type": "string",
+                "enum": [*DOWNSAMPLE_METHODS],
+                "default": "block-mean"
             },
             
             "starting-slice": {
@@ -251,6 +258,7 @@ class CopyGrayscale(Workflow):
     def _process_slab(self, scale, slab_fullres_box_zyx, slab_index, num_slabs, upscale_slab_wall, min_scale):
         options = self.config["copygrayscale"]
         pyramid_source = options["pyramid-source"]
+        downsample_method = options["downsample-method"]
         output_service = self.output_service
 
         if scale < min_scale and pyramid_source == "copy":
@@ -268,11 +276,7 @@ class CopyGrayscale(Workflow):
             bricked_slab_wall.persist_and_execute(f"Slab {slab_index}: Downloading scale {scale}", logger)
         else:
             # Downsample from previous scale
-            if pyramid_source == "compute-as-labels":
-                method = "label"
-            else:
-                method = "grayscale"
-            bricked_slab_wall = upscale_slab_wall.downsample( (2,2,2), method )
+            bricked_slab_wall = upscale_slab_wall.downsample( (2,2,2), downsample_method )
             bricked_slab_wall.persist_and_execute(f"Slab {slab_index}: Downsampling to scale {scale}", logger)
             del upscale_slab_wall
 

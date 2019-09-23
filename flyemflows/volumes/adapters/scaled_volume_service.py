@@ -116,7 +116,7 @@ class ScaledVolumeService(VolumeServiceReader):
                 ##        For now, we use the 'labels-numba' method
                 downsampled_data = downsample( orig_data, 2**delta_from_best, 'labels-numba' )
             else:
-                downsampled_data = downsample( orig_data, 2**delta_from_best, 'grayscale' )
+                downsampled_data = downsample( orig_data, 2**delta_from_best, 'block-mean' )
             return downsampled_data
         else:
             upsample_factor = int(2**-delta_from_best)

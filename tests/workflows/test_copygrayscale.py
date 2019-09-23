@@ -175,7 +175,7 @@ def test_copygrayscale_from_hdf5_to_dvid_multiscale(setup_hdf5_grayscale_input, 
     config["input"]["geometry"]["bounding-box"] = [[0,0,0],[128,256,128]]
     config["copygrayscale"]["min-pyramid-scale"] = 1
     config["copygrayscale"]["max-pyramid-scale"] = 2
-    config["copygrayscale"]["pyramid-source"] = "compute-as-labels" # This test is easier to write if we use this downsampling method
+    config["copygrayscale"]["downsample-method"] = "label" # This test is easier to write if we use this downsampling method
  
     box_zyx, scale_0_vol = _run_to_dvid( setup_hdf5_grayscale_input, check_scale_0=False )
  
@@ -345,4 +345,5 @@ if __name__ == "__main__":
     
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_copygrayscale']
     #args += "-k copygrayscale_from_hdf5_to_n5".split()
+    args += ["-x"]    
     pytest.main(args)

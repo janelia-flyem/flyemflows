@@ -9,6 +9,7 @@ import getpass
 import logging
 import datetime
 import traceback
+from collections.abc import Iterable
 from email.mime.text import MIMEText
 from ctypes.util import find_library
 from contextlib import contextmanager
@@ -19,6 +20,7 @@ import psutil
 import numpy as np
 import scipy.ndimage
 from skimage.util import view_as_blocks
+from skimage.transform import downscale_local_mean
 
 from dvidutils import downsample_labels
 from neuclease.util import Timer, parse_timestamp, downsample_labels_3d_suppress_zero
@@ -54,7 +56,7 @@ def replace_default_entries(array, default_array, marker=-1):
     else:
         raise RuntimeError("This function supports arrays and lists, nothing else.")
 
-DOWNSAMPLE_METHODS = ('subsample', 'zoom', 'grayscale', 'mode', 'labels', 'label', 'labels-numba')
+DOWNSAMPLE_METHODS = ('subsample', 'zoom', 'grayscale', 'block-mean', 'mode', 'labels', 'label', 'labels-numba')
 def downsample(volume, factor, method):
     assert method in DOWNSAMPLE_METHODS
     assert (np.array(volume.shape) % factor == 0).all(), \
@@ -63,6 +65,9 @@ def downsample(volume, factor, method):
     if method == 'subsample':
         sl = slice(None, None, factor)
         return volume[(sl,)*volume.ndim].copy('C')
+    
+    if method == 'block-mean':
+        return block_downsample(volume, factor)
 
     if method in ('zoom', 'grayscale'): # synonyms
         # vigra is 2.7x faster than scipy, but it complains for small images:
@@ -89,6 +94,26 @@ def downsample(volume, factor, method):
         return reduced_output
 
     raise AssertionError("Shouldn't get here.")
+
+
+def block_downsample(volume, factor):
+    """
+    Simple downsampling by averaging pixels that fall under each output voxel.
+    """
+    dtype = volume.dtype
+    assert (np.array(volume.shape) % factor == 0).all(), \
+        "Volume dimensions must be a multiple of the downsample factor."
+
+    if not isinstance(factor, Iterable):
+        factor = (factor,)*volume.ndim
+
+    if np.issubdtype(volume.dtype, np.integer):
+        # numpy/scipy will convert integers to float64
+        # unless we pre-convert to lower precision first.
+        volume = volume.astype(np.float32, order='C')
+    
+    return downscale_local_mean(volume, factor).astype(dtype, copy=False)
+
 
 def vigra_sampling_resize(volume, newshape):
     newshape = tuple(newshape)
