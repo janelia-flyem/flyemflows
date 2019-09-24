@@ -188,6 +188,18 @@ def extract_assignment_fragments( server, uuid, syn_instance,
             Edges with the same fragment ID should be grouped together into the
             same merge review task.
         
+        mr_endpoint_df:
+            A DataFrame containing only the 'endpoint' bodies of the MR fragments,
+            one pair per row.
+            The columns in which the bodies are found (a vs b) will not be the same
+            as they appear in mr_fragments_df, but the group_cc and cc_task columns
+            will correspond to the appropriate rows in the full DataFrame.
+            This 'endpoint' dataframe does not contain enough information to create
+            merge review tasks (it lacks information about the intermediate bodies
+            that connect the two endpoints) but it is more convenient to analyze
+            when computing certain statistics to describe the types of merge review
+            tasks that were found.
+        
         boi_table:
             A DataFrame containing the BOIs (based on the criteria given above)
             that were used to selecting fragments, indexed by body, with
@@ -281,7 +293,14 @@ def extract_assignment_fragments( server, uuid, syn_instance,
                 f"{num_mr_fragments} merge-review fragments, "
                 f"covering {num_fragment_bois} BOIs out of {len(boi_table)}.")
     
-    return focused_fragments_df, mr_fragments_df, boi_table
+    try:
+        mr_endpoint_df = construct_mr_endpoint_df(mr_fragments_df, boi_table)
+    except Exception as ex:
+        logger.error("Failed to construct the merge-review 'endpoint' dataframe.  Returning None.")
+        logger.error(str(ex))
+        mr_endpoint_df = None
+    
+    return focused_fragments_df, mr_fragments_df, mr_endpoint_df, boi_table
 
 
 def generate_mergereview_assignments_from_df_OLD(server, uuid, instance, mr_fragments_df, bois, assignment_size, output_dir):
@@ -619,6 +638,51 @@ def extract_fragments_for_cc(cc_df, bois):
 
     fragments = {tuple(frag) for frag in fragments}
     return fragments
+
+
+def construct_mr_endpoint_df(mr_fragments_df, boi_table):
+    _bois = boi_table.index
+    mr_fragments_df = mr_fragments_df.copy()
+    
+    # Make sure our two BOI endpoints are always in body_a
+    _a_is_small = mr_fragments_df.eval('label_a not in @_bois')
+    swap_df_cols(mr_fragments_df, None, _a_is_small, ('a', 'b'))
+    
+    # edge_area ends in 'a', which is inconvenient
+    # for the column selection below,
+    # and we don't need it anyway.  Drop it.
+    fmr_df = mr_fragments_df.drop(columns=['edge_area'])
+    
+    # All columns ending in 'a'.
+    cols_a = [col for col in fmr_df.columns if col.endswith('a')]
+    
+    num_tasks = len(mr_fragments_df.drop_duplicates(['group_cc', 'cc_task']))
+    post_col = fmr_df[cols_a].columns.tolist().index('PostSyn_a')
+    
+    filtered_mr_endpoints = []
+    for (group_cc, cc_task), task_df in tqdm_proxy(fmr_df.groupby(['group_cc', 'cc_task']), total=num_tasks):
+        assert task_df.eval('label_b not in @_bois').all()
+
+        # Find the two rows that mention a BOI
+        _df = task_df.query('label_a in @_bois')
+        _df = _df[cols_a]
+        assert len(_df) == 2
+    
+        stats_a, stats_b = list(_df.itertuples(index=False))
+        if stats_a[post_col] < stats_b[post_col]:
+            stats_a, stats_b = stats_b, stats_a
+    
+        filtered_mr_endpoints.append( (group_cc, cc_task, *stats_a, *stats_b) )
+    
+    cols_b = [col[:-1] + 'b' for col in cols_a]
+    combined_cols = ['group_cc', 'cc_task', *cols_a, *cols_b]
+    
+    mr_endpoints_df = pd.DataFrame(filtered_mr_endpoints, columns=combined_cols)
+    
+    final_cols = ['group_cc', 'cc_task', *sorted(combined_cols[2:])]
+    mr_endpoints_df = mr_endpoints_df[final_cols]
+    
+    return mr_endpoints_df
 
 
 def prepare_graph(cc_df, bois, consecutivize=False):
