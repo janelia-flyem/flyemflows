@@ -256,7 +256,7 @@ def extract_assignment_fragments( server, uuid, syn_instance,
     # We're trying to connect BOIs to each other.
     # Therefore, we're not interested in groups of bodies
     # that don't contain at least 2 BOIs. 
-    edges_df = filter_groups_for_min_boi_count(edges_df, bois, 2)
+    edges_df = filter_groups_for_min_boi_count(edges_df, bois, ['group_cc'], 2)
 
     # Find the paths ('fragments', a.k.a. 'tasks') that connect BOIs within each group.
     fragment_edges_df = compute_fragment_edges(edges_df, bois, processes)
@@ -264,6 +264,11 @@ def extract_assignment_fragments( server, uuid, syn_instance,
     if fragment_rois is not None:
         # Drop fragments that extend outside of the specified ROIs.
         fragment_edges_df = filter_fragments_for_roi(server, uuid, fragment_rois, fragment_edges_df)
+
+    # If a group itself contained multiple CCs, it's possible that the BOIs were separated
+    # into separate tasks, meaning that each individual task no longer satisfies the 2-BOI requirement.
+    # Refilter.
+    fragment_edges_df = filter_groups_for_min_boi_count(fragment_edges_df, bois, ['group_cc', 'cc_task'], 2)
 
     # Fetch the supervoxel IDs for each edge.
     with Timer("Sampling supervoxel IDs", logger):
@@ -527,20 +532,35 @@ def update_localized_edges(server, uuid, seg_instance, edges_df, processes=16):
     return edges_df
 
 
-def filter_groups_for_min_boi_count(edges_df, bois, min_boi_count=2):
+def filter_groups_for_min_boi_count(edges_df, bois, group_columns=['group_cc'], min_boi_count=2):
+    """
+    Group the given dataframe according to the columns listed in `group_columns`,
+    and count how many BOIs exist in each group.
+    
+    Then drop rows from the original dataframe if the group they belong to didn't have enough BOIs.
+    """
+    assert isinstance(bois, set)
+    assert isinstance(group_columns, (list, tuple))
+
+    # FIXME: If this becomes a bottleneck, a faster implementation would be to
+    #        add columns ['is_boi_a', 'is_boi_b'], which would allow us to compute
+    #        each group BOI count via compute_parallel without requiring the entire
+    #        boi set for each task.
     with Timer("Filtering out groups with too few BOIs", logger):
         # Drop CC with only 1 BOI
         cc_boi_counts = {}
-        for cc, cc_df in tqdm_proxy(edges_df.groupby('group_cc'), total=len(edges_df['group_cc'].unique()), leave=False):
+        for group_vals, cc_df in tqdm_proxy(edges_df.groupby(group_columns), total=len(edges_df['group_cc'].unique()), leave=False):
             labels = pd.unique(cc_df[['label_a', 'label_b']].values.reshape(-1))
             count = sum((label in bois) for label in labels)
-            cc_boi_counts[cc] = count
+            cc_boi_counts[group_vals] = count
     
-        boi_counts_df = pd.DataFrame(list(cc_boi_counts.items()), columns=['group_cc', 'boi_count'])
+        boi_counts_df = pd.DataFrame(list(cc_boi_counts.keys()), columns=group_columns)
+        boi_counts_df['boi_count'] = cc_boi_counts.values()
         
-        kept_ccs = set(boi_counts_df.query('boi_count >= @min_boi_count')['group_cc'])
-        logger.info(f"Keeping {len(kept_ccs)} group_cc out of {len(boi_counts_df)}")
-        edges_df = edges_df.query('group_cc in @kept_ccs')
+        kept_groups_df = boi_counts_df.query('boi_count >= @min_boi_count')[[*group_columns]]
+        logger.info(f"Keeping {len(kept_groups_df)} groups ({group_columns}) out of {len(boi_counts_df)}")
+        
+        edges_df = edges_df.merge(kept_groups_df, 'inner', on=group_columns)
         return edges_df
 
 
