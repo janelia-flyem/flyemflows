@@ -344,8 +344,8 @@ def generate_mergereview_assignments_from_df(server, uuid, instance, mr_fragment
     mr_fragments_df = mr_fragments_df.merge(group_sizes, 'left', left_on=['group_cc', 'cc_task'], right_index=True)
     mr_fragments_df = mr_fragments_df.sort_values(['group_size', 'group_cc', 'cc_task'])
 
-    mr_fragments_df['body_a'] = fetch_mapping(server, uuid, instance, mr_fragments_df['sv_a']).values
-    mr_fragments_df['body_b'] = fetch_mapping(server, uuid, instance, mr_fragments_df['sv_b']).values
+    mr_fragments_df['body_a'] = fetch_mapping(server, uuid, instance, mr_fragments_df['sv_a'])
+    mr_fragments_df['body_b'] = fetch_mapping(server, uuid, instance, mr_fragments_df['sv_b'])
     
     mr_fragments_df['is_boi_a'] = mr_fragments_df.eval('body_a in @bois')
     mr_fragments_df['is_boi_b'] = mr_fragments_df.eval('body_b in @bois')
@@ -797,8 +797,8 @@ def display_graph(cc_df, bois, width=500, hv=True):
 
 if __name__ == "__main__":
     df = pd.DataFrame(np.load('/tmp/philip_small_not_tiny_df.npy', allow_pickle=True))
-    df['body_a'] = fetch_mapping('emdata4:8900', '28e6', 'segmentation', df['sv_a']).values    
-    df['body_b'] = fetch_mapping('emdata4:8900', '28e6', 'segmentation', df['sv_b']).values
+    df['body_a'] = fetch_mapping('emdata4:8900', '28e6', 'segmentation', df['sv_a'])
+    df['body_b'] = fetch_mapping('emdata4:8900', '28e6', 'segmentation', df['sv_b'])
     bois = set(df[['body_a', 'body_b']].values.reshape(-1))
     generate_mergereview_assignments_from_df('emdata4:8900', '28e6', 'segmentation', df, bois, 10, '/tmp/philip-assignments')
 

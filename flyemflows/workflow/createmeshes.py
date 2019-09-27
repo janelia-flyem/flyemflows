@@ -529,7 +529,7 @@ class CreateMeshes(Workflow):
                 if len(brick_counts_df['sv']) < 100_000:
                     # If we're only dealing with a few supervoxels,
                     # ask dvid to map them to bodies for us.
-                    brick_counts_df['body'] = fetch_mapping(*seg_instance, brick_counts_df['sv']).values
+                    brick_counts_df['body'] = fetch_mapping(*seg_instance, brick_counts_df['sv'])
                 else:
                     # If we're dealing with a lot of supervoxels, ask for
                     # the entire mapping, and look up the bodies ourselves.

@@ -682,7 +682,7 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             if len(labels) < 100_000:
                 # If we're only dealing with a few supervoxels,
                 # ask dvid to map them to bodies for us.
-                mapping = fetch_mapping(*self.instance_triple, labels)
+                mapping = fetch_mapping(*self.instance_triple, labels, as_series=True)
             else:
                 # If we're dealing with a lot of supervoxels, ask for
                 # the entire mapping, and look up the bodies ourselves.
