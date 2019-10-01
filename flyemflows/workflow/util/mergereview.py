@@ -307,12 +307,13 @@ def extract_assignment_fragments( server, uuid, syn_instance,
         mr_fragments_df = mr_fragments_df.merge( boi_table, 'left', left_on='label_b', right_index=True,
                                                  suffixes=('_a', '_b') )
     
-    try:
-        mr_endpoint_df = construct_mr_endpoint_df(mr_fragments_df, boi_table)
-    except Exception as ex:
-        logger.error(str(ex))
-        logger.error("Failed to construct the merge-review 'endpoint' dataframe.  Returning None.")
-        mr_endpoint_df = None
+    with Timer("Constructing merge-review 'endpoint' dataframe", logger):
+        try:
+            mr_endpoint_df = construct_mr_endpoint_df(mr_fragments_df, boi_table)
+        except BaseException as ex:
+            logger.error(str(ex))
+            logger.error("Failed to construct the merge-review 'endpoint' dataframe.  Returning None.")
+            mr_endpoint_df = None
     
     return focused_fragments_df, mr_fragments_df, mr_endpoint_df, boi_table
 
