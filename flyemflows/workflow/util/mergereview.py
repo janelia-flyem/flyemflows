@@ -309,7 +309,7 @@ def extract_assignment_fragments( server, uuid, syn_instance,
     
     with Timer("Constructing merge-review 'endpoint' dataframe", logger):
         try:
-            mr_endpoint_df = construct_mr_endpoint_df(mr_fragments_df, boi_table)
+            mr_endpoint_df = construct_mr_endpoint_df(mr_fragments_df, bois)
         except BaseException as ex:
             logger.error(str(ex))
             logger.error("Failed to construct the merge-review 'endpoint' dataframe.  Returning None.")
@@ -684,13 +684,24 @@ def extract_fragments_for_cc(group_cc, cc_df, bois):
     return group_cc, fragments
 
 
-def construct_mr_endpoint_df(mr_fragments_df, boi_table):
-    _bois = boi_table.index
+def construct_mr_endpoint_df(mr_fragments_df, bois):
+    """
+    Each merge-review task group contains exactly two endpoint nodes.
+    Locate each endpoint pair and return it in a DataFrame
+    (with _a/_b columns as if it were an ordinary task dataframe).
+    """
+    assert isinstance(bois, set)
     mr_fragments_df = mr_fragments_df.copy()
     
     # Make sure our two BOI endpoints are always in body_a
-    _a_is_small = mr_fragments_df.eval('label_a not in @_bois')
+    #_a_is_small = mr_fragments_df.eval('label_a not in @bois')
+    
+    # This is much faster than the above .eval() call if bois is large.
+    _a_is_small = [(label_a not in bois) for label_a in mr_fragments_df['label_a']]
+    _a_is_small = pd.Series(_a_is_small, index=mr_fragments_df.index)
     swap_df_cols(mr_fragments_df, None, _a_is_small, ('a', 'b'))
+    
+    print(mr_fragments_df)
     
     # edge_area ends in 'a', which is inconvenient
     # for the column selection below,
@@ -702,17 +713,22 @@ def construct_mr_endpoint_df(mr_fragments_df, boi_table):
     
     num_tasks = len(mr_fragments_df.drop_duplicates(['group_cc', 'cc_task']))
     post_col = fmr_df[cols_a].columns.tolist().index('PostSyn_a')
-    
+
     filtered_mr_endpoints = []
     for (group_cc, cc_task), task_df in tqdm_proxy(fmr_df.groupby(['group_cc', 'cc_task']), total=num_tasks):
-        assert task_df.eval('label_b not in @_bois').all()
+        #assert task_df.eval('label_b not in @_bois').all()
 
         # Find the two rows that mention a BOI
-        _df = task_df.query('label_a in @_bois')
-        _df = _df[cols_a]
-        assert len(_df) == 2
+        #selected_df = task_df.query('label_a in @_bois')
+        
+        # Apparently this is MUCH faster than .query() when bois is large
+        _a_is_big = [(label_a in bois) for label_a in task_df['label_a']]
+        selected_df = task_df.iloc[_a_is_big]
+        
+        selected_df = selected_df[cols_a]
+        assert len(selected_df) == 2
     
-        stats_a, stats_b = list(_df.itertuples(index=False))
+        stats_a, stats_b = list(selected_df.itertuples(index=False))
         if stats_a[post_col] < stats_b[post_col]:
             stats_a, stats_b = stats_b, stats_a
     
@@ -720,7 +736,6 @@ def construct_mr_endpoint_df(mr_fragments_df, boi_table):
     
     cols_b = [col[:-1] + 'b' for col in cols_a]
     combined_cols = ['group_cc', 'cc_task', *cols_a, *cols_b]
-    
     mr_endpoints_df = pd.DataFrame(filtered_mr_endpoints, columns=combined_cols)
     
     final_cols = ['group_cc', 'cc_task', *sorted(combined_cols[2:])]
