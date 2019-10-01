@@ -50,6 +50,12 @@ class FindAdjacencies(Workflow):
           the restrict-bodies or restrict-edges settings in the config.
           It will not perform well on an unfiltered hemibrain-sized volume,
           which would result in billions of edges.
+    
+    TODO: For very large label subsets, the time required to select the sparse
+          block set is really long (and requires a lot of RAM on the driver).
+          There should be a config option to simply skip the label-based sparse,
+          block determination, but maybe instead allow the user to specify an ROI
+          (avoid downloading the whole bounding-box).
     """
     FindAdjacenciesOptionsSchema = \
     {
