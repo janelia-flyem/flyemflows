@@ -2,7 +2,7 @@ import os
 import zlib
 import json
 import logging
-from itertools import chain
+from itertools import chain, starmap
 
 import numpy as np
 import pandas as pd
@@ -579,7 +579,7 @@ def compute_fragment_edges(edges_df, bois, processes):
     Return a new edge DataFrame, where each edge is associated with a group and
     a fragment within that group, indicated by group_cc and cc_task, respectively.
     """
-    fragments = extract_fragments(edges_df, bois)
+    fragments = extract_fragments(edges_df, bois, processes)
     
     with Timer("Extracting edges for each fragment from full table", logger):
         edges_df = edges_df.query('group_cc in @fragments.keys()')
@@ -624,28 +624,34 @@ def _extract_group_fragment_edges(frag_list_and_group_df):
     return fragment_edges_dfs
 
 
-def extract_fragments(edges_df, bois):
+def extract_fragments(edges_df, bois, processes):
     """
     For each connected component group (pre-labeled) in the given DataFrame,
     Search for paths that can connect the groups's BOIs to each other,
     possibly passing through non-BOI nodes in the group.
     """
+    assert isinstance(bois, set)
     assert edges_df.duplicated(['group', 'label_a', 'label_b']).sum() == 0
     
-    groups = edges_df.groupby('group_cc')
-    num_groups = edges_df['group_cc'].nunique()
-
-    with Timer("Extracting fragments from each group", logger):
-        fragments = {}
-        for group_cc, cc_df in tqdm_proxy(groups, total=num_groups):
-            fragments[group_cc] = extract_fragments_for_cc(cc_df, bois)
+    def _prepare_group(group_cc, cc_df):
+        group_bois = bois & set(cc_df[['label_a', 'label_b']].values.reshape(-1))
+        return group_cc, cc_df, group_bois
         
+    with Timer("Extracting fragments from each group", logger):
+        num_groups = edges_df['group_cc'].nunique()
+        group_and_bois = starmap(_prepare_group, edges_df.groupby('group_cc'))
+
+        cc_and_frags = compute_parallel( extract_fragments_for_cc, group_and_bois, 1000,
+                                         processes=processes, ordered=False, leave_progress=True,
+                                         total=num_groups, starmap=True )
+
+    fragments = dict(cc_and_frags)
     num_fragments = sum(len(frags) for frags in fragments.values())
     logger.info(f"Extracted {num_fragments} fragments")
     return fragments
 
 
-def extract_fragments_for_cc(cc_df, bois):
+def extract_fragments_for_cc(group_cc, cc_df, bois):
     g = prepare_graph(cc_df, bois)
     nodes = pd.unique(cc_df[['label_a', 'label_b']].values.reshape(-1))
     boi_nodes = {*filter(lambda n: g.nodes[n]['boi'], nodes)}
@@ -665,7 +671,7 @@ def extract_fragments_for_cc(cc_df, bois):
             f[:] = f[::-1]
 
     fragments = {tuple(frag) for frag in fragments}
-    return fragments
+    return group_cc, fragments
 
 
 def construct_mr_endpoint_df(mr_fragments_df, boi_table):
