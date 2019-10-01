@@ -16,7 +16,7 @@ from neuclease.dvid import (fetch_instance_info, fetch_mapping, fetch_labels_bat
 
 from neuclease.mergereview.mergereview import generate_mergereview_assignments
 
-from flyemflows.workflow.findadjacencies import select_central_edges, select_closest_edges
+from flyemflows.workflow.findadjacencies import select_closest_edges
 
 logger = logging.getLogger(__name__)
 
@@ -509,11 +509,19 @@ def update_localized_edges(server, uuid, seg_instance, edges_df, processes=16):
     # (This takes a while)
 
     with Timer("Re-selecting central-most direct edges", logger):
-        direct_edges_df = edges_df.query('distance == 1.0')
-        direct_edges_df = select_central_edges(direct_edges_df)
+        direct_edges_df = edges_df.loc[edges_df['distance'] == 1.0].copy()
+        
+        # If we really want to choose the *best* edge, we should do a proper centroid calculation.
+        # But that takes a long time, and there aren't likely to be all that many cases where it makes a difference.
+        #direct_edges_df = select_central_edges(direct_edges_df)
+        
+        # Instead, just drop duplicates in arbitrary order.
+        direct_edges_df.drop_duplicates(['group', 'label_a', 'label_b'], inplace=True)
 
     with Timer("Re-selecting closest-approaching nearby edges", logger):
-        nearby_edges_df = edges_df.query('distance > 1.0')
+        # This doesn't take as long, partly because there are
+        # usually fewer nearby edges than direct edges.
+        nearby_edges_df = edges_df.loc[edges_df['distance'] >= 1.0]
         nearby_edges_df = select_closest_edges(nearby_edges_df)
 
     # FIXME: Should we also update the group_cc?
