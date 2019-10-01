@@ -297,12 +297,21 @@ def extract_assignment_fragments( server, uuid, syn_instance,
     logger.info(f"Emitting {num_focused_fragments} focused fragments and "
                 f"{num_mr_fragments} merge-review fragments, "
                 f"covering {num_fragment_bois} BOIs out of {len(boi_table)}.")
+
+    with Timer("Merging synapse counts onto results", logger):
+        focused_fragments_df = focused_fragments_df.merge( boi_table, 'left', left_on='label_a', right_index=True )
+        focused_fragments_df = focused_fragments_df.merge( boi_table, 'left', left_on='label_b', right_index=True,
+                                                           suffixes=('_a', '_b') )
+
+        mr_fragments_df = mr_fragments_df.merge( boi_table, 'left', left_on='label_a', right_index=True )
+        mr_fragments_df = mr_fragments_df.merge( boi_table, 'left', left_on='label_b', right_index=True,
+                                                 suffixes=('_a', '_b') )
     
     try:
         mr_endpoint_df = construct_mr_endpoint_df(mr_fragments_df, boi_table)
     except Exception as ex:
-        logger.error("Failed to construct the merge-review 'endpoint' dataframe.  Returning None.")
         logger.error(str(ex))
+        logger.error("Failed to construct the merge-review 'endpoint' dataframe.  Returning None.")
         mr_endpoint_df = None
     
     return focused_fragments_df, mr_fragments_df, mr_endpoint_df, boi_table
