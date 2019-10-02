@@ -15,7 +15,7 @@ RescaleLevelSchema = \
                    "    \n"
                    "       0: No rescaling, but a ScaledVolumeService adapter is used, which allows clients to request\n"
                    "          scales that aren't natively supported by the base service.  In that case, the adapter can\n"
-                   "          produced data at any scale, by downsampling the data from the base service.\n"
+                   "          produce data at any scale, by downsampling the data from the base service.\n"
                    "    \n"
                    "       1: downsample by 2x, e.g. If the client requests scale 0, the adapter requests scale 1 from \n"
                    "          the base service (if available), or automatically downsamples from scale 0 data if the base\n"

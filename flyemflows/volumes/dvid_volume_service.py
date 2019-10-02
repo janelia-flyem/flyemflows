@@ -271,7 +271,7 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             if not volume_config["dvid"]["create-if-necessary"]:
                 existing_instances = fetch_repo_instances(self._server, self._uuid)
                 if self._instance_name not in existing_instances:
-                    raise RuntimeError("Instance '{self._instance_name}' does not exist in {self._server} / {self._uuid}."
+                    raise RuntimeError(f"Instance '{self._instance_name}' does not exist in {self._server} / {self._uuid}."
                                        "Add 'create-if-necessary: true' to your config if you want it to be created.'")
                 raise
 

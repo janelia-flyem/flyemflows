@@ -74,7 +74,7 @@ def _launch_dvid_server():
     return dvid_proc, DVID_ADDRESS
 
 def _init_test_repo(dvid_address, reuse_existing=True):
-    TEST_REPO_ALIAS = 'neuclease-test'
+    TEST_REPO_ALIAS = 'flyemflows-test'
 
     if reuse_existing:
         repos_info = fetch_repos_info(dvid_address)
