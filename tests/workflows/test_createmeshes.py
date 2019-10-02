@@ -378,5 +378,5 @@ if __name__ == "__main__":
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_createmeshes']
     #args += ['-x']
     #args += ['-Werror']
-    #args += ['-k', 'createmeshes_rescale_anisotropic or createmeshes_rescale_isotropic']
+    #args += ['-k', 'createmeshes_bad_subset_svs']
     pytest.main(args)

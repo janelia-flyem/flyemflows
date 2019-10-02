@@ -770,7 +770,6 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
 
         coords_df_partitions, bad_body_partitions = zip(*coords_and_bad_bodies)
 
-        bad_labels = []
         for body in chain(*bad_body_partitions):
             if is_supervoxels:
                 bad_labels.extend( bodies_and_svs[body] )
