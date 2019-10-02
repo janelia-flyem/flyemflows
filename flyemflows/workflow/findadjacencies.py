@@ -787,5 +787,6 @@ def select_closest_edges(all_edges_df):
     Filter the given edges to include only the edge with
     the minimum distance for each [label_a,label_b] pair.
     """
-    min_selections = all_edges_df.groupby(['label_a', 'label_b'], sort=False).agg({'distance': 'idxmin'})
-    return all_edges_df.loc[min_selections['distance'].values]
+    return (all_edges_df
+                .sort_values(['label_a', 'label_b', 'distance'])
+                .drop_duplicates(['label_a', 'label_b'], keep='first'))
