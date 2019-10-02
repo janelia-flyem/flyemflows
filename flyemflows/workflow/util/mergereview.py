@@ -598,7 +598,7 @@ def compute_fragment_edges(edges_df, bois, processes):
             # Single-threaded
             fragment_edges_dfs = []
             for group_cc,  group_df in tqdm_proxy(edges_df.groupby('group_cc')):
-                fragment_edges_dfs.extend( _extract_group_fragment_edges((fragments[group_cc], group_df)) )
+                fragment_edges_dfs.extend( _extract_group_fragment_edges(fragments[group_cc], group_df) )
         else:
             # Multi-process
             num_groups = edges_df['group_cc'].nunique()
@@ -608,7 +608,8 @@ def compute_fragment_edges(edges_df, bois, processes):
                                                    processes=processes,
                                                    ordered=False,
                                                    leave_progress=True,
-                                                   total=num_groups )
+                                                   total=num_groups,
+                                                   starmap=True )
 
             fragment_edges_dfs = chain(*fragment_edges_dfs)
 
@@ -617,12 +618,11 @@ def compute_fragment_edges(edges_df, bois, processes):
     return fragment_edges_df
 
 
-def _extract_group_fragment_edges(frag_list_and_group_df):
+def _extract_group_fragment_edges(frag_list, group_df):
     """
     Helper for compute_fragment_edges(), above.
     """
     fragment_edges_dfs = []
-    frag_list, group_df = frag_list_and_group_df
     for task_index, frag in enumerate(frag_list):
         frag_edges = list(zip(frag[:-1], frag[1:]))
         frag_edges = np.sort(frag_edges, axis=1)
@@ -700,8 +700,6 @@ def construct_mr_endpoint_df(mr_fragments_df, bois):
     _a_is_small = [(label_a not in bois) for label_a in mr_fragments_df['label_a']]
     _a_is_small = pd.Series(_a_is_small, index=mr_fragments_df.index)
     swap_df_cols(mr_fragments_df, None, _a_is_small, ('a', 'b'))
-    
-    print(mr_fragments_df)
     
     # edge_area ends in 'a', which is inconvenient
     # for the column selection below,
