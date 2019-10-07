@@ -595,6 +595,11 @@ def compute_fragment_edges(edges_df, bois, processes):
     with Timer("Extracting edges for each fragment from full table", logger):
         edges_df = edges_df.query('group_cc in @fragments.keys()')
         
+        ##
+        ## FIXME: This has terrible performance.  Most of the 'groups' consist of a single row.
+        ## This could be better handled more cleverly with one giant merge, I think.
+        ##
+        
         if processes <= 1:
             # Single-threaded
             fragment_edges_dfs = []
