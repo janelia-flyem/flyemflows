@@ -567,7 +567,8 @@ def filter_groups_for_min_boi_count(edges_df, bois, group_columns=['group_cc'], 
     with Timer("Filtering out groups with too few BOIs", logger):
         # Drop CC with only 1 BOI
         cc_boi_counts = {}
-        for group_vals, cc_df in tqdm_proxy(edges_df.groupby(group_columns), total=len(edges_df['group_cc'].unique()), leave=False):
+        num_groups = len(edges_df[group_columns].drop_duplicates())
+        for group_vals, cc_df in tqdm_proxy(edges_df.groupby(group_columns), total=num_groups, leave=False):
             labels = pd.unique(cc_df[['label_a', 'label_b']].values.reshape(-1))
             count = sum((label in bois) for label in labels)
             cc_boi_counts[group_vals] = count
