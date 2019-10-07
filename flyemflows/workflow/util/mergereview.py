@@ -762,7 +762,19 @@ def prepare_graph(cc_df, bois, consecutivize=False):
     as a workaround for the following issue:
     https://github.com/pyviz/hvplot/issues/218
     """
-    edges = cc_df[['label_a', 'label_b']].values
+    if isinstance(bois, pd.DataFrame):
+        boi_df = bois
+        assert boi_df.index.name == 'body'
+        bois = boi_df.index
+    else:
+        boi_df = None
+
+    if 'body_a' in cc_df.columns and 'body_b' in cc_df.columns:
+        edges = cc_df[['body_a', 'body_b']].values
+    elif 'label_a' in cc_df.columns and 'label_b' in cc_df.columns:
+        edges = cc_df[['label_a', 'label_b']].values
+    else:
+        raise RuntimeError("Could not find label or body columns.")
     
     # Pre-sort nodes to avoid visualization issues such as:
     # https://github.com/pyviz/hvplot/issues/223
@@ -784,6 +796,15 @@ def prepare_graph(cc_df, bois, consecutivize=False):
         g.nodes[node]['body'] = body
         g.nodes[node]['boi'] = (body in bois)
 
+        # Append more node metadata if it's available.
+        if boi_df is None:
+            continue
+
+        for col in boi_df.columns:
+            if body in bois:
+                g.nodes[node][col] = boi_df.loc[body, col]
+            else:
+                g.nodes[node][col] = -1
     return g
 
 
@@ -809,7 +830,7 @@ def filter_fragments_for_roi(server, uuid, fragment_rois, fragment_edges_df):
     return fragment_edges_df
 
 
-def display_graph(cc_df, bois, width=500, hv=True):
+def display_graph(cc_df, bois, width=500, hv=True, with_labels=True, big_bois=None):
     """
     Load the given edges into a graph and display it.
     Node colors distinguish between BOIs and non-BOIs.
@@ -821,23 +842,36 @@ def display_graph(cc_df, bois, width=500, hv=True):
         hv.extension('bokeh')
         import hvplot.networkx as hvnx
         draw = hvnx.draw
-
         g = prepare_graph(cc_df, bois, True)
     else:
         draw = nx.draw
         g = prepare_graph(cc_df, bois, False)
 
-    node_color = ['limegreen' if g.nodes[n]['boi'] else 'skyblue' for n in g.nodes]
+    node_colors = []
+    for n in g.nodes:
+        body = g.nodes[n]['body']
+        if big_bois is not None and body in big_bois:
+            node_colors.append('yellow')
+        elif g.nodes[n]['boi']:
+            node_colors.append('limegreen')
+        else:
+            node_colors.append('skyblue')
+
     edge_color = ['skyblue' if g.edges[a,b]['distance'] == 1.0 else 'red' for (a,b) in g.edges]
-    labels = {n: str(g.nodes[n]['body']) for n in g.nodes}
+
+    if with_labels:
+        labels = {n: str(g.nodes[n]['body']) for n in g.nodes}
+    else:
+        labels = None
     
     print(f"Drawing {len(g.nodes)} nodes and {len(g.edges)} edges")
 
-    p = draw(g, node_color=node_color, edge_color=edge_color, labels=labels, pos=nx.kamada_kawai_layout(g), with_labels=True)
+    p = draw(g, node_color=node_colors, edge_color=edge_color, labels=labels, pos=nx.kamada_kawai_layout(g), with_labels=with_labels)
     
     if hv:
         p = p.opts(plot=dict(width=width, height=width))
     return p
+
 
 
 if __name__ == "__main__":
