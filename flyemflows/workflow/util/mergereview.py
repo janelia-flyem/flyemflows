@@ -733,16 +733,18 @@ def construct_mr_endpoint_df(mr_fragments_df, bois):
         assert len(selected_df) == 2
     
         stats_a, stats_b = list(selected_df.itertuples(index=False))
+
+        # Put the big body in the 'a' position.
         if stats_a[post_col] < stats_b[post_col]:
             stats_a, stats_b = stats_b, stats_a
     
-        filtered_mr_endpoints.append( (group_cc, cc_task, *stats_a, *stats_b) )
+        filtered_mr_endpoints.append( (group_cc, cc_task, len(task_df), *stats_a, *stats_b) )
     
     cols_b = [col[:-1] + 'b' for col in cols_a]
-    combined_cols = ['group_cc', 'cc_task', *cols_a, *cols_b]
+    combined_cols = ['group_cc', 'cc_task', 'num_edges', *cols_a, *cols_b]
     mr_endpoints_df = pd.DataFrame(filtered_mr_endpoints, columns=combined_cols)
     
-    final_cols = ['group_cc', 'cc_task', *sorted(combined_cols[2:])]
+    final_cols = ['group_cc', 'cc_task', 'num_edges', *sorted(combined_cols[2:])]
     mr_endpoints_df = mr_endpoints_df[final_cols]
     
     return mr_endpoints_df
