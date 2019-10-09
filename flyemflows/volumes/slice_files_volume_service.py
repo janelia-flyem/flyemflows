@@ -1,6 +1,7 @@
 import os
 import re
 import glob
+import platform
 
 import numpy as np
 from PIL import Image
@@ -166,7 +167,12 @@ class SliceFilesVolumeService(VolumeServiceWriter):
 
     def write_subvolume(self, subvolume, offset_zyx, scale=0):
         slice_dir = os.path.dirname(self._slice_fmt)
-        os.makedirs(slice_dir, exist_ok=True)
+        if not os.path.exists(slice_dir):
+            os.makedirs(slice_dir, exist_ok=True)
+            os.system(f"chmod g+rw {slice_dir}")
+            if platform.system() == "Linux":
+                # Set default permissions to be group-writable
+                os.system(f'setfacl -d -m g::rw {slice_dir}')
 
         assert scale == 0, "Currently, only writing scale 0 is supported."
         offset_zyx = np.array(offset_zyx)

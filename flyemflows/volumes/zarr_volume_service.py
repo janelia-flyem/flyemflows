@@ -1,5 +1,6 @@
 import os
 import logging
+import platform
 
 import zarr
 import numpy as np
@@ -145,6 +146,14 @@ class ZarrVolumeService(VolumeServiceReader, VolumeServiceWriter):
                                                             dtype=np.dtype(dtype),
                                                             chunks=tuple(chunks),
                                                             compressor=None )
+
+                # Set default permissions to be group-writable
+                os.system(f"chmod g+rw {path}")
+                if platform.system() == "Linux":
+                    os.system(f'setfacl -d -m g::rw {path}')
+                elif platform.system() == "Darwin":
+                    pass # FIXME: I don't know how to do this on macOS.
+
 
         ###
         ### bounding_box_zyx

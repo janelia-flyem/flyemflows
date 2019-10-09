@@ -1,4 +1,5 @@
 import os
+import platform
 
 import z5py
 import numpy as np
@@ -222,7 +223,17 @@ class N5VolumeService(VolumeServiceWriter):
         # This member is memoized because that makes it
         # easier to support pickling/unpickling.
         if self._n5_file is None:
+            need_permissions_fix = not os.path.exists(self._path)
             self._n5_file = z5py.File(self._path, self._filemode)
+
+            if need_permissions_fix:
+                # Set default permissions to be group-writable
+                if platform.system() == "Linux":
+                    os.system(f"chmod g+rw {self._path}")
+                    os.system(f'setfacl -d -m g::rw {self._path}')
+                elif platform.system() == "Darwin":
+                    pass # FIXME: I don't know how to do this on macOS.
+
         return self._n5_file
 
 
