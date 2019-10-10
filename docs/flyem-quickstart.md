@@ -27,7 +27,7 @@ conda create --name flyem -c flyem-forge -c conda-forge flyemflows
 conact flyem
 ```
 
-2. Try running a `flyemflows` job on the LSF cluster.  Jobs are configured by preparing a template directory with your config files, and running `launchflow`.  Try the following example, which will convert a stack of `.png` images to `.n5`:
+2. Try running a `flyemflows` job on the LSF cluster.  Jobs are configured by preparing a template directory with your config files, and running `launchflow`.  (See note below about `dask-config.yaml`.)  Try the following example, which will convert a stack of `.png` images to `.n5`:
 
 ```
 conact flyem
@@ -38,10 +38,6 @@ less vnc02-to-n5/dask-config.yaml
 
 bsub launchflow -n 124 vnc02-to-n5
 ```
-
-**Note:**  To better understand `dask-config.yaml`, see [`example-dask-config.yaml`][edc]. Also, if you're curious about the settings in `workflow.yaml`, try `launchflow --dump-default-verbose-yaml CopyGrayscale` to see the default config, commented with explanations of each setting.  (Tip: It's quite long, because it will show you all of the possible options for `input` and `output` sections, which includes every possible volume source (e.g. `dvid`, `brainmaps`, `hdf5`, `n5`, etc.).  But you only need one source for `input` and one for `output`.)  
-
-[edc]: https://github.com/janelia-flyem/flyemflows/blob/master/developer-examples/example-dask-config.yaml
 
 LSF will run `launchflow` on a cluster node, which will, in turn, launch a dask-cluster with 124 workers (31*4).  When the job starts, your template directory is copied and used as the working directory for the job.
 
@@ -100,3 +96,7 @@ $ grep JOBID output.log
 
 $ bkill 62110075
 ```
+
+**Note:**  To better understand `dask-config.yaml`, see [`example-dask-config.yaml`][edc]. Also, if you're curious about the settings in `workflow.yaml`, try `launchflow --dump-default-verbose-yaml CopyGrayscale` to see the default config, commented with explanations of each setting.  (Tip: It's quite long, because it will show you all of the possible options for `input` and `output` sections, which includes every possible volume source (e.g. `dvid`, `brainmaps`, `hdf5`, `n5`, etc.).  But you only need one source for `input` and one for `output`.)
+
+[edc]: https://github.com/janelia-flyem/flyemflows/blob/master/developer-examples/example-dask-config.yaml
