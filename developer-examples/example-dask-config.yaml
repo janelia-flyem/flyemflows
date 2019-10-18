@@ -127,6 +127,10 @@ jobqueue:
     # but if your job exceeds the limit you write here, it will be killed by LSF.
     walltime: '01:00'
     
+    # Implementation detail regarding how bsub is called by dask-jobqueue.
+    # Under Janelia's LSF configuration, this must be set to 'true'.
+    use-stdin: true
+
     # Where to dump worker logs (not the main client log).
     # Basically workers will be launched like this:
     #

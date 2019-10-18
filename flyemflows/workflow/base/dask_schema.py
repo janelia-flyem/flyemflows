@@ -50,6 +50,12 @@ LsfJobSchema = \
             "type": "integer",
             "default": 0
         },
+        "use-stdin": {
+            "description": "Implementation detail regarding how bsub is called by dask-jobqueue.\n"
+                           "Under Janelia's LSF configuration, this must be set to 'True'.",
+            "type": "boolean",
+            "default": True
+        },
         "log-directory": {
             "description": "Where LSF worker logs (from stdout) will be stored.",
             "type": "string",

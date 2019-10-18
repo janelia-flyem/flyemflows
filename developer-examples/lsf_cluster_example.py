@@ -20,6 +20,9 @@ And then paste this code into the terminal.
 """
 
 import time
+import getpass
+
+import dask
 import dask.bag as db
 from distributed import Client
 
@@ -66,8 +69,11 @@ def main():
                           {'cores': 1,
                            'memory': '15GB',
                            'walltime': '01:00',
-                           'log-directory': 'redecimation-dask-logs',
+                           'log-directory': 'dask-logs',
                            'local-directory': f'/scratch/{USER}',
+                           'use-stdin': True    # Implementation detail regarding how bsub is called by dask-jobqueue.
+                                                # Under Janelia's LSF configuration, this must be set to 'True'.
+
                     }}})
     
     client = init_cluster(2)
@@ -85,5 +91,5 @@ def main():
         client.cluster.close()
 
 
-
-main()
+if __name__ == "__main__":
+    main()
