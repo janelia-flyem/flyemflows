@@ -2,6 +2,7 @@ import os
 import zlib
 import json
 import logging
+from functools import partial
 from itertools import chain, starmap
 
 import numpy as np
@@ -12,7 +13,7 @@ from dvidutils import LabelMapper
 
 from neuclease.util import Timer, tqdm_proxy, swap_df_cols, compute_parallel
 from neuclease.dvid import (fetch_instance_info, fetch_mapping, fetch_labels_batched, determine_bodies_of_interest,
-                            fetch_combined_roi_volume, determine_point_rois)
+                            fetch_combined_roi_volume, determine_point_rois, fetch_supervoxels, fetch_sizes, generate_sample_coordinate)
 
 from neuclease.mergereview.mergereview import generate_mergereview_assignments
 
@@ -405,7 +406,7 @@ def generate_mergereview_assignments_from_df(server, uuid, instance, mr_fragment
         output_subdir = f'{output_dir}/{num_bodies:02}-bodies'
         os.makedirs(output_subdir, exist_ok=True)
         for i, batch_start in enumerate(tqdm_proxy(range(0, len(group_tasks), assignment_size), leave=False)):
-            ouput_path = f"{output_dir}/{num_bodies:02}-bodies/assignment-{i:04d}.json"
+            output_path = f"{output_dir}/{num_bodies:02}-bodies/assignment-{i:04d}.json"
 
             batch_tasks = group_tasks[batch_start:batch_start+assignment_size]
             assignment = {
@@ -414,11 +415,72 @@ def generate_mergereview_assignments_from_df(server, uuid, instance, mr_fragment
                 "task list": batch_tasks
             }
 
-            with open(ouput_path, 'w') as f:
+            with open(output_path, 'w') as f:
                 #json.dump(assignment, f, indent=2)
                 pretty_print_assignment_json_items(assignment.items(), f)
     
     return all_tasks
+
+
+def generate_typereview_assignment(server, uuid, instance, df, output_path, generate_coords=False, processes=8):
+    """
+    Generate a merge-review-like task for doing type comparison.
+    """
+    assert df.columns.tolist() == ["body_a", "body_b", "score"]
+    
+    tasks = compute_parallel(partial(_gen_typereview_task, server, uuid, instance, generate_coords), map(tuple, df.itertuples()),
+                             total=len(df), starmap=True, ordered=False, processes=processes)
+    tasks = [v for _k,v in sorted(tasks)]
+    
+    assignment = {
+        "file type":"Neu3 task list",
+        "file version":1,
+        "task list": tasks
+    }
+
+    with open(output_path, 'w') as f:
+        #json.dump(assignment, f, indent=2)
+        pretty_print_assignment_json_items(assignment.items(), f)
+
+
+def _gen_typereview_task(server, uuid, instance, generate_coords, index, body_a, body_b, score):
+    svs_a = fetch_supervoxels(server, uuid, instance, body_a)
+    sizes_a = fetch_sizes(server, uuid, instance, svs_a, supervoxels=True)
+    largest_sv_a = int(sizes_a.idxmax())
+
+    svs_b = fetch_supervoxels(server, uuid, instance, body_b)
+    sizes_b = fetch_sizes(server, uuid, instance, svs_b, supervoxels=True)
+    largest_sv_b = int(sizes_b.idxmax())
+
+    if generate_coords:
+        za, ya, xa = generate_sample_coordinate(server, uuid, instance, largest_sv_a, supervoxels=True).tolist()
+        zb, yb, xb = generate_sample_coordinate(server, uuid, instance, largest_sv_b, supervoxels=True).tolist()
+    else:
+        za, ya, xa = 0,0,0
+        zb, yb, xb = 0,0,0
+    
+    task = {
+        # neu3 fields
+        'task type': "merge review",
+        'task id': hex(zlib.crc32(np.array([largest_sv_a, largest_sv_b]))),
+        'supervoxel IDs': [largest_sv_a, largest_sv_b],
+        'boi supervoxel IDs': [largest_sv_a, largest_sv_b],
+        
+        # Encode edge table as json
+        "supervoxel IDs A": largest_sv_a,
+        "supervoxel IDs B": largest_sv_b,
+        "supervoxel points A": [xa, ya, za],
+        "supervoxel points B": [xb, yb, zb],
+        
+        # Debugging fields
+        'group_cc': index,
+        'cc_task': index,
+        'original_bodies': [int(body_a), int(body_b)],
+        'total_body_count': 2,
+        'original_uuid': uuid,
+        'match_score': float(score)
+    }
+    return (index, task)
 
 
 def pretty_print_assignment_json_items(items, f, cur_indent=0):
