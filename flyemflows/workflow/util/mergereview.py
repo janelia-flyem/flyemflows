@@ -13,7 +13,8 @@ from dvidutils import LabelMapper
 
 from neuclease.util import Timer, tqdm_proxy, swap_df_cols, compute_parallel
 from neuclease.dvid import (fetch_instance_info, fetch_mapping, fetch_labels_batched, determine_bodies_of_interest,
-                            fetch_combined_roi_volume, determine_point_rois, fetch_supervoxels, fetch_sizes, generate_sample_coordinate)
+                            fetch_combined_roi_volume, determine_point_rois, fetch_supervoxels, fetch_sizes,
+                            generate_sample_coordinate, fetch_mappings)
 
 from neuclease.mergereview.mergereview import generate_mergereview_assignments
 
@@ -422,16 +423,40 @@ def generate_mergereview_assignments_from_df(server, uuid, instance, mr_fragment
     return all_tasks
 
 
-def generate_typereview_assignment(server, uuid, instance, df, output_path, generate_coords=False, processes=8):
+def generate_typereview_assignment(server, uuid, instance, df, output_path, generate_coords=False, specify_largest_sv=False, processes=8):
     """
-    Generate a merge-review-like task for doing type comparison.
+    Generate a mergereview-like assignment for doing type comparison.
+    
+    By default
     """
+    df = df.copy()
     assert df.columns.tolist() == ["body_a", "body_b", "score"]
+    df['body_a'] = df.astype(np.uint64)
+    df['body_b'] = df.astype(np.uint64)
     
-    tasks = compute_parallel(partial(_gen_typereview_task, server, uuid, instance, generate_coords), map(tuple, df.itertuples()),
-                             total=len(df), starmap=True, ordered=False, processes=processes)
-    tasks = [v for _k,v in sorted(tasks)]
-    
+    if specify_largest_sv:
+        f_task = partial(_gen_typereview_task_with_largest_sv, server, uuid, instance, generate_coords=generate_coords)
+        tasks = compute_parallel(f_task, map(tuple, df.itertuples()), total=len(df), starmap=True, ordered=False, processes=processes)
+        tasks = [v for _k,v in sorted(tasks)]
+    else:
+        # We can do this entirely with the in-memory map -- just
+        # choose the first supervoxel we happen to find for each body.
+        mapping = fetch_mappings(server, uuid, instance)
+        mapping = mapping.drop_duplicates()
+        reverse_mapper = LabelMapper(mapping.values, mapping.index.values)
+        
+        tasks = []
+        for row in tqdm_proxy(df.itertuples(), total=len(df)):
+            sv_a = reverse_mapper.apply(np.array([row.body_a], dtype=np.uint64))[0]
+            sv_b = reverse_mapper.apply(np.array([row.body_b], dtype=np.uint64))[0]
+            _index, task = _prepare_task( uuid,
+                                          row.Index,
+                                          row.body_a, row.body_b,
+                                          int(sv_a), int(sv_b),
+                                          row.score,
+                                          (0,0,0), (0,0,0) )
+            tasks.append(task)
+
     assignment = {
         "file type":"Neu3 task list",
         "file version":1,
@@ -443,32 +468,39 @@ def generate_typereview_assignment(server, uuid, instance, df, output_path, gene
         pretty_print_assignment_json_items(assignment.items(), f)
 
 
-def _gen_typereview_task(server, uuid, instance, generate_coords, index, body_a, body_b, score):
+def _gen_typereview_task_with_largest_sv(server, uuid, instance, index, body_a, body_b, score, generate_coords=False):
     svs_a = fetch_supervoxels(server, uuid, instance, body_a)
     sizes_a = fetch_sizes(server, uuid, instance, svs_a, supervoxels=True)
-    largest_sv_a = int(sizes_a.idxmax())
+    sv_a = int(sizes_a.idxmax())
 
     svs_b = fetch_supervoxels(server, uuid, instance, body_b)
     sizes_b = fetch_sizes(server, uuid, instance, svs_b, supervoxels=True)
-    largest_sv_b = int(sizes_b.idxmax())
-
+    sv_b = int(sizes_b.idxmax())
+    
     if generate_coords:
-        za, ya, xa = generate_sample_coordinate(server, uuid, instance, largest_sv_a, supervoxels=True).tolist()
-        zb, yb, xb = generate_sample_coordinate(server, uuid, instance, largest_sv_b, supervoxels=True).tolist()
+        za, ya, xa = generate_sample_coordinate(server, uuid, instance, sv_a, supervoxels=True).tolist()
+        zb, yb, xb = generate_sample_coordinate(server, uuid, instance, sv_b, supervoxels=True).tolist()
     else:
         za, ya, xa = 0,0,0
         zb, yb, xb = 0,0,0
     
+    return _prepare_task(uuid, index, body_a, body_b, sv_a, sv_b, score, (za, ya, xa), (zb, yb, xb))
+
+
+def _prepare_task(uuid, index, body_a, body_b, sv_a, sv_b, score, coord_a, coord_b):
+    za, ya, xa = coord_a
+    zb, yb, xb = coord_b
+    
     task = {
         # neu3 fields
         'task type': "merge review",
-        'task id': hex(zlib.crc32(np.array([largest_sv_a, largest_sv_b]))),
-        'supervoxel IDs': [largest_sv_a, largest_sv_b],
-        'boi supervoxel IDs': [largest_sv_a, largest_sv_b],
+        'task id': hex(zlib.crc32(np.array([sv_a, sv_b]))),
+        'supervoxel IDs': [sv_a, sv_b],
+        'boi supervoxel IDs': [sv_a, sv_b],
         
         # Encode edge table as json
-        "supervoxel IDs A": largest_sv_a,
-        "supervoxel IDs B": largest_sv_b,
+        "supervoxel IDs A": [sv_a],
+        "supervoxel IDs B": [sv_b],
         "supervoxel points A": [xa, ya, za],
         "supervoxel points B": [xb, yb, zb],
         
