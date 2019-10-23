@@ -154,6 +154,23 @@ class VolumeServiceReader(VolumeService):
         raise NotImplementedError
 
     def sparse_brick_coords_for_labels(self, labels, clip=True):
+        """
+        Return a DataFrame indicating the brick
+        coordinates (starting corner) that encompass the given labels.
+        
+        Args:
+            labels:
+                A list of label IDs.
+            
+            clip:
+                If True, filter the results to exclude any coordinates
+                that fall outside this service's bounding-box.
+                Otherwise, all brick coordinates that encompass the given labels
+                will be returned, whether or not they fall within the bounding box.
+                
+        Returns:
+            DataFrame with columns [z,y,x,label]
+        """
         raise NotImplementedError
 
     ##
@@ -269,14 +286,15 @@ class VolumeServiceReader(VolumeService):
         all_labels = label_groups_df['label'].unique()
         coords_df = self.sparse_brick_coords_for_labels(all_labels, clip)
 
-        with Timer(f"Filtering bricks for groups of size >= {min_subset_size}", logger):
+        with Timer(f"Associating brick coords with group IDs", logger):
             combined_df = coords_df.merge(label_groups_df, 'inner', 'label', copy=False)
             combined_df = combined_df[['z', 'y', 'x', 'group', 'label']]
 
-            if min_subset_size == 1:
-                logger.info(f"Keeping {len(combined_df)} label+group combinations")
-                return combined_df
+        if min_subset_size == 1:
+            logger.info(f"Keeping {len(combined_df)} label+group combinations")
+            return combined_df
 
+        with Timer(f"Determining which bricks to keep for groups of size >= {min_subset_size}", logger):
             # Count the number of labels per group in each block
             labelcounts = combined_df.groupby(['z', 'y', 'x', 'group'], as_index=False, sort=False).agg('count')
             labelcounts = labelcounts.rename(columns={'label': 'labelcount'})
@@ -285,12 +303,12 @@ class VolumeServiceReader(VolumeService):
             brick_groups_to_keep = labelcounts.loc[(labelcounts['labelcount'] >= min_subset_size)]
             brick_groups_to_keep = brick_groups_to_keep[['z', 'y', 'x', 'group']]
             
-            with Timer("Merging", logger):
-                filtered_df = combined_df.merge(brick_groups_to_keep, 'inner', ['z', 'y', 'x', 'group'], copy=False)
-                assert filtered_df.columns.tolist() == ['z', 'y', 'x', 'group', 'label']
+        with Timer("Filtering for kept bricks", logger):
+            filtered_df = combined_df.merge(brick_groups_to_keep, 'inner', ['z', 'y', 'x', 'group'], copy=False)
+            assert filtered_df.columns.tolist() == ['z', 'y', 'x', 'group', 'label']
 
-            logger.info(f"Keeping {len(filtered_df)} label+group combinations")
-            return filtered_df
+        logger.info(f"Keeping {len(filtered_df)} label+group combinations")
+        return filtered_df
 
 
 class VolumeServiceWriter(VolumeService):
