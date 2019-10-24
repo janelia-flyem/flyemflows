@@ -121,10 +121,13 @@ DvidServiceSchema = \
         "creation-settings": DvidInstanceCreationSettingsSchema,
         "accept-throttling": {
             "description": "Whether to send throttle=true when requesting data from DVID.\n"
-                           "This allows DVID to respond with 503 errors, in which case the local service will pause before retrying.\n"
-                           "This mechanism is somewhat clumsy, and best left unused.\n"
-                           "Usually, it's better to restrict concurrency via global token server, such as the dvid-resource-manager.\n"
-                           "See the 'resource-manager' section of the Workflow config, and use that instead.\n",
+                           "This allows DVID to respond with 503 errors, in which case the local\n"
+                           "service will pause before retrying.\n"
+                           "Note: This mechanism is somewhat clumsy, and best left unused.\n"
+                           "      Usually, it's better to restrict concurrency via global\n"
+                           "      token server, such as the dvid-resource-manager.\n"
+                           "      See the 'resource-manager' section of the Workflow config,\n"
+                           "      and use that instead.\n",
             "type": "boolean",
             "default": False
         }
@@ -193,6 +196,15 @@ DvidSegmentationServiceSchema = \
                            "This sets the gzip compression level, from 0 (no compression) to 9 (max).\n",
             "type": "integer",
             "default": 6
+        },
+        "use-resource-manager-for-sparse-coords": {
+            "description": "Whether or not to respect the resource manager limits\n"
+                           "when fetching sparse coords from label indexes.\n"
+                           "For some use-cases, limiting access to the label indexes isn't\n"
+                           "necessary, and adds needless communication overhead.\n"
+                           "Note: This is unrelated to the accept-throttling setting above.\n",
+            "type": "boolean",
+            "default": True
         }
     }
 }
@@ -353,6 +365,15 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             resource_manager_client = ResourceManagerClient("", 0)
 
         ##
+        ## Special setting to override resource manager for sparse coords
+        ##
+        try:
+            use_resource_manager_for_sparse_coords = volume_config["dvid"]["use-resource-manager-for-sparse-coords"]
+        except KeyError:
+            # Grayscale doesn't have this setting
+            use_resource_manager_for_sparse_coords = False
+
+        ##
         ## Store members
         ##
         self._resource_manager_client = resource_manager_client
@@ -360,6 +381,7 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         self._bounding_box_zyx = bounding_box_zyx
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
         self._available_scales = available_scales
+        self._use_resource_manager_for_sparse_coords = use_resource_manager_for_sparse_coords
 
         ##
         ## Overwrite config entries that we might have modified
@@ -662,7 +684,9 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
                 will be returned, whether or not they fall within the bounding box.
                 
         Returns:
-            DataFrame with columns [z,y,x,label]
+            DataFrame with columns [z,y,x,label],
+            where z,y,x represents the starting corner (in full-res coordinates)
+            of a brick that contains the label.
         """
         labels = pd.unique(labels)
         is_supervoxels = self.supervoxels
@@ -704,6 +728,13 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             # Sort by body, since that should be slightly nicer for dvid performance.
             bodies_and_svs = grouped_svs.sort_index().to_dict()
 
+        # Extract these to avoid pickling 'self' (just for speed)
+        server, uuid, instance = self.instance_triple
+        if self._use_resource_manager_for_sparse_coords:
+            mgr = self.resource_manager_client
+        else:
+            mgr = ResourceManagerClient("", 0)
+
         def fetch_brick_coords(body, supervoxel_subset):
             """
             Fetch the block coordinates for the given body,
@@ -713,9 +744,8 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
             assert is_supervoxels or supervoxel_subset is None
 
             try:
-                mgr = self.resource_manager_client
-                with mgr.access_context(self.server, True, 1, 1):
-                    labelindex = fetch_labelindex(*self.instance_triple, body, 'protobuf')
+                with mgr.access_context(server, True, 1, 1):
+                    labelindex = fetch_labelindex(server, uuid, instance, body, 'protobuf')
                 coords_df = convert_labelindex_to_pandas(labelindex).blocks
                     
             except HTTPError as ex:
