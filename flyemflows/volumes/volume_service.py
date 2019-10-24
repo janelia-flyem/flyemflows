@@ -169,7 +169,9 @@ class VolumeServiceReader(VolumeService):
                 will be returned, whether or not they fall within the bounding box.
                 
         Returns:
-            DataFrame with columns [z,y,x,label]
+            DataFrame with columns [z,y,x,label],
+            where z,y,x represents the starting corner (in full-res coordinates)
+            of a brick that contains the label.
         """
         raise NotImplementedError
 
