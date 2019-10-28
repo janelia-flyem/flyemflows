@@ -651,71 +651,66 @@ def filter_groups_for_min_boi_count(edges_df, bois, group_columns=['group_cc'], 
     
     Then drop rows from the original dataframe if the group they belong to didn't have enough BOIs.
     """
-    assert isinstance(bois, set)
-    assert isinstance(group_columns, (list, tuple))
-
-    # FIXME: If this becomes a bottleneck, a faster implementation would be to
-    #        add columns ['is_boi_a', 'is_boi_b'], which would allow us to compute
-    #        each group BOI count via compute_parallel without requiring the entire
-    #        boi set for each task.
     with Timer("Filtering out groups with too few BOIs", logger):
-        # Drop CC with only 1 BOI
-        cc_boi_counts = {}
-        num_groups = len(edges_df[group_columns].drop_duplicates())
-        for group_vals, cc_df in tqdm_proxy(edges_df.groupby(group_columns), total=num_groups, leave=False):
-            labels = pd.unique(cc_df[['label_a', 'label_b']].values.reshape(-1))
-            count = sum((label in bois) for label in labels)
-            cc_boi_counts[group_vals] = count
+        bois = np.fromiter(bois, np.uint64)
+        bois.sort()
+        assert isinstance(group_columns, (list, tuple))
     
-        boi_counts_df = pd.DataFrame(list(cc_boi_counts.keys()), columns=group_columns)
-        boi_counts_df['boi_count'] = cc_boi_counts.values()
+        boi_counts_df = edges_df[['label_a', 'label_b', *group_columns]].copy()
+        boi_counts_df['is_boi_a'] = boi_counts_df.eval('label_a in @bois')
+        boi_counts_df['is_boi_b'] = boi_counts_df.eval('label_b in @bois')
+        boi_counts_df['boi_count'] = boi_counts_df['is_boi_a'].astype(int) + boi_counts_df['is_boi_b'].astype(int)
         
-        kept_groups_df = boi_counts_df.query('boi_count >= @min_boi_count')[[*group_columns]]
+        group_boi_counts = boi_counts_df.groupby(group_columns)['boi_count'].agg('sum')
+        group_boi_counts = group_boi_counts[group_boi_counts >= min_boi_count]
+    
+        kept_groups_df = group_boi_counts.reset_index()[[*group_columns]]
         logger.info(f"Keeping {len(kept_groups_df)} groups ({group_columns}) out of {len(boi_counts_df)}")
-        
+    
         edges_df = edges_df.merge(kept_groups_df, 'inner', on=group_columns)
-        return edges_df
+    return edges_df
 
 
-def compute_fragment_edges(edges_df, bois, processes):
+def compute_fragment_edges(edges_df, bois, processes=0):
     """
     For each edge group, search for paths that can connect the BOIs in the group.
     Each group is a "fragment", a.k.a. "task".
     Return a new edge DataFrame, where each edge is associated with a group and
     a fragment within that group, indicated by group_cc and cc_task, respectively.
+    
+    Args:
+        edges_df:
+            An edge table as described in extract_assignment_fragments(), above,
+            with the additional requirement that the table is in "normalized" form,
+            i.e. label_a < label_b.
+
+        bois:
+            List of BOIs
     """
     fragments = extract_fragments(edges_df, bois, processes)
     
     with Timer("Extracting edges for each fragment from full table", logger):
         edges_df = edges_df.query('group_cc in @fragments.keys()')
+
+        cc_col = []
+        task_col = []
+        frag_cols = []
+        for group_cc, group_fragments in fragments.items():
+            for task_index, frag in enumerate(group_fragments):
+                cc_col.extend( [group_cc]*(len(frag)-1) )
+                task_col.extend( [task_index]*(len(frag)-1) )
+                frag_edges = list(zip(frag[:-1], frag[1:]))
+                frag_cols.extend(frag_edges)
+
+        frag_cols = np.array(frag_cols, dtype=np.uint64)
+        frag_cols.sort(axis=1)
+
+        fragment_edges_df = pd.DataFrame(frag_cols, columns=['label_a', 'label_b'])
+        fragment_edges_df['group_cc'] = cc_col
+        fragment_edges_df['cc_task'] = task_col
         
-        ##
-        ## FIXME: This has terrible performance.  Most of the 'groups' consist of a single row.
-        ## This could be better handled more cleverly with one giant merge, I think.
-        ##
-        
-        if processes <= 1:
-            # Single-threaded
-            fragment_edges_dfs = []
-            for group_cc,  group_df in tqdm_proxy(edges_df.groupby('group_cc')):
-                fragment_edges_dfs.extend( _extract_group_fragment_edges(fragments[group_cc], group_df) )
-        else:
-            # Multi-process
-            num_groups = edges_df['group_cc'].nunique()
-            group_iter = ((fragments[group_cc], group_df) for (group_cc,  group_df) in edges_df.groupby('group_cc'))
-            fragment_edges_dfs = compute_parallel( _extract_group_fragment_edges,
-                                                   group_iter,
-                                                   processes=processes,
-                                                   ordered=False,
-                                                   leave_progress=True,
-                                                   total=num_groups,
-                                                   starmap=True )
-
-            fragment_edges_dfs = chain(*fragment_edges_dfs)
-
-        fragment_edges_df = pd.concat(fragment_edges_dfs, ignore_index=True)
-
-    return fragment_edges_df
+        fragment_edges_df = fragment_edges_df.merge(edges_df, 'left', ['group_cc', 'label_a', 'label_b'])
+        return fragment_edges_df
 
 
 def _extract_group_fragment_edges(frag_list, group_df):
@@ -739,6 +734,12 @@ def extract_fragments(edges_df, bois, processes):
     For each connected component group (pre-labeled) in the given DataFrame,
     Search for paths that can connect the groups's BOIs to each other,
     possibly passing through non-BOI nodes in the group.
+    
+    Returns:
+        dict {group_cc: [fragment, fragment, ...]}
+        where each fragment is a tuple of N body IDs which form a path of
+        adjacent bodies, with a BOI on each end (first node/last node) of
+        the path, and non-BOIs for the intermediate nodes (if any).
     """
     assert isinstance(bois, set)
     assert edges_df.duplicated(['group', 'label_a', 'label_b']).sum() == 0
