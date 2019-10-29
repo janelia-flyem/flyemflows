@@ -839,7 +839,7 @@ def construct_mr_endpoint_df(mr_fragments_df, bois):
     combined_cols = ['group_cc', 'cc_task', 'num_edges', *cols_a, *cols_b]
     mr_endpoints_df = pd.DataFrame(filtered_mr_endpoints, columns=combined_cols)
     
-    final_cols = ['group_cc', 'cc_task', 'num_edges', *sorted(combined_cols[2:])]
+    final_cols = ['group_cc', 'cc_task', 'num_edges', *sorted(combined_cols[3:])]
     mr_endpoints_df = mr_endpoints_df[final_cols]
     
     return mr_endpoints_df
