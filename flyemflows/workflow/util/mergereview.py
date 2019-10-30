@@ -2,8 +2,7 @@ import os
 import zlib
 import json
 import logging
-from functools import partial
-from itertools import chain, starmap
+from itertools import starmap
 
 import numpy as np
 import pandas as pd
@@ -422,11 +421,22 @@ def generate_mergereview_assignments_from_df(server, uuid, instance, mr_fragment
     return all_tasks
 
 
-def generate_typereview_assignment(server, uuid, instance, df, output_path, comment='', generate_coords=False, specify_largest_sv=False, processes=8):
+def generate_typereview_assignment(df, output_path, uuid='', comment=''):
     """
     Generate a mergereview-like assignment for doing type comparison.
     
-    By default
+    Args:
+        df:
+            A pandas DataFrame with columns ["body_a", "body_b", "score"]
+
+        output_path:
+            Where to write the output JSON assignment
+
+        uuid:
+            Optional.  Indicates which UUID was used to generate these tasks.
+        
+        comment:
+            Optional comment.
     """
     df = df.copy()
     assert df.columns.tolist() == ["body_a", "body_b", "score"]
@@ -435,11 +445,21 @@ def generate_typereview_assignment(server, uuid, instance, df, output_path, comm
     
     tasks = []
     for row in tqdm_proxy(df.itertuples(), total=len(df)):
-        _index, task = _prepare_task( uuid,
-                                      row.Index,
-                                      row.body_a, row.body_b,
-                                      row.score,
-                                      comment )
+        task = {
+            # neu3 fields
+            'task type': "type review",
+            'task result id': f"{row.body_a}_{row.body_b}",
+            
+             "body ID A": row.body_a,
+             "body ID B": row.body_b,
+             'match_score': float(row.score),
+             
+            # Debugging fields
+            'debug': {
+                'original_uuid': uuid,
+                'comment': comment
+            }
+        }
         tasks.append(task)
 
     assignment = {
@@ -450,26 +470,7 @@ def generate_typereview_assignment(server, uuid, instance, df, output_path, comm
 
     with open(output_path, 'w') as f:
         json.dump(assignment, f, indent=2)
-        #pretty_print_assignment_json_items(assignment.items(), f)
 
-
-def _prepare_task(uuid, index, body_a, body_b, score, comment=''):    
-    task = {
-        # neu3 fields
-        'task type': "type review",
-        'task result id': f"{body_a}_{body_b}",
-        
-         "body ID A": body_a,
-         "body ID B": body_b,
-        
-        # Debugging fields
-        'debug': {
-            'original_uuid': uuid,
-            'match_score': float(score),
-            'comment': comment
-        }
-    }
-    return (index, task)
 
 
 def pretty_print_assignment_json_items(items, f, cur_indent=0):
