@@ -430,8 +430,8 @@ def generate_typereview_assignment(server, uuid, instance, df, output_path, comm
     """
     df = df.copy()
     assert df.columns.tolist() == ["body_a", "body_b", "score"]
-    df['body_a'] = df.astype(np.uint64)
-    df['body_b'] = df.astype(np.uint64)
+    df['body_a'] = df['body_a'].astype(np.uint64)
+    df['body_b'] = df['body_b'].astype(np.uint64)
     
     tasks = []
     for row in tqdm_proxy(df.itertuples(), total=len(df)):
