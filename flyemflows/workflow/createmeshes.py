@@ -247,7 +247,11 @@ class CreateMeshes(Workflow):
                 "type": "boolean",
                 "default": False
             },
-            
+            "export-labelcounts": {
+                "description": "Debugging feature.  Export labelcount DataFrames.",
+                "type": "boolean",
+                "default": False
+            }
         }
     }
 
@@ -478,7 +482,19 @@ class CreateMeshes(Workflow):
         
         # TODO: Pre-filter these counts according to subset-supervoxels before returning,
         #       to speed up the merge step, below.
+
+        # FIXME: DEBUG FILE
+        export_labelcounts = options["export-labelcounts"]
+        if export_labelcounts:
+            os.makedirs('brick_ddf_partitions')
+            os.makedirs('brick_labelcounts')
+
         def compute_brick_labelcounts(brick_df):
+            if export_labelcounts and len(brick_df) > 0:
+                debug_file_name = 'z{:05d}-y{:05d}-x{:05d}'.format(*brick_df[['lz0', 'ly0', 'lx0']].iloc[0].values.tolist())
+                debug_file_name += '-{:04d}'.format(np.random.randint(10000))
+                np.save(f'brick_ddf_partitions/{debug_file_name}.npy', brick_df[['lz0', 'ly0', 'lx0']].to_records(index=True))
+
             brick_counts_dfs = []
             for row in brick_df.itertuples():
                 brick = row.brick
@@ -497,6 +513,11 @@ class CreateMeshes(Workflow):
                 brick_counts_df['lx0'] = brick.logical_box[0,2]
                 brick_counts_dfs.append(brick_counts_df)
 
+                if export_labelcounts:
+                    debug_file_name = 'z{:05d}-y{:05d}-x{:05d}'.format(*brick.logical_box[0].tolist())
+                    debug_file_name += '-r{:04d}'.format(np.random.randint(10000))
+                    np.save(f'brick_labelcounts/{debug_file_name}.npy', brick_counts_df.to_records(index=False))
+
             if len(brick_counts_dfs) > 0:
                 return pd.concat(brick_counts_dfs, ignore_index=True)
             else:
@@ -512,6 +533,8 @@ class CreateMeshes(Workflow):
 
 
         with Timer("Computing brickwise labelcounts", logger):
+            if export_labelcounts:
+                logger.info(" *** Also exporting labelcounts (slow) ***")
             dtypes = {'label': np.uint64, 'count': np.int64,
                       'lz0': np.int32, 'ly0': np.int32, 'lx0': np.int32}
             brick_counts_df = bricks_ddf.map_partitions(compute_brick_labelcounts, meta=dtypes).clear_divisions().compute()
