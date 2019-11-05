@@ -62,17 +62,25 @@ class ScaledVolumeService(VolumeServiceReader):
 
     @property
     def preferred_message_shape(self):
-        # We return the preferred_message_shape for scale 0.
-        # If we're able to make a direct call to the original service (i.e. we don't have to downample it ourselves),
-        # then just return the native preferred_message_shape
+        # Downscale/upscale so that our message shape corresponds to the full-res message shape.
+        # (We return the preferred_message_shape for OUR scale 0.)
         #
-        # This is a bit ugly.  See TODO in get_subvolume().
-        if self.scale_delta in self.original_volume_service.available_scales:
-            return self.original_volume_service.preferred_message_shape
-        else:
-            ms = (self.original_volume_service.preferred_message_shape // 2**self.scale_delta).astype(np.uint32)
-            ms = np.maximum(ms, 1) # Never shrink below 1 pixel in each dimension
-            return ms
+        # Note:
+        #  In a previous version of this function, we wouldn't scale the original service's
+        #  preferred message shape IFF our 'scale 0' happened to correspond to a 'native'\
+        #  (available) scale in the original service.  The assumption was that all available
+        #  scales in the original service prefer the same message shape, so there should be
+        #  no reason to re-scale it.  But that has two problems:
+        #    1. Many workflows use the preferred_message_shape to determine the workload
+        #       blocking scheme.
+        #    2. Users know that, and set the message-block-shape carefully in the config,
+        #       assuming scale-0 dimensions.
+        #       If we don't re-scale the preferred shape consistently for all data sources,
+        #       then it's difficult for users to understand how they should write their config files.
+        #
+        ms = (self.original_volume_service.preferred_message_shape // 2**self.scale_delta).astype(np.uint32)
+        ms = np.maximum(ms, 1) # Never shrink below 1 pixel in each dimension
+        return ms
 
     @property
     def bounding_box_zyx(self):
