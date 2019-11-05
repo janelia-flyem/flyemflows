@@ -439,12 +439,10 @@ def generate_typereview_assignment(df, output_path, uuid='', comment=''):
             Optional comment.
     """
     df = df.copy()
-    assert df.columns.tolist() == ["body_a", "body_b", "score"]
-    df['body_a'] = df['body_a'].astype(np.uint64)
-    df['body_b'] = df['body_b'].astype(np.uint64)
+    assert {*df.columns} >= {"body_a", "body_b", "score"}
     
     tasks = []
-    for row in tqdm_proxy(df.itertuples(), total=len(df)):
+    for row in df.itertuples():
         task = {
             # neu3 fields
             'task type': "type review",
