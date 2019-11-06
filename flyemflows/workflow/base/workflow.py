@@ -1,12 +1,17 @@
 import os
+import sys
 import logging
+import importlib
+
+from confiddler import load_config
 
 import neuclease
 from neuclease.util import Timer
 
+from ...util.dask_util import run_on_each_worker
+
 from .base_schema import BaseSchema
 from .contexts import environment_context, LocalResourceManager, WorkerDaemons, WorkflowClusterContext
-from ...util.dask_util import run_on_each_worker
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +34,83 @@ class Workflow(object):
         else:
             # Subclasses must implement schema() themselves.
             raise NotImplementedError
+
+
+    @classmethod
+    def get_workflow_cls(cls, name, exit_on_error=False):
+        """
+        Given a workflow name, return the corresponding Workflow subclass type.
+        
+        Args:
+            name:
+                Either the name of a 'builtin' workflow like 'CopyGrayscale',
+                or a user-defined workflow subclass like
+                'mypackage.mymodule.MyWorkflowSubclass'
+            
+            exit_on_error:
+                If True, raise a SystemExit exception if the named
+                class can't be found or has an unexpected type.
+
+        Returns:
+            A class (type), which is a subclass of Workflow.
+        """
+        # Avoid circular import
+        from .. import BUILTIN_WORKFLOWS
+        
+        # Is this a fully-qualified custom workflow name?
+        if '.' in name:
+            *parts, class_name = name.split('.')
+            module_name = '.'.join(parts)
+            module = importlib.import_module(module_name)
+            cls = getattr(module, class_name)
+            if not issubclass(cls, Workflow):
+                msg = f"Class is not a subclass of the Workflow base class: {cls}"
+                if exit_on_error:
+                    print(msg, file=sys.stderr)
+                    sys.exit(1)
+                raise RuntimeError(msg)
+            return cls
+    
+        # Is this a built-in workflow name?
+        for cls in BUILTIN_WORKFLOWS:
+            if name.lower() == cls.__name__.lower():
+                return cls
+    
+        msg = f"Unknown workflow: {name}"
+        if exit_on_error:
+            print(msg, file=sys.stderr)
+            sys.exit(1)
+        raise RuntimeError(msg)
+
+
+    @classmethod
+    def load_workflow_config(cls, template_dir):
+        """
+        Given a workload 'template' directory, load the config from
+        ``workflow.yaml`` (including injected defaults).
+        
+        Args:
+            template_dir:
+                A template directory containing workflow.yaml
+        
+        Returns:
+            (workflow_cls, config_data)
+            A tuple of the workflow class (a type) and the config data (a dict)
+        """
+        config_path = f'{template_dir}/workflow.yaml'
+        
+        if not os.path.exists(config_path):
+            raise RuntimeError(f"Error: workflow.yaml not found in {template_dir}")
+    
+        # Determine workflow type and load config
+        _cfg = load_config(config_path, {})
+        if "workflow-name" not in _cfg:
+            raise RuntimeError(f"Workflow config at {config_path} does not specify a workflow-name.")
+        
+        workflow_cls = Workflow.get_workflow_cls(_cfg['workflow-name'])
+        config_data = load_config(config_path, workflow_cls.schema())
+        return workflow_cls, config_data
+        
     
 
     def __init__(self, config, num_workers):

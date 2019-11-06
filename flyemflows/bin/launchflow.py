@@ -30,7 +30,6 @@ import time
 import shutil
 import logging
 import argparse
-import importlib
 import subprocess
 from datetime import datetime
 
@@ -88,13 +87,13 @@ def main():
         sys.exit(0)
 
     if args.dump_schema:
-        workflow_cls = get_workflow_cls(args.dump_schema, True)
+        workflow_cls = Workflow.get_workflow_cls(args.dump_schema, True)
         print(json.dumps(workflow_cls.schema(), indent=2))
         sys.exit(0)
 
     if args.dump_default_yaml:
         workflow_name = args.dump_default_yaml
-        workflow_cls = get_workflow_cls(workflow_name, True)
+        workflow_cls = Workflow.get_workflow_cls(workflow_name, True)
         schema = copy.deepcopy(workflow_cls.schema())
         schema["properties"]["workflow-name"]["default"] = workflow_name.lower()
         dump_default_config(schema, sys.stdout, 'yaml')
@@ -102,7 +101,7 @@ def main():
 
     if args.dump_default_verbose_yaml:
         worfklow_name = args.dump_default_verbose_yaml
-        workflow_cls = get_workflow_cls(worfklow_name, True)
+        workflow_cls = Workflow.get_workflow_cls(worfklow_name, True)
         schema = copy.deepcopy(workflow_cls.schema())
         schema["properties"]["workflow-name"]["default"] = worfklow_name.lower()
         dump_default_config(schema, sys.stdout, 'yaml-with-comments')
@@ -122,7 +121,7 @@ def main():
         sys.exit(1)
 
     if args.dump_complete_config:
-        workflow_cls, config_data = _load_workflow_config(args.template_dir)
+        workflow_cls, config_data = Workflow.load_workflow_config(args.template_dir)
         dump_config(config_data, sys.stdout)
         sys.exit(0)
     
@@ -172,7 +171,7 @@ def launch_flow(template_dir, num_workers, kill_cluster=True, _custom_execute_fn
         (execution_dir, workflow_inst)
     """
     template_dir = template_dir.rstrip('/')
-    workflow_cls, config_data = _load_workflow_config(template_dir)
+    workflow_cls, config_data = Workflow.load_workflow_config(template_dir)
     
     # Create execution dir (copy of template dir) and make it the CWD
     timestamp = f'{datetime.now():%Y%m%d.%H%M%S}'
@@ -235,22 +234,6 @@ def _log_flyemflows_version():
         logger.info(f"Running flyemflows from git repo at version: {git_rev}")
 
 
-def _load_workflow_config(template_dir):
-    config_path = f'{template_dir}/workflow.yaml'
-    
-    if not os.path.exists(config_path):
-        raise RuntimeError(f"Error: workflow.yaml not found in {template_dir}")
-
-    # Determine workflow type and load config
-    _cfg = load_config(config_path, {})
-    if "workflow-name" not in _cfg:
-        raise RuntimeError(f"Workflow config at {config_path} does not specify a workflow-name.")
-    
-    workflow_cls = get_workflow_cls(_cfg['workflow-name'])
-    config_data = load_config(config_path, workflow_cls.schema())
-    return workflow_cls, config_data
-    
-
 def _load_and_overwrite_dask_config(execution_dir, cluster_type):
     # Load dask config, inject defaults for (selected) missing entries, and overwrite in-place.
     dask_config_path = os.path.abspath(f'{execution_dir}/dask-config.yaml')
@@ -304,33 +287,6 @@ def _run_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cl
         os.chdir(orig_dir)
 
     return workflow_inst
-
-
-def get_workflow_cls(name, exit_on_error=False):
-    # Is this a fully-qualified custom workflow name?
-    if '.' in name:
-        *parts, class_name = name.split('.')
-        module_name = '.'.join(parts)
-        module = importlib.import_module(module_name)
-        cls = getattr(module, class_name)
-        if not issubclass(cls, Workflow):
-            msg = f"Class is not a subclass of the Workflow base class: {cls}"
-            if exit_on_error:
-                print(msg, file=sys.stderr)
-                sys.exit(1)
-            raise RuntimeError(msg)
-        return cls
-
-    # Is this a built-in workflow name?
-    for cls in BUILTIN_WORKFLOWS:
-        if name.lower() == cls.__name__.lower():
-            return cls
-
-    msg = f"Unknown workflow: {name}"
-    if exit_on_error:
-        print(msg, file=sys.stderr)
-        sys.exit(1)
-    raise RuntimeError(msg)
 
 
 if __name__ == "__main__":
