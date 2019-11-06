@@ -323,8 +323,13 @@ class WorkflowClusterContext:
     
 
     def __enter__(self):
-        self._init_dask()
-    
+        try:
+            self._init_dask()
+        except BaseException:
+            if not self.defer_cleanup:
+                self.cleanup()
+            raise
+
 
     def __exit__(self, *args):
         if not self.defer_cleanup:
@@ -370,7 +375,8 @@ class WorkflowClusterContext:
                     raise
                 
             self.workflow.cluster = None
-    
+
+
     def _init_dask(self):
         """
         Starts a dask cluster according to the workflow configuration.
