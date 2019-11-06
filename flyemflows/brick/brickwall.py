@@ -398,6 +398,6 @@ class BrickWall:
 
             strides = reverse_strides[::-1]
             index = (coord * strides).sum()
-            return np.uint32(index)
+            return np.int32(index)
 
         return _scan_order_index(location_id, wall_index_shape)

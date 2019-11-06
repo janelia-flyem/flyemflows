@@ -334,4 +334,5 @@ def get_workflow_cls(name, exit_on_error=False):
 
 
 if __name__ == "__main__":
+    #sys.argv += '-n 4 /tmp/test-config-dir'.split()
     sys.exit( main() )

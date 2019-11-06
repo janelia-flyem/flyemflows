@@ -78,13 +78,15 @@ class ScaledVolumeService(VolumeServiceReader):
         #       If we don't re-scale the preferred shape consistently for all data sources,
         #       then it's difficult for users to understand how they should write their config files.
         #
-        ms = (self.original_volume_service.preferred_message_shape // 2**self.scale_delta).astype(np.uint32)
+        orig = self.original_volume_service.preferred_message_shape
+        ms = (orig // 2**self.scale_delta)
+        ms = ms.astype(np.int32)
         ms = np.maximum(ms, 1) # Never shrink below 1 pixel in each dimension
         return ms
 
     @property
     def bounding_box_zyx(self):
-        bb = (self.original_volume_service.bounding_box_zyx // 2**self.scale_delta).astype(np.uint32)
+        bb = (self.original_volume_service.bounding_box_zyx // 2**self.scale_delta).astype(np.int32)
         
         # Avoid shrinking the bounding box to 0 pixels in any dimension.
         bb[1] = np.maximum(bb[1], bb[0]+1)
