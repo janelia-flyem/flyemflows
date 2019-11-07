@@ -669,24 +669,56 @@ def extract_fragments(edges_df, bois, processes):
 
 
 def extract_fragments_for_cc(group_cc, cc_df, bois):
+    """
+    Construct a graph from the given edge table and find all paths
+    that connect one BOI to another BOI (with no BOIs in between).
+    Each path is called a "fragment", stored as a tuple of the path's
+    nodes, starting with a BOI node and ending with a BOI node.
+
+    The path from A->B is returned once (where node id A < B).
+    The corresponding reverse path B->A is not returned.
+    
+    Args:
+        group_cc:
+            Arbitrary group ID
+        
+        cc_df:
+            Edge table with columns 'label_a', 'label_b', 
+    
+    Returns:
+    
+    """
     g = prepare_graph(cc_df, bois)
     nodes = pd.unique(cc_df[['label_a', 'label_b']].values.reshape(-1))
     boi_nodes = {*filter(lambda n: g.nodes[n]['boi'], nodes)}
-    fragments = []
 
+    fragments = []
     for n in boi_nodes:
+        # Find shortest paths to all other BOIs
         paths = nx.single_source_dijkstra_path(g,n, weight='distance')
         frags = [paths[target] for target in paths.keys() if target in boi_nodes]
+        
+        # Drop the 1-node (0-edge) path, (i.e. the starting node itself)
         frags = [*filter(lambda frag: len(frag) > 1, frags)]
+        
+        # Drop all paths that contain an intermediate BOI.
+        # (Keep only the paths with no BOIs along the way.)
         frags = [*filter(lambda frag: not boi_nodes.intersection(frag[1:-1]), frags)]
+
+        # The first and last nodes are BOIs.
         assert all([frag[0] in boi_nodes and frag[-1] in boi_nodes for frag in frags])
+
         fragments.extend(frags)
 
+    # Reverse order if necessary so the first node ID
+    # is less than the last node ID.
+    # That way paths and their reverse counterparts can be deduplicated below.
     for f in fragments:
         assert f[0] in boi_nodes and f[-1] in boi_nodes
         if f[0] > f[-1]:
             f[:] = f[::-1]
 
+    # Store as a set to deduplicate.
     fragments = {tuple(frag) for frag in fragments}
     return group_cc, fragments
 
@@ -762,6 +794,26 @@ def prepare_graph(cc_df, bois, consecutivize=False):
     This is useful when vizualizing the graph with hvplot,
     as a workaround for the following issue:
     https://github.com/pyviz/hvplot/issues/218
+    
+    Args:
+        cc_df:
+            Edge table with columns:
+                ['label_a', 'label_b', 'distance']
+            OR
+                ['body_a', 'body_b', 'distance']
+
+        bois:
+            Either a list of BOI IDs or a DataFrame with a 'body' column.
+            If a DataFrame, other columns will be used to populate node attributes.
+
+        consecutivize:
+            If True, don't use the body IDs as the graph node IDs.
+            Enumerate the bodies from 1..N+1 instead,
+            and store 'body' as a node attribute.
+            (This is a workaround for a bug in hvplot.)
+
+    Returns:
+        nx.Graph
     """
     if isinstance(bois, pd.DataFrame):
         boi_df = bois
