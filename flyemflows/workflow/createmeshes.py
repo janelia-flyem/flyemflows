@@ -501,6 +501,8 @@ class CreateMeshes(Workflow):
                 inner_box = box_intersection(brick.logical_box, brick.physical_box)
                 inner_box -= brick.physical_box[0]
                 inner_vol = extract_subvol(brick.volume, inner_box)
+                brick.compress() # Discard uncompressed
+                
                 label_counts = pd.Series(inner_vol.reshape(-1)).value_counts().sort_index()
                 label_counts.index.name = 'label'
                 label_counts.name = 'count'
