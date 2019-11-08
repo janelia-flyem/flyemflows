@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # TODO: Might be nice to be able to specify 'top N' for a DVID labelmap instance...
 BodyListSchema = {
-    "description": "List of body IDs (or supervoxel IDs) to process, or a path to a CSV file with the list.\n",
+    "description": "List of body IDs (or supervoxel IDs) to process, or a path to a CSV/JSON file with the list.\n",
     "oneOf": [
         {
             "description": "A list of body IDs (or supervoxel IDs).",

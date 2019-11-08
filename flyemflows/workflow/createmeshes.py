@@ -2,7 +2,6 @@ import os
 import copy
 import logging
 from itertools import chain
-from functools import partial
 
 import numpy as np
 import pandas as pd
@@ -12,10 +11,12 @@ import dask.bag as db
 import dask.dataframe as ddf
 from dask.delayed import delayed
 
-from neuclease.util import Timer, SparseBlockMask, box_intersection, extract_subvol
+from neuclease.util import Timer, SparseBlockMask, box_intersection, extract_subvol, parse_timestamp
 from neuclease.dvid import (fetch_mappings, fetch_repo_instances, create_tarsupervoxel_instance,
                             create_instance, is_locked, post_load, post_keyvalues, fetch_exists, fetch_keys,
-                            fetch_supervoxels, fetch_server_info, fetch_mapping)
+                            fetch_supervoxels, fetch_server_info, fetch_mapping, compute_affected_bodies,
+                            read_kafka_messages, filter_kafka_msgs_by_timerange)
+
 from dvid_resource_manager.client import ResourceManagerClient
 from dvidutils import LabelMapper
 
@@ -160,7 +161,9 @@ class CreateMeshes(Workflow):
 
     BodyListSchema = copy.copy(BodyListSchema)
     BodyListSchema["description"] = \
-        ("List of body IDs to process, or a path to a CSV file with the list.\n"
+        ("List of body IDs to process, a path to a CSV file with the list,\n"
+         "or a timestamp (e.g. '2018-11-22 17:34:00') which will be used with \n"
+         "the kafka log to determine bodies that have changed (since the given time).\n"
          "NOTE: If you're using a non-labelmap source (e.g. HDF5, etc.), \n"
          "      it is considered supervoxel data.\n"
          "      This config setting can only be used when using a labelmap source.\n")
@@ -500,6 +503,7 @@ class CreateMeshes(Workflow):
         """
         If the user's config specifies either subset-supervoxels,
         load them and return them.
+        
         If the user's config specifies subset-bodies (for a DVID source),
         return the set of all supervoxels contained by those bodies.
         
@@ -524,13 +528,22 @@ class CreateMeshes(Workflow):
         """
         options = self.config["createmeshes"]
         subset_supervoxels = load_body_list(options["subset-supervoxels"], True)
-        subset_bodies = load_body_list(options["subset-bodies"], False)
+        subset_bodies = options["subset-bodies"]
 
         if len(subset_supervoxels) and len(subset_bodies):
             raise RuntimeError("Can't use both subset-supervoxels and subset-bodies.  Choose one.")
 
         if len(subset_bodies) and not self.input_is_labelmap():
             raise RuntimeError("Can't use 'subset-bodies' unless your input is a DVID labelmap. Try subset-supervoxels.")
+
+        # Load subset_bodies from a list, CSV, JSON, or from the kafka log
+        assert isinstance(subset_bodies, (list, str))
+        
+        if isinstance(subset_bodies, list) or subset_bodies.endswith(".json") or subset_bodies.endswith(".csv"):
+            subset_bodies = load_body_list(options["subset-bodies"], False)
+        else:
+            # subset-bodies must be a timestamp
+            subset_bodies = self._determine_changed_labelmap_bodies(subset_bodies)
 
         # If user supplied bodies, convert to supervoxels.
         if self.input_is_labelmap_supervoxels() and len(subset_bodies) > 0:
@@ -583,6 +596,50 @@ class CreateMeshes(Workflow):
                                    "See subset-supervoxels and skip-existing")
                 
         return subset_supervoxels, existing_svs
+
+
+    def _determine_changed_labelmap_bodies(self, kafka_timestamp_string):
+        """
+        Read the entire labelmap kafka log, and determine
+        which bodies have changed since the given timestamp (a string).
+        
+        Example timestamps:
+            - "2018-11-22"
+            - "2018-11-22 17:34:00"
+            
+        Returns:
+            list of body IDs
+        """
+        logger.info(f"Determining which bodies have changed since {kafka_timestamp_string}")
+        
+        try:
+            kafka_timestamp = parse_timestamp(kafka_timestamp_string)
+        except:
+            raise RuntimeError(f"Could not parse your subset-bodies config setting ({kafka_timestamp_string}) "
+                               "as either a body list or a kafka timestamp")
+
+        if not self.input_is_labelmap():
+            raise RuntimeError("Can't specify subset-bodies as a kafka timestamp for sources other than DVID labelmap")
+
+        seg_instance = self.input_service.base_service.instance_triple
+
+        kafka_msgs = read_kafka_messages(*seg_instance)
+        filtered_kafka_msgs = filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp=kafka_timestamp)
+        
+        new_bodies, changed_bodies, _removed_bodies, new_supervoxels = compute_affected_bodies(filtered_kafka_msgs)
+        sv_split_bodies = set(fetch_mapping(*seg_instance, new_supervoxels)) - set([0])
+        
+        subset_bodies = set(chain(new_bodies, changed_bodies, sv_split_bodies))
+        subset_bodies = np.fromiter(subset_bodies, np.uint64)
+        subset_bodies = np.sort(subset_bodies).tolist()
+
+        if not subset_bodies:
+            raise RuntimeError("Based on your current settings, no meshes will be generated at all.\n"
+                               f"No bodies have changed since your specified timestamp {kafka_timestamp_string}")
+
+
+        logger.info(f"The kafka log shows that {len(subset_bodies)} have changed since ({kafka_timestamp_string})")
+        return subset_bodies
 
 
     def _determine_existing(self, all_svs):
