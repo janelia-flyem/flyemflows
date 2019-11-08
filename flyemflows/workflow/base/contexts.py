@@ -30,6 +30,7 @@ from os.path import splitext, basename
 import dask
 from distributed import Client, LocalCluster, get_worker
 
+from neuclease import configure_default_logging
 from neuclease.util import Timer
 import confiddler.json as json
 
@@ -388,10 +389,12 @@ class WorkflowClusterContext:
         implementations of a few functions from the DistributedCluster API.
         (Mostly just for convenient unit testing.)
         """
+        
         # Consider using client.register_worker_callbacks() to configure
         # - faulthandler (later)
         # - excepthook?
         # - (okay, maybe it's just best to put that stuff in __init__.py, like in DSS)
+
         self._write_driver_graph_urls()
 
         if self.config["cluster-type"] in JOBQUEUE_CLUSTERS:
@@ -452,6 +455,33 @@ class WorkflowClusterContext:
             if self.wait_for_workers and self.config["cluster-type"] == "lsf":
                 self._write_worker_graph_urls('graph-links.txt')
 
+            if self.wait_for_workers:
+                self._initialize_worker_logging()
+            else:
+                logger.warning("Not configuring worker logging!")
+
+
+    def _initialize_worker_logging(self):
+        """
+        Configure the logging module on the worker nodes.
+        
+        FIXME:
+            Ideally, this should be done via the distributed config,
+            using the "new style" logging configuration option.
+            (See distributed/config.py)
+            But I seem to recall some deficiency with that approach last
+            time I tried it, and I'm too lazy to try again right now.
+        """
+        def _configure_worker_logging():
+            configure_default_logging()
+            
+            # Levels copied from defaults in distributed/config.py 
+            logging.getLogger('distributed.client').setLevel(logging.WARNING)
+            logging.getLogger('bokeh').setLevel(logging.ERROR)
+            logging.getLogger('tornado').setLevel(logging.CRITICAL)
+            logging.getLogger('tornado.application').setLevel(logging.ERROR)
+            
+        self.workflow.run_on_each_worker(_configure_worker_logging, True, False)
 
     def _write_driver_graph_urls(self):
         """
