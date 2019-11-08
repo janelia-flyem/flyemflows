@@ -373,7 +373,7 @@ if __name__ == "__main__":
         warnings.warn("Disregarding CLUSTER_TYPE when running via __main__")
 
     import flyemflows
-    os.chdir(os.path.dirname(flyemflows.__file__))    
+    os.chdir(os.path.dirname(flyemflows.__file__))
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_createmeshes']
     #args += ['-x']

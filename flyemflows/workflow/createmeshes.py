@@ -240,15 +240,15 @@ class CreateMeshes(Workflow):
                          "ngmesh"], # "neuroglancer mesh" format -- a custom binary format.  See note above about scaling.
                 "default": "obj"
             },
-            "include-empty": {
-                "description": "Objects too small to generate proper meshes for may be 'serialized' as an empty buffer (0 bytes long).\n"
-                               "This setting specifies whether 0-byte files are uploaded to the destination server in such cases,\n"
-                               "or if they are omitted entirely.\n",
+            "skip-existing": {
+                "description": "Do not generate meshes for meshes that already exist in the output location.\n",
                 "type": "boolean",
                 "default": False
             },
-            "skip-existing": {
-                "description": "Do not generate meshes for meshes that already exist in the output location.\n",
+            "include-empty": {
+                "description": "Objects too small to generate proper meshes for may be 'serialized' as an empty buffer (0 bytes long).\n"
+                               "This setting specifies whether 0-byte files are uploaded to the destination server in such cases,\n"
+                               "or if they are omitted entirely.  May only be used in conjunction with 'skip-existing,'\n",
                 "type": "boolean",
                 "default": False
             },
@@ -286,6 +286,10 @@ class CreateMeshes(Workflow):
         if options['stitch-method'] == 'stitch' and options['halo'] != 1:
             logger.warn("Your config uses 'stitch' aggregation, but your halo != 1.\n"
                         "This will waste CPU and/or lead to unintuitive results.")
+
+        if options['include-empty'] and not options['skip-existing']:
+            raise RuntimeError("It's not permitted to use 'include-empty' unless 'skip-existing' was also used, "
+                               "to avoid overwriting potentially valid files with empty files.")
 
     def _init_input_service(self): 
         input_config = self.config["input"]
@@ -439,12 +443,12 @@ class CreateMeshes(Workflow):
 
         subset_supervoxels, existing_svs = self._load_subset_supervoxels()
 
-        bricks_ddf = self.init_bricks_ddf(self.input_service, subset_supervoxels)
+        bricks_ddf, subset_supervoxels = self.init_bricks_ddf(self.input_service, subset_supervoxels)
         bricks_ddf = bricks_ddf.persist()
         
         brick_counts_df = self._compute_all_brick_labelcounts(bricks_ddf, subset_supervoxels)
         brick_counts_df = self._compute_body_stats(brick_counts_df)
-        brick_counts_df = self._filter_svs(brick_counts_df, subset_supervoxels, existing_svs)
+        brick_counts_df, existing_svs = self._filter_svs(brick_counts_df, subset_supervoxels, existing_svs)
         num_brick_meshes = len(brick_counts_df)
 
         bricks_ddf, num_bricks = self._distribute_counts(bricks_ddf, brick_counts_df)
@@ -459,7 +463,7 @@ class CreateMeshes(Workflow):
 
         # TODO: Repartition?
 
-        self._write_meshes(sv_meshes_ddf)
+        self._write_meshes(sv_meshes_ddf, subset_supervoxels, existing_svs)
 
 
     def init_bricks_ddf(self, volume_service, subset_labels):
@@ -473,6 +477,9 @@ class CreateMeshes(Workflow):
             msg = f"Initializing BrickWall for {len(subset_labels)} labels"
             try:
                 brick_coords_df = volume_service.sparse_brick_coords_for_labels(subset_labels)
+                
+                # If any labels couldn't be found, we don't want those included in downstream decisions (e.g. for overwriting).
+                subset_labels = np.sort(brick_coords_df['label'].unique())
                 np.save('brick-coords.npy', brick_coords_df.to_records(index=False))
     
                 brick_shape = volume_service.preferred_message_shape
@@ -496,7 +503,7 @@ class CreateMeshes(Workflow):
         # Convert to dask.DataFrame
         bricks_ddf = BrickWall.bricks_as_ddf(brickwall.bricks, logical=True)
         bricks_ddf = bricks_ddf[['lz0', 'ly0', 'lx0', 'brick']]
-        return bricks_ddf
+        return bricks_ddf, subset_labels
 
 
     def _load_subset_supervoxels(self):
@@ -547,7 +554,7 @@ class CreateMeshes(Workflow):
 
         # If user supplied bodies, convert to supervoxels.
         if self.input_is_labelmap_supervoxels() and len(subset_bodies) > 0:
-            with Timer("Fetching supervoxel set for labelmap bodies", logger):
+            with Timer(f"Fetching supervoxel set for {len(subset_bodies)} labelmap bodies", logger):
                 seg_instance = self.input_service.base_service.instance_triple
                 def fetch_svs(body):
                     try:
@@ -571,6 +578,8 @@ class CreateMeshes(Workflow):
                 subset_supervoxels = list(chain(*(svs for body, svs in bodies_and_svs)))
                 if len(subset_supervoxels) == 0:
                     raise RuntimeError("None of the listed bodies could be found.  No supervoxels to process.")
+
+                logger.info(f"Selected bodies contain {len(subset_supervoxels)} supervoxels")
 
         if self.input_is_labelmap_bodies():
             assert len(subset_supervoxels) == 0, \
@@ -638,7 +647,7 @@ class CreateMeshes(Workflow):
                                f"No bodies have changed since your specified timestamp {kafka_timestamp_string}")
 
 
-        logger.info(f"The kafka log shows that {len(subset_bodies)} have changed since ({kafka_timestamp_string})")
+        logger.info(f"The kafka log shows that {len(subset_bodies)} bodies have changed since ({kafka_timestamp_string})")
         return subset_bodies
 
 
@@ -662,7 +671,7 @@ class CreateMeshes(Workflow):
 
             elif destination_type == 'tarsupervoxels':
                 tsv_instance = [destination['tarsupervoxels'][k] for k in ('server', 'uuid', 'instance')]
-                exists = fetch_exists(*tsv_instance, all_svs, batch_size=10_000, processes=32)
+                exists = fetch_exists(*tsv_instance, all_svs, batch_size=10_000, processes=32, show_progress=False)
                 existing_svs = set(exists[exists].index)
 
             elif destination_type == 'keyvalue':
@@ -795,7 +804,7 @@ class CreateMeshes(Workflow):
         num_svs = len(pd.unique(brick_counts_df['sv']))
         logger.info(f"After filtering, {num_svs} supervoxels remain, from {num_bodies} bodies.")
 
-        return brick_counts_df
+        return brick_counts_df, existing_svs
 
 
     def _distribute_counts(self, bricks_ddf, brick_counts_df):
@@ -928,18 +937,20 @@ class CreateMeshes(Workflow):
         return sv_meshes_ddf
 
 
-    def _write_meshes(self, sv_meshes_ddf):
+    def _write_meshes(self, sv_meshes_ddf, subset_supervoxels, existing_svs):
         options = self.config["createmeshes"]
-        destination = self.config["output"]
         fmt = options["format"]
         include_empty = options["include-empty"]
+        skip_existing = options["skip-existing"]
+        destination = self.config["output"]
         resource_mgr = self.resource_mgr_client
-        def write_sv_meshes(sv_meshes_df):
+        
+        def write_sv_meshes(sv_meshes_df, log=True):
             (destination_type,) = destination.keys()
             assert destination_type in ('directory', 'keyvalue', 'tarsupervoxels')
 
             names = [f"{sv}.{fmt}" for sv in sv_meshes_df['sv']]
-            binary_meshes = [serialize_mesh(sv, mesh, None, fmt=fmt)
+            binary_meshes = [serialize_mesh(sv, mesh, None, fmt=fmt, log=log)
                              for (sv, mesh) in sv_meshes_df[['sv', 'mesh']].itertuples(index=False)]
             keyvalues = dict(zip(names, binary_meshes))
             filesizes = [len(mesh_bytes) for mesh_bytes in keyvalues.values()]
@@ -966,8 +977,30 @@ class CreateMeshes(Workflow):
 
         with Timer("Writing meshes", logger):
             dtypes = {'sv': np.uint64, 'vertex_count': np.int64, 'compressed_size': int, 'file_size': int}
-            final_stats_df = sv_meshes_ddf.map_partitions(write_sv_meshes, meta=dtypes).clear_divisions().compute()
-            np.save('final-mesh-stats.npy', final_stats_df.to_records(index=False))
+            written_stats_df = sv_meshes_ddf.map_partitions(write_sv_meshes, meta=dtypes).clear_divisions().compute()
+
+        missing_svs = None
+        if include_empty and len(subset_supervoxels):
+            # This assertion guarantees that we won't overwrite any existing files with empty files
+            assert skip_existing, "Can't use include-empty without skip-existing"
+
+            # Write empty files for any supervoxels in the user's subset
+            # that we didn't even see in the data (e.g. because they don't exist at the scale we used).
+            missing_svs = set(subset_supervoxels) - set(written_stats_df['sv']) - existing_svs
+            
+        if not missing_svs:
+            final_stats_df = written_stats_df
+        else:
+            logger.warning(f"Writing empty files for {len(missing_svs)} labels from your subset which could not be found in the segmentation")
+            missing_sv_meshes_df = pd.DataFrame({'sv': list(missing_svs)}, dtype=np.uint64)
+            missing_sv_meshes_df['mesh'] = Mesh(np.zeros((0,3)), np.zeros((0,3))) # Empty mesh
+            missing_sv_meshes_df['vertex_count'] = np.int64(0)
+            missing_sv_meshes_df['compressed_size'] = 0
+            missing_sv_meshes_df['file_size'] = 0
+            missing_sv_meshes_df = write_sv_meshes(missing_sv_meshes_df, log=False)
+            final_stats_df = pd.concat((written_stats_df, missing_sv_meshes_df))
+
+        np.save('final-mesh-stats.npy', final_stats_df.to_records(index=False))
 
 
 def compute_brick_labelcounts(brick_df, subset_labels, export_labelcounts):
@@ -1103,20 +1136,32 @@ def generate_mesh(volume, box, label, smoothing, decimation, rescale_factor):
     return mesh, vertex_count, compressed_size
 
 
-def serialize_mesh(sv, mesh, path=None, fmt=None):
+def serialize_mesh(sv, mesh, path=None, fmt=None, log=True):
     """
     Call mesh.serialize(), but if an error occurs,
     log it and save an .obj to 'bad-meshes'
     """
-    logging.getLogger(__name__).info(f"Serializing mesh for {sv}")
+    if log:
+        logging.getLogger(__name__).info(f"Serializing mesh for {sv}")
+
     try:
         return mesh.serialize(path, fmt)
     except:
-        if not os.path.exists('bad-meshes'):
-            os.makedirs('bad-meshes', exist_ok=True)
-        output_path = f'bad-meshes/failed-serialization-{sv}.obj'
-        mesh.serialize(output_path, 'obj')
         logger = logging.getLogger(__name__)
-        logger.error(f"Failed to serialize mesh.  Wrote to {output_path}")
+        
+        msg = f"Failed to serialize mesh as {fmt}."
+        if path:
+            msg += f" Attempted to write to {path}"
+        try:
+            if not os.path.exists('bad-meshes'):
+                os.makedirs('bad-meshes', exist_ok=True)
+            output_path = f'bad-meshes/failed-serialization-{sv}.obj'
+            mesh.serialize(output_path, 'obj')
+            msg += f" Wrote to {output_path}"
+            logger.error(msg)
+        except Exception:
+            msg += "Couldn't write as OBJ, either."
+            logger.error(msg)
+
         return b''
 
