@@ -15,7 +15,7 @@ from neuclease.util import Timer, SparseBlockMask, box_intersection, extract_sub
 from neuclease.dvid import (fetch_mappings, fetch_repo_instances, create_tarsupervoxel_instance,
                             create_instance, is_locked, post_load, post_keyvalues, fetch_exists, fetch_keys,
                             fetch_supervoxels, fetch_server_info, fetch_mapping, compute_affected_bodies,
-                            read_kafka_messages, filter_kafka_msgs_by_timerange)
+                            read_kafka_messages, filter_kafka_msgs_by_timerange, resolve_ref)
 
 from dvid_resource_manager.client import ResourceManagerClient
 from dvidutils import LabelMapper
@@ -337,10 +337,13 @@ class CreateMeshes(Workflow):
                 uuid = base_input.uuid
                 output_cfg[instance_type]['uuid'] = uuid
 
+        # Resolve in case a branch was given instead of a specific uuid
+        uuid = resolve_ref(server, uuid)
+
         if is_locked(server, uuid):
             info = fetch_server_info(server)
             if "Mode" in info and info["Mode"] == "allow writes on committed nodes":
-                logger.warn(f"Output is a locked node ({uuid}), but server is in full-write mode.")
+                logger.warn(f"Output is a locked node ({uuid}), but server is in full-write mode. Proceeding.")
             else:
                 raise RuntimeError(f"Can't write to node {uuid} because it is locked.")
 

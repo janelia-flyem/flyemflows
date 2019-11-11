@@ -13,7 +13,7 @@ from dvid_resource_manager.client import ResourceManagerClient
 from dvidutils import LabelMapper
 
 from neuclease.util import Timer, choose_pyramid_depth, round_box
-from neuclease.dvid import ( fetch_repo_instances, fetch_instance_info, fetch_volume_box,
+from neuclease.dvid import ( fetch_repo_instances, resolve_ref, fetch_instance_info, fetch_volume_box,
                              fetch_raw, post_raw, fetch_labelarray_voxels, encode_labelarray_volume, post_labelmap_blocks,
                              update_extents, extend_list_value, create_voxel_instance, create_labelmap_instance,
                              fetch_mapping, fetch_mappings, fetch_labelindex, convert_labelindex_to_pandas )
@@ -108,7 +108,9 @@ DvidServiceSchema = \
             "type": "string",
         },
         "uuid": {
-            "description": "version node from dvid",
+            "description": "Version node from dvid.\n"
+                           "Alternatively, you can specify a dvid branch name,\n"
+                           "in which case the last UUID in the branch is used.\n",
             "type": "string"
         },
         "create-if-necessary": {
@@ -248,11 +250,17 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         ##
         ## server, uuid
         ##
+        ## Note:
+        ##   self.uuid will be resolved, but volume_config["dvid"]["uuid"]
+        ##   will not be overwritten. It will remain unresolved.
+        ##
         if not volume_config["dvid"]["server"].startswith('http://'):
             volume_config["dvid"]["server"] = 'http://' + volume_config["dvid"]["server"]
-        
+
         self._server = volume_config["dvid"]["server"]
-        self._uuid = volume_config["dvid"]["uuid"]
+        self._uuid = resolve_ref( volume_config["dvid"]["server"],
+                                  volume_config["dvid"]["uuid"] )
+
         self._throttle = volume_config["dvid"]["accept-throttling"]
 
         ##
@@ -278,7 +286,6 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
         except HTTPError as ex:
             if ex.response.status_code != 400:
                 raise
-
 
             if not volume_config["dvid"]["create-if-necessary"]:
                 existing_instances = fetch_repo_instances(self._server, self._uuid)

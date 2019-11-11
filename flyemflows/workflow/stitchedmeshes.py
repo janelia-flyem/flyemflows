@@ -149,17 +149,15 @@ class StitchedMeshes(Workflow):
         self._init_service()
         mgr_client = self.mgr_client
 
-        dvid_config = self.config["input"]["dvid"]
         options = self.config["stitchedmeshes"]
 
+        server, uuid, instance = self.input_service.base_service.instance_triple
         is_supervoxels = self.input_service.base_service.supervoxels
         bodies = load_body_list(options["bodies"], is_supervoxels)
         
         logger.info(f"Input is {len(bodies)} bodies")
         os.makedirs(options["output-directory"], exist_ok=True)
-        
-        server, uuid, instance = dvid_config["server"], dvid_config["uuid"], dvid_config["segmentation-name"]
-        
+
         def make_bricks(coord_and_block):
             coord_zyx, block_vol = coord_and_block
             logical_box = np.array((coord_zyx, coord_zyx + block_vol.shape))

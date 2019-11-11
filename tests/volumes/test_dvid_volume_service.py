@@ -72,6 +72,39 @@ def test_dvid_volume_service_grayscale(setup_dvid_repo, disable_auto_retry):
         assert (vol == extract_subvol(scaled_volumes[scale], scaled_box)).all()
 
 
+def test_dvid_volume_service_branch(setup_dvid_repo, disable_auto_retry):
+    server, uuid = setup_dvid_repo
+    instance_name = 'test-dvs-branch'
+
+    volume = np.random.randint(100, size=(256, 192, 128), dtype=np.uint8)
+    max_scale = 2
+    voxel_dimensions = [4.0, 4.0, 32.0]
+
+    config_text = textwrap.dedent(f"""\
+        dvid:
+          server: {server}
+          uuid: master
+          grayscale-name: {instance_name}
+          
+          create-if-necessary: true
+          creation-settings:
+            max-scale: {max_scale}
+            voxel-size: {voxel_dimensions}
+       
+        geometry:
+          bounding-box: [[0,0,0], {list(volume.shape[::-1])}]
+    """)
+
+    yaml = YAML()
+    with StringIO(config_text) as f:
+        volume_config = yaml.load(f)
+
+    assert instance_name not in fetch_repo_instances(server, uuid)
+
+    service = VolumeService.create_from_config( volume_config )
+    assert service.uuid == uuid
+    
+
 def test_dvid_volume_service_labelmap(setup_dvid_repo, random_segmentation, disable_auto_retry):
     server, uuid = setup_dvid_repo
     instance_name = 'test-dvs-labelmap'
@@ -166,5 +199,5 @@ def test_dvid_volume_service_labelmap(setup_dvid_repo, random_segmentation, disa
 
 if __name__ == "__main__":
     args = ['-s', '--tb=native', '--pyargs', 'tests.volumes.test_dvid_volume_service']
-    #args += ['-k', 'dvid_volume_service_labelmap']
+    #args += ['-k', 'dvid_volume_service_branch']
     pytest.main(args)

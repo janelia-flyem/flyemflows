@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import signal
+import shutil
 import subprocess
 
 import pytest
@@ -38,6 +39,7 @@ max_log_age = 30   # days
     path = "{DVID_STORE_PATH}"
 """
 
+
 @pytest.fixture(scope="session")
 def setup_dvid_repo():
     """
@@ -61,7 +63,11 @@ def setup_dvid_repo():
             dvid_server_proc.send_signal(signal.SIGKILL)
         print("DVID test server is terminated.")
 
+
 def _launch_dvid_server():
+    # Start with a completely empty database
+    shutil.rmtree(DVID_STORE_PATH)
+    
     os.makedirs(DVID_STORE_PATH, exist_ok=True)
     with open(DVID_CONFIG_PATH, 'w') as f:
         f.write(DVID_CONFIG)
@@ -73,17 +79,23 @@ def _launch_dvid_server():
         raise RuntimeError(f"dvid couldn't be launched.  Exited with code: {dvid_proc.returncode}")
     return dvid_proc, DVID_ADDRESS
 
+
 def _init_test_repo(dvid_address, reuse_existing=True):
     TEST_REPO_ALIAS = 'flyemflows-test'
 
+    repos_info = fetch_repos_info(dvid_address)
     if reuse_existing:
-        repos_info = fetch_repos_info(dvid_address)
         for repo_uuid, repo_info in repos_info.items():
             if repo_info["Alias"] == TEST_REPO_ALIAS:
                 return repo_uuid
+#     else:
+#         # Delete all the old repos
+#         for repo_uuid in repos_info.keys():
+#             subprocess.run(f'dvid repos delete {repo_uuid}', shell=True, check=False)
 
     repo_uuid = create_repo(dvid_address, TEST_REPO_ALIAS, 'Test repo for neuclease integration tests')
     return repo_uuid
+
 
 @pytest.fixture
 def disable_auto_retry():
@@ -100,6 +112,7 @@ def disable_auto_retry():
         yield
     finally:
         flyemflows.util._auto_retry.FLYEMFLOWS_DISABLE_AUTO_RETRY = False
+
 
 @pytest.fixture(scope='session')
 def random_segmentation():

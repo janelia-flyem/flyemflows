@@ -113,7 +113,6 @@ class SparseMeshes(Workflow):
         self._init_service()
         mgr_client = self.mgr_client
 
-        input_config = self.config["input"]
         options = self.config["sparsemeshes"]
         max_box_voxels = options["max-analysis-volume"]
         min_scale = options["min-scale"]
@@ -121,10 +120,7 @@ class SparseMeshes(Workflow):
         smoothing_iterations = options["smoothing-iterations"]
         decimation_fraction = options["decimation-fraction"]
 
-        server, uuid, instance = (input_config["dvid"]["server"],
-                                  input_config["dvid"]["uuid"],
-                                  input_config["dvid"]["segmentation-name"])
-
+        server, uuid, instance = self.input_service.base_service.instance_triple
         is_supervoxels = self.input_service.base_service.supervoxels
 
         bodies = load_body_list(options["bodies"], is_supervoxels)
