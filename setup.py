@@ -24,6 +24,7 @@ setup( name='flyemflows',
               'launchflow = flyemflows.bin.launchflow:main',
               'init_dvid_bucket = flyemflows.bin.init_dvid_bucket:main',
               'ingest_label_indexes = flyemflows.bin.ingest_label_indexes:main',
+              'mesh_update_daemon = flyemflows.bin.mesh_update_daemon:main',
           ]
        }
      )

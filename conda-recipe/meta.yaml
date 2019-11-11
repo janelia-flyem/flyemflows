@@ -27,6 +27,7 @@ requirements:
     - numba
     - scipy
     - scikit-image
+    - fabric
 
     # FlyEM mesh library
     - vol2mesh
