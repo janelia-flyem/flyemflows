@@ -974,7 +974,7 @@ class CreateMeshes(Workflow):
                     elif 'keyvalue' in destination:
                         post_keyvalues(*instance, keyvalues)
 
-            result_df = sv_meshes_df[['sv', 'vertex_count', 'compressed_size']]
+            result_df = sv_meshes_df[['sv', 'vertex_count', 'compressed_size']].copy()
             result_df['file_size'] = filesizes
             return result_df
 
