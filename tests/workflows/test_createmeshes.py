@@ -193,7 +193,6 @@ def test_createmeshes_basic(setup_createmeshes_config, disable_auto_retry):
     #print(execution_dir)
     check_outputs(execution_dir, object_boxes)
 
-
 def test_createmeshes_to_tarsupervoxels(setup_createmeshes_config, disable_auto_retry):
     template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
      
@@ -288,11 +287,12 @@ def test_createmeshes_subset_bodies(setup_createmeshes_config, disable_auto_retr
 
 def test_createmeshes_bad_subset_bodies(setup_createmeshes_config, disable_auto_retry):
     """
-    If one (or more) of the listed bodies no longer exists, DVID returns a 404 when we try to fetch its supervoxels.
+    If one (or more) of the listed bodies no longer exists,
+    DVID returns a 404 when we try to fetch its supervoxels.
     The job should complete anyway, for the other bodies.
     """
     template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
-    config['createmeshes']['subset-bodies'] = [100,999]
+    config['createmeshes']['subset-bodies'] = [100,999] # 999 doesn't exist
     YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
     
     execution_dir, _workflow = launch_flow(template_dir, 1)
@@ -367,6 +367,46 @@ def test_createmeshes_skip_existing(setup_createmeshes_config, disable_auto_retr
     check_outputs(execution_dir, object_boxes, subset_labels=[100,300])
 
 
+def test_createmeshes_from_body_source(setup_createmeshes_config, disable_auto_retry):
+    template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
+    config["input"]["dvid"]["supervoxels"] = False
+    YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
+
+    execution_dir, _workflow = launch_flow(template_dir, 1)
+    #print(execution_dir)
+
+    # In this test, each supervoxel is its own body anyway.
+    check_outputs(execution_dir, object_boxes)
+
+def test_createmeshes_from_body_source_subset_bodies(setup_createmeshes_config, disable_auto_retry):
+    template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
+    
+    config["input"]["dvid"].update({
+        "supervoxels": False
+    })
+
+    config["input"]["geometry"].update({
+        "message-block-shape": [128,128,128]
+    })
+
+    config["input"]["adapters"] = {
+        "rescale-level": 1
+    }
+
+    config["createmeshes"].update({
+        "subset-bodies": [100,300],
+        "rescale-before-write": 2.0
+    })
+
+    YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
+
+    execution_dir, _workflow = launch_flow(template_dir, 1)
+    #print(execution_dir)
+
+    # In this test, each supervoxel is its own body anyway.
+    check_outputs(execution_dir, object_boxes, [100,300])
+
+
 if __name__ == "__main__":
     if 'CLUSTER_TYPE' in os.environ:
         import warnings
@@ -378,5 +418,5 @@ if __name__ == "__main__":
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_createmeshes']
     #args += ['-x']
     #args += ['-Werror']
-    #args += ['-k', 'createmeshes_bad_subset_svs']
+    #args += ['-k', 'createmeshes_from_body_source or createmeshes_from_body_source_subset_bodies']
     pytest.main(args)

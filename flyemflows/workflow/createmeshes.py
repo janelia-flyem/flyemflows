@@ -894,7 +894,7 @@ class CreateMeshes(Workflow):
             except Exception as ex:
                 # Re-raise with the whole input
                 # (Can't use exception chaining, sadly.)
-                raise Exception('WrappedError:', type(ex), sv_brick_meshes_df.index, sv_brick_meshes_df.columns.tolist(), str(sv_brick_meshes_df.iloc[0]))
+                raise Exception('WrappedError:', type(ex), ex, sv_brick_meshes_df.index, sv_brick_meshes_df.columns.tolist(), str(sv_brick_meshes_df.iloc[0]))
 
             assert (sv_brick_meshes_df['sv'] == sv).all()
 
