@@ -821,7 +821,8 @@ class CreateMeshes(Workflow):
 
             # Send count lists to their respective bricks
             # Use an inner merge to discard bricks that had no objects of interest.
-            brick_counts_grouped_ddf = ddf.from_pandas(brick_counts_grouped_df, npartitions=1) # FIXME: What's good here?
+            brick_counts_grouped_ddf = ddf.from_delayed([delayed(brick_counts_grouped_df)],
+                                                        meta=brick_counts_grouped_df.iloc[0:0])
             bricks_ddf = bricks_ddf.merge(brick_counts_grouped_ddf, 'inner', ['lz0', 'ly0', 'lx0'])
             bricks_ddf = drop_empty_partitions(bricks_ddf)
 
