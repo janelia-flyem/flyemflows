@@ -2,7 +2,7 @@ import os
 import zlib
 import json
 import logging
-from itertools import starmap
+from itertools import starmap, chain
 
 import numpy as np
 import pandas as pd
@@ -339,7 +339,7 @@ def generate_mergereview_assignments_from_df_OLD(server, uuid, instance, mr_frag
     return assignments
 
 
-def generate_mergereview_assignments_from_df(server, uuid, instance, mr_fragments_df, bois, assignment_size, output_dir):
+def generate_mergereview_assignments_from_df(server, uuid, instance, mr_fragments_df, bois, assignment_size, output_dir, single_file=False):
     """
     Generate a set of assignments for the given mergereview fragments.
     The assignments are written to a nested hierarchy:
@@ -398,26 +398,39 @@ def generate_mergereview_assignments_from_df(server, uuid, instance, mr_fragment
         num_bodies = group_size+1
         all_tasks[num_bodies] = group_tasks
 
-    # Now that the task json data has been generated and split into groups (by body count),
-    # write them into multiple directories (one per group), each of which has muliple files
-    # (one per task batch, as specified by assignment_size)
-    for num_bodies, group_tasks in all_tasks.items():
-        output_subdir = f'{output_dir}/{num_bodies:02}-bodies'
-        os.makedirs(output_subdir, exist_ok=True)
-        for i, batch_start in enumerate(tqdm_proxy(range(0, len(group_tasks), assignment_size), leave=False)):
-            output_path = f"{output_dir}/{num_bodies:02}-bodies/assignment-{i:04d}.json"
-
-            batch_tasks = group_tasks[batch_start:batch_start+assignment_size]
-            assignment = {
-                "file type":"Neu3 task list",
-                "file version":1,
-                "task list": batch_tasks
-            }
-
-            with open(output_path, 'w') as f:
-                #json.dump(assignment, f, indent=2)
-                pretty_print_assignment_json_items(assignment.items(), f)
+    if single_file:
+        # In single-file mode, the 'output_dir' is interpreted as the assignment path
+        assert output_dir.endswith('.json')
+        output_path = output_dir
+        assignment = {
+            "file type":"Neu3 task list",
+            "file version":1,
+            "task list": list(chain(*all_tasks.values()))
+        }
+        with open(output_path, 'w') as f:
+            #json.dump(assignment, f, indent=2)
+            pretty_print_assignment_json_items(assignment.items(), f)
+    else:
+        # Now that the task json data has been generated and split into groups (by body count),
+        # write them into multiple directories (one per group), each of which has muliple files
+        # (one per task batch, as specified by assignment_size)
+        for num_bodies, group_tasks in all_tasks.items():
+            output_subdir = f'{output_dir}/{num_bodies:02}-bodies'
+            os.makedirs(output_subdir, exist_ok=True)
+            for i, batch_start in enumerate(tqdm_proxy(range(0, len(group_tasks), assignment_size), leave=False)):
+                output_path = f"{output_dir}/{num_bodies:02}-bodies/assignment-{i:04d}.json"
     
+                batch_tasks = group_tasks[batch_start:batch_start+assignment_size]
+                assignment = {
+                    "file type":"Neu3 task list",
+                    "file version":1,
+                    "task list": batch_tasks
+                }
+    
+                with open(output_path, 'w') as f:
+                    #json.dump(assignment, f, indent=2)
+                    pretty_print_assignment_json_items(assignment.items(), f)
+
     return all_tasks
 
 
