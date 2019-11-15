@@ -11,7 +11,7 @@ import dask.bag as db
 import dask.dataframe as ddf
 from dask.delayed import delayed
 
-from neuclease.util import Timer, SparseBlockMask, box_intersection, extract_subvol, parse_timestamp
+from neuclease.util import Timer, SparseBlockMask, box_intersection, extract_subvol, parse_timestamp, switch_cwd, iter_batches
 from neuclease.dvid import (fetch_mappings, fetch_repo_instances, create_tarsupervoxel_instance,
                             create_instance, is_locked, post_load, post_keyvalues, fetch_exists, fetch_keys,
                             fetch_supervoxels, fetch_server_info, fetch_mapping, compute_affected_bodies,
@@ -256,6 +256,12 @@ class CreateMeshes(Workflow):
                 "description": "Debugging feature.  Export labelcount DataFrames.",
                 "type": "boolean",
                 "default": False
+            },
+            "subset-batch-size": {
+                "description": "Instead of computing all meshes in one big batch, break them into smaller batches of the given size.\n"
+                               "Only allowed when using 'subset-supervoxels' or 'subset-bodies'.\n",
+                "type": "integer",
+                "default": 0
             }
         }
     }
@@ -291,6 +297,9 @@ class CreateMeshes(Workflow):
             raise RuntimeError("It's not permitted to use 'include-empty' unless 'skip-existing' was also used, "
                                "to avoid overwriting potentially valid files with empty files.")
 
+        if options['subset-batch-size'] > 0 and not (options['subset-supervoxels'] or options['subset-bodies']):
+            raise RuntimeError("The batch feature is not supported unless you explicitly specify subset-supervoxels or subset-bodies.")
+
     def _init_input_service(self): 
         input_config = self.config["input"]
         resource_config = self.config["resource-manager"]
@@ -309,6 +318,8 @@ class CreateMeshes(Workflow):
 
         ## directory output
         if 'directory' in output_cfg:
+            # Convert to absolute so we can chdir with impunity later.
+            output_cfg['directory'] = os.path.abspath(output_cfg['directory'])
             os.makedirs(output_cfg['directory'], exist_ok=True)
             return
 
@@ -421,9 +432,6 @@ class CreateMeshes(Workflow):
         
         TODO:
             - max-body-vertices option
-            - Post empty meshes for 'evaporated' supervoxels,
-              or follow up with a post-processing step to handle them at scale 0,
-              or at least emit a list of the meshes that were not generated.
             - Rethink terminolgy (supervoxel vs label vs body)
             - Rethink brick_counts_df (label counts) - how can I reduce the size of that data?
               -- drop unnecessary 'label' column?
@@ -445,39 +453,59 @@ class CreateMeshes(Workflow):
         self._prepare_output()
 
         subset_supervoxels, existing_svs = self._load_subset_supervoxels()
+        batch_size = self.config["createmeshes"]["subset-batch-size"]
+        
+        if batch_size == 0:
+            self.execute_batch(0, subset_supervoxels, existing_svs)
+        else:
+            assert len(subset_supervoxels) > 0
 
-        bricks_ddf, subset_supervoxels = self.init_bricks_ddf(self.input_service, subset_supervoxels)
+            batches = iter_batches(subset_supervoxels, batch_size)
+            logger.info(f"Creating meshes in {len(batches)} batches")
+
+            for batch_index, batch_subset_svs in enumerate(batches):
+                batch_existing_svs = None
+                if existing_svs is not None:
+                    batch_existing_svs = existing_svs & set(batch_subset_svs)
+                
+                with Timer(f"Batch {batch_index:02}: Running batch", logger):
+                    with switch_cwd(f'batch-{batch_index:02d}', create=True):
+                        self.execute_batch(batch_index, batch_subset_svs, batch_existing_svs)
+
+
+    def execute_batch(self, batch_index, subset_supervoxels, existing_svs):
+        bricks_ddf, subset_supervoxels = self.init_bricks_ddf(batch_index, self.input_service, subset_supervoxels)
         bricks_ddf = bricks_ddf.persist()
         
-        brick_counts_df = self._compute_all_brick_labelcounts(bricks_ddf, subset_supervoxels)
-        brick_counts_df = self._compute_body_stats(brick_counts_df)
-        brick_counts_df, existing_svs = self._filter_svs(brick_counts_df, subset_supervoxels, existing_svs)
+        brick_counts_df = self._compute_all_brick_labelcounts(batch_index, bricks_ddf, subset_supervoxels)
+        brick_counts_df = self._compute_body_stats(batch_index, brick_counts_df)
+        brick_counts_df, existing_svs = self._filter_svs(batch_index, brick_counts_df, subset_supervoxels, existing_svs)
         num_brick_meshes = len(brick_counts_df)
 
-        bricks_ddf, num_bricks = self._distribute_counts(bricks_ddf, brick_counts_df)
+        bricks_ddf, num_bricks = self._distribute_counts(batch_index, bricks_ddf, brick_counts_df)
         del brick_counts_df
         
-        brick_meshes_ddf = self._compute_brickwise_meshes(bricks_ddf, num_brick_meshes, num_bricks)
+        brick_meshes_ddf = self._compute_brickwise_meshes(batch_index, bricks_ddf, num_brick_meshes, num_bricks)
         
         # TODO: max-body-vertices (before assembly...)
 
-        sv_meshes_ddf = self._combine_brick_meshes(brick_meshes_ddf)
+        sv_meshes_ddf = self._combine_brick_meshes(batch_index, brick_meshes_ddf)
         del brick_meshes_ddf
 
         # TODO: Repartition?
 
-        self._write_meshes(sv_meshes_ddf, subset_supervoxels, existing_svs)
+        self._write_meshes(batch_index, sv_meshes_ddf, subset_supervoxels, existing_svs)
 
 
-    def init_bricks_ddf(self, volume_service, subset_labels):
+    def init_bricks_ddf(self, batch_index, volume_service, subset_labels):
         """
         Initialize a BrickWall from the given volume service and (optionally) a subset of labels,
         and convert it to a dask.DataFrame of bricks before returning it.
         """
         sbm = None
-        msg = "Initializing BrickWall"
+        msg = f"Batch {batch_index:02}: Initializing BrickWall"
         if len(subset_labels) > 0:
-            msg = f"Initializing BrickWall for {len(subset_labels)} labels"
+            msg = f"Batch {batch_index:02}: Initializing BrickWall for {len(subset_labels)} labels"
             try:
                 brick_coords_df = volume_service.sparse_brick_coords_for_labels(subset_labels)
                 
@@ -686,7 +714,7 @@ class CreateMeshes(Workflow):
         return existing_svs
 
 
-    def _compute_all_brick_labelcounts(self, bricks_ddf, subset_supervoxels):
+    def _compute_all_brick_labelcounts(self, batch_index, bricks_ddf, subset_supervoxels):
         """
         Compute the brickwise labelcounts for 
         """
@@ -695,9 +723,9 @@ class CreateMeshes(Workflow):
             os.makedirs('brick_ddf_partitions')
             os.makedirs('brick_labelcounts')
 
-        with Timer("Computing brickwise labelcounts", logger):
+        with Timer(f"Batch {batch_index:02}: Computing brickwise labelcounts", logger):
             if export_labelcounts:
-                logger.info(" *** Also exporting labelcounts (slow) ***")
+                logger.info(f"Batch {batch_index:02}:  *** Also exporting labelcounts (slow) ***")
 
             dtypes = {'label': np.uint64, 'count': np.int64,
                       'lz0': np.int32, 'ly0': np.int32, 'lx0': np.int32}
@@ -717,8 +745,8 @@ class CreateMeshes(Workflow):
 
         return brick_counts_df
 
-    def _compute_body_stats(self, brick_counts_df):
-        with Timer("Aggregating brick stats into body stats", logger):
+    def _compute_body_stats(self, batch_index, brick_counts_df):
+        with Timer(f"Batch {batch_index:02}: Aggregating brick stats into body stats", logger):
             if self.input_is_labelmap_supervoxels():
                 seg_instance = self.input_service.base_service.instance_triple
     
@@ -749,7 +777,7 @@ class CreateMeshes(Workflow):
             brick_counts_df = brick_counts_df.merge(total_sv_counts, 'left', 'sv')
             brick_counts_df = brick_counts_df.merge(total_body_counts, 'left', 'body')
 
-        with Timer("Exporting brick sv/body sizes", logger):
+        with Timer(f"Batch {batch_index:02}: Exporting brick sv/body sizes", logger):
             np.save('brick-counts.npy', brick_counts_df.to_records(index=False))
             np.save('sv-sizes.npy', total_sv_counts.to_records(index=False))
             np.save('body-sizes.npy', total_body_counts.to_records(index=False))
@@ -757,7 +785,7 @@ class CreateMeshes(Workflow):
         return brick_counts_df
 
 
-    def _filter_svs(self, brick_counts_df, subset_supervoxels, existing_svs):
+    def _filter_svs(self, batch_index, brick_counts_df, subset_supervoxels, existing_svs):
         """
         Filter the brickwise label counts based on the user's config for:
             - subset-supervoxels
@@ -766,7 +794,7 @@ class CreateMeshes(Workflow):
             - pre-existing meshes
         """
         options = self.config["createmeshes"]
-        with Timer("Filtering", logger):
+        with Timer(f"Batch {batch_index:02}: Filtering", logger):
             # Filter for subset
             # (For DVID labelmap sources, this has already been done,
             #  but for other sources, we can only filter after reading the data.)
@@ -800,18 +828,18 @@ class CreateMeshes(Workflow):
                                        "All possible meshes already exist in the destination location.\n"
                                        "To regenerate them anyway, use 'skip-existing: false'")
 
-        with Timer("Saving filtered brick counts", logger):
+        with Timer(f"Batch {batch_index:02}: Saving filtered brick counts", logger):
             np.save('filtered-brick-counts.npy', brick_counts_df.to_records(index=False))
 
         num_bodies = len(pd.unique(brick_counts_df['body']))
         num_svs = len(pd.unique(brick_counts_df['sv']))
-        logger.info(f"After filtering, {num_svs} supervoxels remain, from {num_bodies} bodies.")
+        logger.info(f"Batch {batch_index:02}: After filtering, {num_svs} supervoxels remain, from {num_bodies} bodies.")
 
         return brick_counts_df, existing_svs
 
 
-    def _distribute_counts(self, bricks_ddf, brick_counts_df):
-        with Timer("Distributing counts", logger):
+    def _distribute_counts(self, batch_index, bricks_ddf, brick_counts_df):
+        with Timer(f"Batch {batch_index:02}: Distributing counts", logger):
             brick_counts_grouped_df = (brick_counts_df
                                         .groupby(['lz0', 'ly0', 'lx0'])[['sv', 'sv_size', 'body', 'body_size']]
                                         .agg(list)
@@ -829,7 +857,7 @@ class CreateMeshes(Workflow):
         return bricks_ddf, len(brick_counts_grouped_df)
 
 
-    def _compute_brickwise_meshes(self, bricks_ddf, num_brick_meshes, num_bricks):
+    def _compute_brickwise_meshes(self, batch_index, bricks_ddf, num_brick_meshes, num_bricks):
         options = self.config["createmeshes"]
         def compute_meshes_for_bricks(bricks_partition_df):
             assert len(bricks_partition_df) > 0, "partition is empty" # drop_empty_partitions() should have eliminated these.
@@ -866,7 +894,7 @@ class CreateMeshes(Workflow):
         brick_meshes_ddf = bricks_ddf.map_partitions(compute_meshes_for_bricks, meta=dtypes).clear_divisions()
         brick_meshes_ddf = brick_meshes_ddf.persist()
 
-        msg = f"Computing {num_brick_meshes} brickwise meshes from {num_bricks} bricks"
+        msg = f"Batch {batch_index:02}: Computing {num_brick_meshes} brickwise meshes from {num_bricks} bricks"
         with Timer(msg, logger):
             # Export brick mesh statistics
             os.makedirs('brick-mesh-stats')
@@ -879,7 +907,7 @@ class CreateMeshes(Workflow):
         return brick_meshes_ddf
 
 
-    def _combine_brick_meshes(self, brick_meshes_ddf):
+    def _combine_brick_meshes(self, batch_index, brick_meshes_ddf):
         options = self.config["createmeshes"]
         final_smoothing = options["post-stitch-parameters"]["smoothing"]
         final_decimation = options["post-stitch-parameters"]["decimation"]
@@ -931,7 +959,7 @@ class CreateMeshes(Workflow):
         del sv_brick_meshes_dgb
         sv_meshes_ddf = drop_empty_partitions(sv_meshes_ddf)
 
-        with Timer("Combining brick meshes", logger):
+        with Timer(f"Batch {batch_index:02}: Combining brick meshes", logger):
             # Export stitched mesh statistics
             os.makedirs('stitched-mesh-stats')
             
@@ -941,7 +969,7 @@ class CreateMeshes(Workflow):
         return sv_meshes_ddf
 
 
-    def _write_meshes(self, sv_meshes_ddf, subset_supervoxels, existing_svs):
+    def _write_meshes(self, batch_index, sv_meshes_ddf, subset_supervoxels, existing_svs):
         options = self.config["createmeshes"]
         fmt = options["format"]
         include_empty = options["include-empty"]
@@ -979,7 +1007,7 @@ class CreateMeshes(Workflow):
             result_df['file_size'] = filesizes
             return result_df
 
-        with Timer("Writing meshes", logger):
+        with Timer(f"Batch {batch_index:02}: Writing meshes", logger):
             dtypes = {'sv': np.uint64, 'vertex_count': np.int64, 'compressed_size': int, 'file_size': int}
             written_stats_df = sv_meshes_ddf.map_partitions(write_sv_meshes, meta=dtypes).clear_divisions().compute()
 
@@ -995,7 +1023,7 @@ class CreateMeshes(Workflow):
         if not missing_svs:
             final_stats_df = written_stats_df
         else:
-            logger.warning(f"Writing empty files for {len(missing_svs)} labels from your subset which could not be found in the segmentation")
+            logger.warning(f"Batch {batch_index:02}: Writing empty files for {len(missing_svs)} labels from your subset which could not be found in the segmentation")
             missing_sv_meshes_df = pd.DataFrame({'sv': list(missing_svs)}, dtype=np.uint64)
             missing_sv_meshes_df['mesh'] = Mesh(np.zeros((0,3)), np.zeros((0,3))) # Empty mesh
             missing_sv_meshes_df['vertex_count'] = np.int64(0)

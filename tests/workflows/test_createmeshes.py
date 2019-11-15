@@ -159,16 +159,18 @@ def setup_createmeshes_config(setup_segmentation_input, disable_auto_retry):
     return template_dir, config, dvid_address, repo_uuid, object_boxes, object_sizes
 
 
-def check_outputs(execution_dir, object_boxes, subset_labels=None):
+def check_outputs(execution_dir, object_boxes, subset_labels=None, stats_dir=None):
     """
     Basic checks to make sure the meshes for the given labels were
     generated and not terribly wrong.
     """
+    stats_dir = stats_dir or execution_dir
+    
     # Check all test objects by default.
     if subset_labels is None:
         subset_labels = sorted(object_boxes.keys())
 
-    df = pd.DataFrame( np.load(f'{execution_dir}/final-mesh-stats.npy') )
+    df = pd.DataFrame( np.load(f'{stats_dir}/final-mesh-stats.npy') )
     assert len(df) == len(subset_labels)
     df.set_index('sv', inplace=True)
 
@@ -308,6 +310,18 @@ def test_createmeshes_bad_subset_bodies(setup_createmeshes_config, disable_auto_
     check_outputs(execution_dir, object_boxes, subset_labels=[100])
 
 
+def test_createmeshes_subset_bodies_in_batches(setup_createmeshes_config, disable_auto_retry):
+    template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
+    config['createmeshes']['subset-bodies'] = [100,200,300]
+    config['createmeshes']['subset-batch-size'] = 2
+    YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
+    
+    execution_dir, _workflow = launch_flow(template_dir, 1)
+
+    check_outputs(execution_dir, object_boxes, subset_labels=[100,200], stats_dir=f'{execution_dir}/batch-00')
+    check_outputs(execution_dir, object_boxes, subset_labels=[300], stats_dir=f'{execution_dir}/batch-01')
+
+
 def test_createmeshes_filter_supervoxels(setup_createmeshes_config, disable_auto_retry):
     template_dir, config, _dvid_address, _repo_uuid, object_boxes, object_sizes = setup_createmeshes_config
 
@@ -418,5 +432,5 @@ if __name__ == "__main__":
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_createmeshes']
     #args += ['-x']
     #args += ['-Werror']
-    #args += ['-k', 'createmeshes_from_body_source or createmeshes_from_body_source_subset_bodies']
+    #args += ['-k', 'createmeshes_subset_bodies_in_batches']
     pytest.main(args)
