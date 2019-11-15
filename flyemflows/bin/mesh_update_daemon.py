@@ -14,7 +14,7 @@ Example usage:
      
     # Start the job in the background.
     # Since it handles SIGHUP, it should remain running after your terminal closes.
-    ${DAEMON_CMD} 2>&1 > mesh-update.log &
+    ${DAEMON_CMD} 2>&1 >> daemon.log &
 """
 
 #
@@ -259,8 +259,8 @@ def init_ssh_connection(submission_node, ask_for_password):
         c = Connection(submission_node)
         r = c.run('uname -s', hide=True)
     except Exception:
-        logger.info("Couldn't connect to the submission node via passwordless ssh.\n", file=sys.stderr)
         if ask_for_password:
+            logger.info("Couldn't connect to the submission node via passwordless ssh.\n")
             if sys.stdin is None or not sys.stdin.isatty():
                 raise RuntimeError("Can't authenticate interactively -- input is not a terminal.")
 
