@@ -1019,6 +1019,9 @@ def compute_brick_labelcounts(brick_df, subset_labels, export_labelcounts):
         Thus, when used with dask.DataFrame.map_partitions, you must use clear_divisions().
     
     Args:
+        brick_df:
+            One partition of a brick dataframe, as returned by BrickWall.bricks_as_ddf().
+     
         subset_labels:
             The labels IDs of interest.
             If empty, counts for all labels will be returned.
@@ -1027,9 +1030,6 @@ def compute_brick_labelcounts(brick_df, subset_labels, export_labelcounts):
             Debugging feature.
             See export-labelcounts config option.
         
-        brick_df:
-            One partition of a brick dataframe, as returned by BrickWall.bricks_as_ddf().
-     
      Returns:
         pandas DataFrame with columns ['lz0', 'ly0', 'lx0', 'label', 'count'],
         where 'lz0', 'ly0', 'lx0' are the coordinates of the top corner of the
@@ -1048,6 +1048,15 @@ def compute_brick_labelcounts(brick_df, subset_labels, export_labelcounts):
         inner_vol = extract_subvol(brick.volume, inner_box)
         brick.compress() # Discard uncompressed
         
+        if len(subset_labels) > 0:
+            # Relabel everything to 0 except for our subset of interest,
+            # to reduce the size of the dataframe that we send back to the driver.
+            subset_labels = np.asarray(subset_labels, dtype=np.uint64)
+            inner_vol = np.asarray(inner_vol, dtype=np.uint64, order='C')
+
+            mapper = LabelMapper(subset_labels, subset_labels)
+            inner_vol = mapper.apply_with_default(inner_vol, 0)
+        
         label_counts = pd.Series(inner_vol.reshape(-1)).value_counts().sort_index()
         label_counts.index.name = 'label'
         label_counts.name = 'count'
@@ -1058,11 +1067,6 @@ def compute_brick_labelcounts(brick_df, subset_labels, export_labelcounts):
         brick_counts_df['lz0'] = brick.logical_box[0,0]
         brick_counts_df['ly0'] = brick.logical_box[0,1]
         brick_counts_df['lx0'] = brick.logical_box[0,2]
-        
-        if len(subset_labels) > 0:
-            # Pre-filter for the labels we care about, to reduce
-            # the data that needs to be sent back to the driver.
-            brick_counts_df = brick_counts_df.query('label in @subset_labels')
         
         brick_counts_dfs.append(brick_counts_df)
 
