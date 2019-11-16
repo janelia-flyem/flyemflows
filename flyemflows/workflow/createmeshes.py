@@ -454,9 +454,18 @@ class CreateMeshes(Workflow):
 
         subset_supervoxels, existing_svs = self._load_subset_supervoxels()
         batch_size = self.config["createmeshes"]["subset-batch-size"]
+
+        # Prefetch all bricks for all batches because in most cases
+        # there will be a lot of common bricks between batches,
+        # and the segmentation is relatively cheap to store (it's compressed)
+        # TODO:
+        #   In some cases it might be nice to fetch the bricks separately for each batch.
+        #   This could be made configurable.
+        bricks_ddf, subset_supervoxels = self.init_bricks_ddf(self.input_service, subset_supervoxels)
+        bricks_ddf = bricks_ddf.persist()
         
         if batch_size == 0:
-            self.execute_batch(0, subset_supervoxels, existing_svs)
+            self.execute_batch(0, bricks_ddf, subset_supervoxels, existing_svs)
         else:
             assert len(subset_supervoxels) > 0
 
@@ -470,14 +479,11 @@ class CreateMeshes(Workflow):
                 
                 with Timer(f"Batch {batch_index:02}: Running batch", logger):
                     with switch_cwd(f'batch-{batch_index:02d}', create=True):
-                        self.execute_batch(batch_index, batch_subset_svs, batch_existing_svs)
+                        self.execute_batch(batch_index, bricks_ddf, batch_subset_svs, batch_existing_svs)
 
 
-    def execute_batch(self, batch_index, subset_supervoxels, existing_svs):
-        bricks_ddf, subset_supervoxels = self.init_bricks_ddf(batch_index, self.input_service, subset_supervoxels)
-        bricks_ddf = bricks_ddf.persist()
-        
-        brick_counts_df = self._compute_all_brick_labelcounts(batch_index, bricks_ddf, subset_supervoxels)
+    def execute_batch(self, batch_index, bricks_ddf, subset_supervoxels, existing_svs):
+        brick_counts_df = self._compute_brick_labelcounts(batch_index, bricks_ddf, subset_supervoxels)
         brick_counts_df = self._compute_body_stats(batch_index, brick_counts_df)
         brick_counts_df, existing_svs = self._filter_svs(batch_index, brick_counts_df, subset_supervoxels, existing_svs)
         num_brick_meshes = len(brick_counts_df)
@@ -497,15 +503,15 @@ class CreateMeshes(Workflow):
         self._write_meshes(batch_index, sv_meshes_ddf, subset_supervoxels, existing_svs)
 
 
-    def init_bricks_ddf(self, batch_index, volume_service, subset_labels):
+    def init_bricks_ddf(self, volume_service, subset_labels):
         """
         Initialize a BrickWall from the given volume service and (optionally) a subset of labels,
         and convert it to a dask.DataFrame of bricks before returning it.
         """
         sbm = None
-        msg = f"Batch {batch_index:02}: Initializing BrickWall"
+        msg = f"Initializing BrickWall"
         if len(subset_labels) > 0:
-            msg = f"Batch {batch_index:02}: Initializing BrickWall for {len(subset_labels)} labels"
+            msg = f"Initializing BrickWall for {len(subset_labels)} labels"
             try:
                 brick_coords_df = volume_service.sparse_brick_coords_for_labels(subset_labels)
                 
@@ -714,7 +720,7 @@ class CreateMeshes(Workflow):
         return existing_svs
 
 
-    def _compute_all_brick_labelcounts(self, batch_index, bricks_ddf, subset_supervoxels):
+    def _compute_brick_labelcounts(self, batch_index, bricks_ddf, subset_supervoxels):
         """
         Compute the brickwise labelcounts for 
         """
