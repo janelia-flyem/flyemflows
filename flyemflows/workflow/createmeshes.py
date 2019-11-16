@@ -11,7 +11,7 @@ import dask.bag as db
 import dask.dataframe as ddf
 from dask.delayed import delayed
 
-from neuclease.util import Timer, SparseBlockMask, box_intersection, extract_subvol, parse_timestamp, switch_cwd, iter_batches
+from neuclease.util import Timer, SparseBlockMask, compute_nonzero_box, box_intersection, extract_subvol, parse_timestamp, switch_cwd, iter_batches
 from neuclease.dvid import (fetch_mappings, fetch_repo_instances, create_tarsupervoxel_instance,
                             create_instance, is_locked, post_load, post_keyvalues, fetch_exists, fetch_keys,
                             fetch_supervoxels, fetch_server_info, fetch_mapping, compute_affected_bodies,
@@ -1164,7 +1164,16 @@ def compute_meshes_for_brick(brick, stats_df, options):
 
 def generate_mesh(volume, box, label, smoothing, decimation, rescale_factor):
     mask = (volume == label)
-    mesh = Mesh.from_binary_vol(mask, box)
+
+    # Pre-crop the volume, leaving a 1-px halo where possible
+    mask_box = compute_nonzero_box(mask)
+    mask_box[:] += [(-1, -1, -1), (1, 1, 1)]
+    mask_box = box_intersection(mask_box, [(0,0,0), mask.shape])
+
+    mask = extract_subvol(mask, mask_box)
+    mask_box += box[0]
+    
+    mesh = Mesh.from_binary_vol(mask, mask_box)
     
     if smoothing != 0:
         mesh.laplacian_smooth(smoothing)
