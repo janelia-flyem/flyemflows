@@ -5,12 +5,13 @@ import logging
 import h5py
 import numpy as np
 import pandas as pd
+from skimage.util import view_as_blocks
 
 import dask.bag
 
 from neuclease.util import (Timer, block_stats_for_volume, BLOCK_STATS_DTYPES, boxes_from_grid,
                             extract_subvol, overwrite_subvol, box_shape, round_box)
-from neuclease.dvid import fetch_instance_info, fetch_roi
+from neuclease.dvid import fetch_instance_info, fetch_roi, encode_labelarray_blocks, post_labelmap_blocks
 
 from dvid_resource_manager.client import ResourceManagerClient
 
@@ -154,8 +155,10 @@ class MaskSegmentation(Workflow):
     def _execute_batch(self, scale, batch_index, boxes_and_masks):
         input_service = self.input_service
         output_service = self.output_service
+        block_width = output_service.block_width
         
         def overwrite_box(box, lowres_mask):
+            assert not (box[0] % block_width).any()
             assert lowres_mask.any(), \
                 "This function is supposed to be called on bricks that actually need masking"
 
@@ -165,12 +168,12 @@ class MaskSegmentation(Workflow):
                 # Downsample, but favor UNmasked voxels
                 mask = ~downsample(~lowres_mask, 2**(scale-5), 'labels-numba')
             
-            seg = input_service.get_subvolume(box, scale)
+            old_seg = input_service.get_subvolume(box, scale)
 
-            new_seg = seg.copy()
+            new_seg = old_seg.copy()
             new_seg[mask] = 0
             
-            if (new_seg == seg).all():
+            if (new_seg == old_seg).all():
                 # It's possible that there are no changed voxels, but only
                 # at high scales where the masked voxels were downsampled away.
                 assert scale > 5
@@ -178,14 +181,38 @@ class MaskSegmentation(Workflow):
             
             assert not (box % output_service.block_width).any(), \
                 "Should not write partial blocks"
-            output_service.write_subvolume(new_seg, box[0], scale)
+
+            def post_changed_blocks(old_seg, new_seg):
+                # If we post the whole volume, we'll be overwriting blocks that haven't changed,
+                # wasting space in DVID (for duplicate blocks stored in the child uuid).
+                # Instead, we need to only post the blocks that have changed.
+    
+                # So, can't just do this:
+                # output_service.write_subvolume(new_seg, box[0], scale)
+    
+                seg_diff = (old_seg != new_seg)
+                block_diff = view_as_blocks(seg_diff, 3*(block_width,))
+    
+                changed_block_map = block_diff.any(axis=(3,4,5)).nonzero()
+                changed_block_corners = box[0] + np.transpose(changed_block_map) * block_width
+    
+                changed_blocks = view_as_blocks(new_seg, 3*(block_width,))[changed_block_map]
+                encoded_blocks = encode_labelarray_blocks(changed_block_corners, changed_blocks)
+                
+                mgr = output_service.resource_manager_client
+                with mgr.access_context(output_service.server, True, 1, changed_blocks.nbytes):
+                    post_labelmap_blocks( *output_service.instance_triple, None, encoded_blocks, scale,
+                                          downres=False, noindexing=True, throttle=False,
+                                          is_raw=True )
+
+            post_changed_blocks(old_seg, new_seg)
             del new_seg
 
             if scale != 0:
                 # Don't collect statistics for higher scales
                 return None
             
-            erased_seg = seg.copy()
+            erased_seg = old_seg.copy()
             erased_seg[~mask] = 0
             
             block_shape = 3*(input_service.block_width,)
