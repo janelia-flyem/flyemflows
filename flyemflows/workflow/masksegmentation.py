@@ -148,7 +148,7 @@ class MaskSegmentation(Workflow):
         logger.info(f"Scale {scale}: Processing {len(batches)} batches")
 
         for batch_index, batch_boxes_and_masks in enumerate(batches):
-            with Timer(f"Scale {scale}: Batch {batch_index}", logger):
+            with Timer(f"Scale {scale}: Batch {batch_index:02d}", logger):
                 self._execute_batch(scale, batch_index, batch_boxes_and_masks)
 
 
@@ -176,7 +176,15 @@ class MaskSegmentation(Workflow):
             if (new_seg == old_seg).all():
                 # It's possible that there are no changed voxels, but only
                 # at high scales where the masked voxels were downsampled away.
-                assert scale > 5
+                #
+                # So if the original downscale pyramids are perfect,
+                # then the following assumption ought to hold.
+                #
+                # But I'm commenting it out in case the DVID pyramid at scale 5
+                # isn't pixel-perfect in some places.
+                #
+                # assert scale > 5
+                
                 return None
             
             assert not (box % output_service.block_width).any(), \
