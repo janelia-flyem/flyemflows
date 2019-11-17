@@ -10,7 +10,7 @@ from skimage.util import view_as_blocks
 import dask.bag
 
 from neuclease.util import (Timer, block_stats_for_volume, BLOCK_STATS_DTYPES, boxes_from_grid,
-                            extract_subvol, overwrite_subvol, box_shape, round_box)
+                            extract_subvol, overwrite_subvol, box_shape, round_box, compute_nonzero_box)
 from neuclease.dvid import fetch_instance_info, fetch_roi, encode_labelarray_blocks, post_labelmap_blocks
 
 from dvid_resource_manager.client import ResourceManagerClient
@@ -162,6 +162,14 @@ class MaskSegmentation(Workflow):
             assert lowres_mask.any(), \
                 "This function is supposed to be called on bricks that actually need masking"
 
+            # Crop box and mask to only include the extent of the masked voxels
+            nonzero_mask_box = compute_nonzero_box(lowres_mask)
+            nonzero_mask_box = round_box(nonzero_mask_box, (block_width * 2**scale) // 2**5)
+            lowres_mask = extract_subvol(lowres_mask, nonzero_mask_box)
+            
+            box = box[0] + (nonzero_mask_box * 2**(5-scale))
+            box = box.astype(np.int32)
+
             if scale <= 5:
                 mask = upsample(lowres_mask, 2**(5-scale))
             else:
@@ -187,7 +195,7 @@ class MaskSegmentation(Workflow):
                 
                 return None
             
-            assert not (box % output_service.block_width).any(), \
+            assert not (box % block_width).any(), \
                 "Should not write partial blocks"
 
             def post_changed_blocks(old_seg, new_seg):
