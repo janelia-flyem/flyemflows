@@ -9,12 +9,12 @@ import pandas as pd
 import dask.bag
 
 from neuclease.util import (Timer, block_stats_for_volume, BLOCK_STATS_DTYPES, boxes_from_grid,
-                            extract_subvol, overwrite_subvol, box_shape)
-from neuclease.dvid import fetch_roi
+                            extract_subvol, overwrite_subvol, box_shape, round_box)
+from neuclease.dvid import fetch_instance_info, fetch_roi
 
 from dvid_resource_manager.client import ResourceManagerClient
 
-from ..util import replace_default_entries, COMPRESSION_METHODS, upsample
+from ..util import replace_default_entries, COMPRESSION_METHODS, upsample, downsample
 from ..volumes import ( VolumeService, DvidSegmentationVolumeSchema, DvidVolumeService )
 
 from . import Workflow
@@ -42,12 +42,15 @@ class MaskSegmentation(Workflow):
                 "type": "string",
                 "default": "erased-block-statistics.h5"
             },
-            "pyramid-depth": {
-                "description": "Number of pyramid levels to update \n"
-                               "(-1 means choose automatically, 0 means no pyramid,\n"
-                               "in which case you'll need to generate the higher pyramid scales yourself.)\n",
+            "min-pyramid-scale": {
                 "type": "integer",
-                "default": -1 # automatic by default
+                "default": 0,
+                "minValue": 0
+            },
+            "max-pyramid-scale": {
+                "type": "integer",
+                "default": -1, # choose automatically
+                "maxValue": 10
             },
             "download-pre-downsampled": {
                 "description": "Instead of downsampling the data, just download the pyramid from the server (if it's available).\n"
@@ -97,72 +100,121 @@ class MaskSegmentation(Workflow):
 
 
     def execute(self):
-        self._sanitize_config()
         self._init_services()
+        self._sanitize_config()
         self._init_stats_file()
-        
-        options = self.config["masksegmentation"]
-                
-        mask, mask_box = self._init_mask()
-        brick_boxes = boxes_from_grid(self.input_service.bounding_box_zyx, self.input_service.preferred_message_shape, clipped=True)
 
-        with Timer("Preparing bricks", logger):
+        options = self.config["masksegmentation"]
+        min_scale = options["min-pyramid-scale"]
+        max_scale = options["max-pyramid-scale"]
+        
+        mask_s5, mask_box_s5 = self._init_mask()
+
+        for scale in range(min_scale, 1+max_scale):
+            with Timer(f"Scale {scale}: Processing", logger):
+                self._execute_scale(scale, mask_s5, mask_box_s5)
+
+    def _execute_scale(self, scale, mask_s5, mask_box_s5):
+        options = self.config["masksegmentation"]
+        
+        block_width = self.output_service.block_width
+        
+        def scale_box(box, scale):
+            # Scale down, then round up to the nearest multiple of the block width
+            box = np.ceil(box / 2**scale).astype(np.int32)
+            return round_box(box, block_width)
+
+        # bounding box of the segmentation at the current scale.
+        bounding_box = scale_box(self.input_service.bounding_box_zyx, scale)
+
+        # Don't make bricks that are wider than the bounding box at this scale
+        brick_shape = np.minimum(self.input_service.preferred_message_shape, bounding_box[1])
+        assert not (brick_shape % block_width).any()
+        
+        brick_boxes = boxes_from_grid(bounding_box, brick_shape, clipped=False)
+
+        with Timer(f"Scale {scale}: Preparing bricks", logger):
             boxes_and_masks = []
             for box in brick_boxes:
-                mask_block_box = (box // (2**5)) - mask_box[0]
-                mask_block = extract_subvol(mask, mask_block_box)
-                if mask_block.any():
-                    boxes_and_masks.append((box, mask_block))
+                mask_block_box = ((box // 2**(5-scale)) - mask_box_s5[0])
+                mask_block_box = mask_block_box.astype(np.int32) # necessary when scale is > 5
+                mask_block_s5 = np.zeros(box_shape(mask_block_box), bool)
+                mask_block_s5 = extract_subvol(mask_s5, mask_block_box)
+                if mask_block_s5.any():
+                    boxes_and_masks.append((box, mask_block_s5))
         
         batches = iter_batches(boxes_and_masks, options["batch-size"])
-        logger.info(f"Processing {len(batches)} batches")
+        logger.info(f"Scale {scale}: Processing {len(batches)} batches")
 
         for batch_index, batch_boxes_and_masks in enumerate(batches):
-            with Timer(f"Batch {batch_index}", logger):
-                self._execute_batch(batch_index, batch_boxes_and_masks)
+            with Timer(f"Scale {scale}: Batch {batch_index}", logger):
+                self._execute_batch(scale, batch_index, batch_boxes_and_masks)
 
 
-    def _execute_batch(self, batch_index, boxes_and_masks):
+    def _execute_batch(self, scale, batch_index, boxes_and_masks):
         input_service = self.input_service
         output_service = self.output_service
         
         def overwrite_box(box, lowres_mask):
             assert lowres_mask.any(), \
                 "This function is supposed to be called on bricks that actually need masking"
-            mask = upsample(lowres_mask, 2**5)
-            seg = input_service.get_subvolume(box)
 
-            seg_to_erase = seg.copy()
-            seg_to_erase[~mask] = 0
+            if scale <= 5:
+                mask = upsample(lowres_mask, 2**(5-scale))
+            else:
+                # Downsample, but favor UNmasked voxels
+                mask = ~downsample(~lowres_mask, 2**(scale-5), 'labels-numba')
             
-            block_shape = 3*(input_service.block_width,)
-            erased_stats_df = block_stats_for_volume(block_shape, seg_to_erase, box)
-            del seg_to_erase
-            
+            seg = input_service.get_subvolume(box, scale)
+
             new_seg = seg.copy()
             new_seg[mask] = 0
-            assert not (new_seg == seg).all()
+            
+            if (new_seg == seg).all():
+                # It's possible that there are no changed voxels, but only
+                # at high scales where the masked voxels were downsampled away.
+                assert scale > 5
+                return None
+            
+            assert not (box % output_service.block_width).any(), \
+                "Should not write partial blocks"
+            output_service.write_subvolume(new_seg, box[0], scale)
+            del new_seg
 
-            output_service.write_subvolume(new_seg, box[0], scale=0)
+            if scale != 0:
+                # Don't collect statistics for higher scales
+                return None
+            
+            erased_seg = seg.copy()
+            erased_seg[~mask] = 0
+            
+            block_shape = 3*(input_service.block_width,)
+            erased_stats_df = block_stats_for_volume(block_shape, erased_seg, box)
             return erased_stats_df
         
-        with Timer(f"Batch {batch_index:02d}: Processing blocks", logger):
+        with Timer(f"Scale {scale}: Batch {batch_index:02d}: Processing blocks", logger):
             boxes_and_masks = dask.bag.from_sequence(boxes_and_masks, partition_size=1)
             erased_stats = boxes_and_masks.starmap(overwrite_box).compute()
 
-        with Timer(f"Batch {batch_index:02d}: Combining statistics", logger):
-            erased_stats_df = pd.concat(erased_stats)
-
-        with Timer(f"Batch {batch_index:02d}: Writing statistics", logger):
-            self._append_erased_statistics(erased_stats_df)
+        if scale == 0:
+            with Timer(f"Scale {scale}: Batch {batch_index:02d}: Combining statistics", logger):
+                erased_stats_df = pd.concat(erased_stats)
+    
+            with Timer(f"Scale {scale}: Batch {batch_index:02d}: Writing statistics", logger):
+                self._append_erased_statistics(erased_stats_df)
 
     
     def _sanitize_config(self):
         """
         Replace a few config values with reasonable defaults if necessary.
+        Must be called after the input/output services are initialized.
         """
         options = self.config["masksegmentation"]
         
+        if options["max-pyramid-scale"] == -1:
+            info = fetch_instance_info(*self.output_service.instance_triple)
+            existing_depth = int(info["Extended"]["MaxDownresLevel"])
+            options["max-pyramid-scale"] = existing_depth
 
     def _init_services(self):
         """
@@ -174,7 +226,6 @@ class MaskSegmentation(Workflow):
         input_config = self.config["input"]
         output_config = self.config["output"]
         mgr_options = self.config["resource-manager"]
-        options = self.config["masksegmentation"]
 
         self.mgr_client = ResourceManagerClient( mgr_options["server"], mgr_options["port"] )
         self.input_service = VolumeService.create_from_config( input_config, self.mgr_client )
@@ -215,8 +266,14 @@ class MaskSegmentation(Workflow):
         options = self.config["masksegmentation"]
         roi = options["mask-roi"]
         invert_mask = options["invert-mask"]
+        max_scale = options["max-pyramid-scale"]
+        
+        block_width = self.output_service.block_width
 
-        seg_box_s5 = np.ceil(self.input_service.bounding_box_zyx / 2**5).astype(np.int32) 
+        # Select a mask_box that's large enough to divide evenly into the
+        # block width even when reduced to the highest scale we'll be processing.
+        seg_box = round_box(self.input_service.bounding_box_zyx, block_width * 2**max_scale)
+        seg_box_s5 = round_box(seg_box, 2**5) // (2**5)
         roi_mask, _ = fetch_roi(self.input_service.server, self.input_service.uuid, roi, format='mask', mask_box=seg_box_s5)
         
         if invert_mask:

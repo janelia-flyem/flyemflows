@@ -12,16 +12,18 @@ import numpy as np
 import pandas as pd
 
 from neuclease.util import extract_subvol, ndindex_array
-from neuclease.dvid import create_labelmap_instance, fetch_labelmap_voxels, post_labelmap_voxels, fetch_raw, post_roi
+from neuclease.dvid import create_labelmap_instance, fetch_labelmap_voxels, post_labelmap_voxels, post_roi
 from neuclease.dvid.rle import runlength_encode_to_ranges
 
-from flyemflows.util import upsample
+from flyemflows.util import upsample, downsample
 from flyemflows.bin.launchflow import launch_flow
 from neuclease.dvid.repo import create_instance
 from neuclease.util.segmentation import BLOCK_STATS_DTYPES, block_stats_for_volume
 
 # Overridden below when running from __main__
 CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'local-cluster')
+
+MAX_SCALE = 7
 
 @pytest.fixture
 def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
@@ -36,11 +38,11 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
 
     for instance in (input_segmentation_name, output_segmentation_name):    
         try:
-            create_labelmap_instance(dvid_address, repo_uuid, instance, max_scale=6)
+            create_labelmap_instance(dvid_address, repo_uuid, instance, max_scale=MAX_SCALE)
         except HTTPError as ex:
             if ex.response is not None and 'already exists' in ex.response.content.decode('utf-8'):
                 pass
-
+        
         post_labelmap_voxels(dvid_address, repo_uuid, instance, (0,0,0), random_segmentation, downres=True)
 
     # Create an ROI to test with -- a sphere with scale-5 resolution
@@ -135,7 +137,7 @@ def test_masksegmentation(setup_dvid_segmentation_input, invert_mask, disable_au
     
     output_box_xyz = np.array( final_config['output']['geometry']['bounding-box'] )
     output_box_zyx = output_box_xyz[:,::-1]
-    output_vol = fetch_raw(dvid_address, repo_uuid, output_segmentation_name, output_box_zyx, dtype=np.uint64)
+    output_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, output_box_zyx, scale=0)
 
     # Create a copy of the volume that contains only the voxels we removed
     erased_vol = volume.copy()
@@ -145,9 +147,29 @@ def test_masksegmentation(setup_dvid_segmentation_input, invert_mask, disable_au
     #np.save('/tmp/erased.npy', erased_vol)
     #np.save('/tmp/output.npy', output_vol)
     #np.save('/tmp/expected.npy', expected_vol)
-    
+
     assert (output_vol == expected_vol).all(), \
         "Written vol does not match expected"
+
+    for scale in range(1, 1+MAX_SCALE):
+        expected_vol = downsample(expected_vol, 2, 'labels-numba')
+        output_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, output_box_zyx // 2**scale, scale=scale)
+
+        np.save(f'/tmp/output-{scale}.npy', output_vol)
+        np.save(f'/tmp/expected-{scale}.npy', expected_vol)
+        
+        if scale <= 5:
+            assert (output_vol == expected_vol).all(), \
+                f"Written vol does not match expected at scale {scale}"
+        else:
+            # For scale 6 and 7, some blocks are not even changed,
+            # but that means we would be comparing DVID's label
+            # downsampling method to our method ('labels-numba').
+            # The two don't necessarily give identical results in the case of 'ties',
+            # so we'll just verify that the nonzero voxels match, at least.
+            assert ((output_vol == 0) == (expected_vol == 0)).all(), \
+                f"Written vol does not match expected at scale {scale}"
+            
         
     with h5py.File(f'{execution_dir}/erased-block-statistics.h5', 'r') as f:
         stats_df = pd.DataFrame(f['stats'][:])
@@ -171,5 +193,5 @@ if __name__ == "__main__":
     
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_masksegmentation']
-    #args += ['-x']
+    args += ['-x']
     pytest.main(args)
