@@ -15,7 +15,7 @@ from neuclease.dvid import fetch_instance_info, fetch_roi, encode_labelarray_blo
 
 from dvid_resource_manager.client import ResourceManagerClient
 
-from ..util import replace_default_entries, COMPRESSION_METHODS, upsample, downsample
+from ..util import replace_default_entries, upsample, downsample
 from ..volumes import ( VolumeService, DvidSegmentationVolumeSchema, DvidVolumeService )
 
 from . import Workflow
@@ -52,22 +52,6 @@ class MaskSegmentation(Workflow):
                 "type": "integer",
                 "default": -1, # choose automatically
                 "maxValue": 10
-            },
-            "download-pre-downsampled": {
-                "description": "Instead of downsampling the data, just download the pyramid from the server (if it's available).\n"
-                               "Will not work unless you add the 'available-scales' setting to the input service's geometry config.",
-                "type": "boolean",
-                "default": False
-            },
-            "brick-compression": {
-                "description": "Internally, downloaded bricks will be stored in a compressed format.\n"
-                               "This setting specifies the compression scheme to use.\n"
-                               f"Options: {COMPRESSION_METHODS}"
-                               "Note: This affects only in-memory storage while the workflow is running.\n"
-                               "      It does NOT affect the compression used in DVID.\n",
-                "type": "string",
-                "enum": COMPRESSION_METHODS,
-                "default": "lz4_2x"
             },
             "mask-roi": {
                 "description": "Name of the ROI to use as the mask, read from the INPUT uuid.\n"
@@ -130,13 +114,8 @@ class MaskSegmentation(Workflow):
         starting_scale = options["resume-at"]["scale"]
         starting_batch = options["resume-at"]["batch-index"]
         
-        if starting_scale < min_scale:
-            raise RuntimeError("Your 'resume-at' scale seems not to agree with your "
-                               "original min-pyramid-scale. Is this really a resumed job?")
-        
         if starting_scale != 0 or starting_batch != 0:
             logger.info(f"Resuming at scale {starting_scale} batch {starting_batch}")
-        
         starting_scale = max(min_scale, starting_scale)
         
         mask_s5, mask_box_s5 = self._init_mask()
@@ -147,6 +126,7 @@ class MaskSegmentation(Workflow):
             
             with Timer(f"Scale {scale}: Processing", logger):
                 self._execute_scale(scale, starting_batch, mask_s5, mask_box_s5)
+
 
     def _execute_scale(self, scale, starting_batch, mask_s5, mask_box_s5):
         options = self.config["masksegmentation"]
@@ -185,7 +165,7 @@ class MaskSegmentation(Workflow):
                         f"remaining batches from {len(batches)} original batches")
 
             assert starting_batch < len(batches), \
-                f"Can't start at batch {starting_batch}; there are ony {len(batches)} in total."
+                f"Can't start at batch {starting_batch}; there are only {len(batches)} in total."
             batches = batches[starting_batch:]
             
         for batch_index, batch_boxes_and_masks in enumerate(batches, start=starting_batch):
@@ -236,9 +216,6 @@ class MaskSegmentation(Workflow):
                 
                 return None
             
-            assert not (box % block_width).any(), \
-                "Should not write partial blocks"
-
             def post_changed_blocks(old_seg, new_seg):
                 # If we post the whole volume, we'll be overwriting blocks that haven't changed,
                 # wasting space in DVID (for duplicate blocks stored in the child uuid).
@@ -261,6 +238,9 @@ class MaskSegmentation(Workflow):
                     post_labelmap_blocks( *output_service.instance_triple, None, encoded_blocks, scale,
                                           downres=False, noindexing=True, throttle=False,
                                           is_raw=True )
+
+            assert not (box % block_width).any(), \
+                "Should not write partial blocks"
 
             post_changed_blocks(old_seg, new_seg)
             del new_seg
@@ -299,6 +279,11 @@ class MaskSegmentation(Workflow):
             info = fetch_instance_info(*self.output_service.instance_triple)
             existing_depth = int(info["Extended"]["MaxDownresLevel"])
             options["max-pyramid-scale"] = existing_depth
+
+        if options["resume-at"]["scale"] < options["min-pyramid-scale"]:
+            raise RuntimeError("Your 'resume-at' scale seems not to agree with your "
+                               "original min-pyramid-scale. Is this really a resumed job?")
+
 
     def _init_services(self):
         """
@@ -421,5 +406,3 @@ class MaskSegmentation(Workflow):
             new_len = orig_len + len(stats_df)
             f['stats'].resize((new_len,))
             f['stats'][orig_len:new_len] = stats_df.to_records()
-
-
