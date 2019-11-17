@@ -84,6 +84,24 @@ class MaskSegmentation(Workflow):
                 "description": "Blocks of segmentation will be processed in batches. This specifies the batch size.",
                 "type": "integer",
                 "default": 512
+            },
+            "resume-at": {
+                "description": "You can resume a failed job by specifying which scale/batch to start\n"
+                               "with (assuming you haven't changed any other config settings).\n",
+                "type": "object",
+                "default": {"scale": 0, "batch-index": 0},
+                "properties": {
+                    "scale": {
+                        "type": "integer",
+                        "default": 0,
+                        "minValue": 0
+                    },
+                    "batch-index": {
+                        "type": "integer",
+                        "default": 0,
+                        "minValue": 0
+                    }
+                }
             }
         }
     }
@@ -108,16 +126,30 @@ class MaskSegmentation(Workflow):
         options = self.config["masksegmentation"]
         min_scale = options["min-pyramid-scale"]
         max_scale = options["max-pyramid-scale"]
+
+        starting_scale = options["resume-at"]["scale"]
+        starting_batch = options["resume-at"]["batch-index"]
+        
+        if starting_scale < min_scale:
+            raise RuntimeError("Your 'resume-at' scale seems not to agree with your "
+                               "original min-pyramid-scale. Is this really a resumed job?")
+        
+        if starting_scale != 0 or starting_batch != 0:
+            logger.info(f"Resuming at scale {starting_scale} batch {starting_batch}")
+        
+        starting_scale = max(min_scale, starting_scale)
         
         mask_s5, mask_box_s5 = self._init_mask()
 
-        for scale in range(min_scale, 1+max_scale):
+        for scale in range(starting_scale, 1+max_scale):
+            if scale != starting_scale:
+                starting_batch = 0
+            
             with Timer(f"Scale {scale}: Processing", logger):
-                self._execute_scale(scale, mask_s5, mask_box_s5)
+                self._execute_scale(scale, starting_batch, mask_s5, mask_box_s5)
 
-    def _execute_scale(self, scale, mask_s5, mask_box_s5):
+    def _execute_scale(self, scale, starting_batch, mask_s5, mask_box_s5):
         options = self.config["masksegmentation"]
-        
         block_width = self.output_service.block_width
         
         def scale_box(box, scale):
@@ -144,10 +176,19 @@ class MaskSegmentation(Workflow):
                 if mask_block_s5.any():
                     boxes_and_masks.append((box, mask_block_s5))
         
-        batches = iter_batches(boxes_and_masks, options["batch-size"])
-        logger.info(f"Scale {scale}: Processing {len(batches)} batches")
+        batches = [*iter_batches(boxes_and_masks, options["batch-size"])]
 
-        for batch_index, batch_boxes_and_masks in enumerate(batches):
+        if starting_batch == 0:
+            logger.info(f"Scale {scale}: Processing {len(batches)} batches")
+        else:
+            logger.info(f"Scale {scale}: Processing {len(batches) - starting_batch} "
+                        f"remaining batches from {len(batches)} original batches")
+
+            assert starting_batch < len(batches), \
+                f"Can't start at batch {starting_batch}; there are ony {len(batches)} in total."
+            batches = batches[starting_batch:]
+            
+        for batch_index, batch_boxes_and_masks in enumerate(batches, start=starting_batch):
             with Timer(f"Scale {scale}: Batch {batch_index:02d}", logger):
                 self._execute_batch(scale, batch_index, batch_boxes_and_masks)
 
@@ -342,10 +383,18 @@ class MaskSegmentation(Workflow):
 
 
     def _init_stats_file(self):
-        stats_path = self.config["masksegmentation"]["block-statistics-file"]
+        options = self.config["masksegmentation"]
+
+        if options["resume-at"]["scale"] > 0 or options["min-pyramid-scale"] > 0:
+            logger.info("Not processing scale 0, so not computing batch statistics.")
+            return
+        
+        stats_path = options["block-statistics-file"]
         if os.path.exists(stats_path):
             logger.info(f"Block statistics already exists: {stats_path}")
-            logger.info(f"Will APPEND to the pre-existing statistics file.")
+            if options["resume-at"]["batch-index"] == 0:
+                raise RuntimeError("Refusing to append to a pre-existing block statistics file")
+            logger.info(f"Resuming from a previous workload.  Will APPEND to the pre-existing statistics file.")
             return
 
         # Initialize a 0-entry 1D array with the correct (structured) dtype

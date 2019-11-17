@@ -186,6 +186,52 @@ def test_masksegmentation(setup_dvid_segmentation_input, invert_mask, disable_au
     assert (stats_df == expected_stats_df).all().all()
 
 
+def test_masksegmentation_resume(setup_dvid_segmentation_input, disable_auto_retry):
+    template_dir, config, volume, dvid_address, repo_uuid, roi_mask_s5, output_segmentation_name = setup_dvid_segmentation_input
+
+    brick_shape = config["input"]["geometry"]["message-block-shape"]
+    batch_size = config["masksegmentation"]["batch-size"]
+    total_bricks = np.prod(np.array(volume.shape) // brick_shape)
+    total_batches = int(np.ceil(total_bricks / batch_size))
+
+    # Skip over half of the original bricks.
+    config["masksegmentation"]["resume-at"] = {
+        "scale": 0,
+        "batch-index": total_batches // 2
+    }
+
+    # re-dump config
+    yaml = YAML()
+    yaml.default_flow_style = False    
+    with open(f"{template_dir}/workflow.yaml", 'w') as f:
+        yaml.dump(config, f)
+
+    _execution_dir, workflow = launch_flow(template_dir, 1)
+    final_config = workflow.config
+
+    input_box_xyz = np.array( final_config['input']['geometry']['bounding-box'] )
+    input_box_zyx = input_box_xyz[:,::-1]
+    
+    roi_mask = upsample(roi_mask_s5, 2**5)
+    roi_mask = extract_subvol(roi_mask, input_box_zyx)
+    
+    masked_vol = extract_subvol(volume.copy(), input_box_zyx)
+    masked_vol[roi_mask] = 0
+
+    output_box_xyz = np.array( final_config['output']['geometry']['bounding-box'] )
+    output_box_zyx = output_box_xyz[:,::-1]
+    output_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, output_box_zyx, scale=0)
+
+    #np.save('/tmp/original.npy', volume)
+    #np.save('/tmp/output.npy', output_vol)
+
+    # First part was untouched
+    assert (output_vol[:128] == volume[:128]).all()
+
+    # Last part was touched somewhere
+    assert (output_vol[128:] != volume[128:]).any()
+
+
 if __name__ == "__main__":
     if 'CLUSTER_TYPE' in os.environ:
         import warnings
@@ -194,4 +240,5 @@ if __name__ == "__main__":
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_masksegmentation']
     args += ['-x']
+    #args += ['-k', 'masksegmentation_resume']
     pytest.main(args)
