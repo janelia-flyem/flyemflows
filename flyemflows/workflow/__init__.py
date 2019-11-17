@@ -6,6 +6,7 @@ from .copysegmentation import CopySegmentation
 from .decimatemeshes import DecimateMeshes
 from .findadjacencies import FindAdjacencies
 from .labelmapcopy import LabelmapCopy
+from .masksegmentation import MaskSegmentation
 from .samplepoints import SamplePoints
 from .sparseblockstats import SparseBlockstats
 from .sparsemeshes import SparseMeshes
@@ -20,6 +21,7 @@ BUILTIN_WORKFLOWS = [
     DecimateMeshes,
     FindAdjacencies,
     LabelmapCopy,
+    MaskSegmentation,
     SamplePoints,
     SparseBlockstats,
     SparseMeshes,
