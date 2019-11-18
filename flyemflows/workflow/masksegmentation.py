@@ -15,7 +15,7 @@ from neuclease.dvid import fetch_instance_info, fetch_roi, encode_labelarray_blo
 
 from dvid_resource_manager.client import ResourceManagerClient
 
-from ..util import replace_default_entries, upsample, downsample
+from ..util import replace_default_entries, upsample
 from ..volumes import ( VolumeService, DvidSegmentationVolumeSchema, DvidVolumeService )
 
 from . import Workflow
@@ -194,7 +194,7 @@ class MaskSegmentation(Workflow):
                 mask = upsample(lowres_mask, 2**(5-scale))
             else:
                 # Downsample, but favor UNmasked voxels
-                mask = ~downsample(~lowres_mask, 2**(scale-5), 'labels-numba')
+                mask = ~view_as_blocks(~lowres_mask, 3*(2**(scale-5),)).any(axis=(3,4,5))
             
             old_seg = input_service.get_subvolume(box, scale)
 
@@ -367,6 +367,12 @@ class MaskSegmentation(Workflow):
             seg_mask[roi_mask] = False
             roi_mask = seg_mask
                 
+        # Downsample the roi_mask to dvid-block resolution, just to see how many blocks it touches. 
+        block_mask = view_as_blocks(roi_mask, (2,2,2)).any(axis=(3,4,5))
+        blocks_touched = block_mask.sum()
+        voxel_total = blocks_touched * (block_width**3)
+        logger.info(f"Mask touches {blocks_touched} blocks ({voxel_total / 1e9:.1f} Gigavoxels)")
+
         return roi_mask, seg_box_s5
 
 
