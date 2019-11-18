@@ -9,7 +9,7 @@ from skimage.util import view_as_blocks
 
 import dask.bag
 
-from neuclease.util import (Timer, block_stats_for_volume, BLOCK_STATS_DTYPES, boxes_from_grid,
+from neuclease.util import (Timer, block_stats_for_volume, BLOCK_STATS_DTYPES, boxes_from_grid, iter_batches,
                             extract_subvol, overwrite_subvol, box_shape, round_box, compute_nonzero_box)
 from neuclease.dvid import fetch_instance_info, fetch_roi, encode_labelarray_blocks, post_labelmap_blocks
 
@@ -19,7 +19,6 @@ from ..util import replace_default_entries, upsample, downsample
 from ..volumes import ( VolumeService, DvidSegmentationVolumeSchema, DvidVolumeService )
 
 from . import Workflow
-from neuclease.util.util import iter_batches
 
 logger = logging.getLogger(__name__)
 
@@ -280,6 +279,7 @@ class MaskSegmentation(Workflow):
             existing_depth = int(info["Extended"]["MaxDownresLevel"])
             options["max-pyramid-scale"] = existing_depth
 
+        # FIXME
         if options["resume-at"]["scale"] < options["min-pyramid-scale"]:
             raise RuntimeError("Your 'resume-at' scale seems not to agree with your "
                                "original min-pyramid-scale. Is this really a resumed job?")
@@ -332,6 +332,7 @@ class MaskSegmentation(Workflow):
 
 
     def _init_mask(self):
+        # TODO: Option to dilate or erode mask
         options = self.config["masksegmentation"]
         roi = options["mask-roi"]
         invert_mask = options["invert-mask"]
@@ -343,7 +344,9 @@ class MaskSegmentation(Workflow):
         # block width even when reduced to the highest scale we'll be processing.
         seg_box = round_box(self.input_service.bounding_box_zyx, block_width * 2**max_scale)
         seg_box_s5 = round_box(seg_box, 2**5) // (2**5)
-        roi_mask, _ = fetch_roi(self.input_service.server, self.input_service.uuid, roi, format='mask', mask_box=seg_box_s5)
+
+        with Timer(f"Loading ROI '{roi}'", logger):
+            roi_mask, _ = fetch_roi(self.input_service.server, self.input_service.uuid, roi, format='mask', mask_box=seg_box_s5)
         
         if invert_mask:
             # Initialize the mask with entire segmentation at scale 5,
