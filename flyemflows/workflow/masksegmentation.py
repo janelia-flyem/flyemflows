@@ -291,9 +291,9 @@ class MaskSegmentation(Workflow):
             options["max-pyramid-scale"] = existing_depth
 
         # FIXME
-        if options["resume-at"]["scale"] < options["min-pyramid-scale"]:
-            raise RuntimeError("Your 'resume-at' scale seems not to agree with your "
-                               "original min-pyramid-scale. Is this really a resumed job?")
+        #if options["resume-at"]["scale"] < options["min-pyramid-scale"]:
+        #    raise RuntimeError("Your 'resume-at' scale seems not to agree with your "
+        #                       "original min-pyramid-scale. Is this really a resumed job?")
 
         if options["dilate-mask"] > 0 and options["erode-mask"] > 0:
             raise RuntimeError("Can't dilate mask and erode it, too.  Choose one or the other.")
