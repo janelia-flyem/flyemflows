@@ -144,7 +144,7 @@ class MaskSegmentation(Workflow):
         brick_shape = np.minimum(self.input_service.preferred_message_shape, bounding_box[1])
         assert not (brick_shape % block_width).any()
         
-        brick_boxes = boxes_from_grid(bounding_box, brick_shape, clipped=False)
+        brick_boxes = boxes_from_grid(bounding_box, brick_shape, clipped=True)
 
         with Timer(f"Scale {scale}: Preparing bricks", logger):
             boxes_and_masks = []

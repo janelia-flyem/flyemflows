@@ -83,7 +83,8 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
             supervoxels: true
            
           geometry:
-            message-block-shape: [128,64,64]
+            # Choose a brick that doesn't cleanly divide into the bounding box
+            message-block-shape: [192,64,64]
  
         output:
           dvid:
@@ -95,7 +96,7 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
  
         masksegmentation:
           mask-roi: {roi_name}
-          batch-size: 10
+          batch-size: 5
           block-statistics-file: erased-block-statistics.h5
     """)
  
@@ -191,13 +192,16 @@ def test_masksegmentation_resume(setup_dvid_segmentation_input, disable_auto_ret
 
     brick_shape = config["input"]["geometry"]["message-block-shape"]
     batch_size = config["masksegmentation"]["batch-size"]
-    total_bricks = np.prod(np.array(volume.shape) // brick_shape)
+    
+    # This is the total bricks in the volume, not necessarily
+    # the total *processed* bricks, but it's close enough.
+    total_bricks = np.ceil(np.prod(np.array(volume.shape) / brick_shape)).astype(int)
     total_batches = int(np.ceil(total_bricks / batch_size))
 
     # Skip over half of the original bricks.
     config["masksegmentation"]["resume-at"] = {
         "scale": 0,
-        "batch-index": total_batches // 2
+        "batch-index": 1 + (total_batches // 2)
     }
 
     # re-dump config
@@ -222,8 +226,8 @@ def test_masksegmentation_resume(setup_dvid_segmentation_input, disable_auto_ret
     output_box_zyx = output_box_xyz[:,::-1]
     output_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, output_box_zyx, scale=0)
 
-    #np.save('/tmp/original.npy', volume)
-    #np.save('/tmp/output.npy', output_vol)
+    np.save('/tmp/original.npy', volume)
+    np.save('/tmp/output.npy', output_vol)
 
     # First part was untouched
     assert (output_vol[:128] == volume[:128]).all()
