@@ -642,7 +642,7 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
                 # Encode and post in two separate steps, so that the compression
                 # can be peformed before obtaining a token from the resource manager.
                 encoded = encode_labelarray_volume(offset_zyx, subvolume, self.gzip_level)
-                with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
+                with self._resource_manager_client.access_context(self._server, False, 1, req_bytes):
                     # Post pre-encoded data with 'is_raw'
                     post_labelmap_blocks( self._server, self._uuid, instance_name, None, encoded, scale,
                                           self.enable_downres, self.disable_indexing, self._throttle,
@@ -651,7 +651,7 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
                 assert not self.enable_downres, \
                     "Can't use enable-downres: You are attempting to post non-block-aligned data."
 
-                with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
+                with self._resource_manager_client.access_context(self._server, False, 1, req_bytes):
                     post_raw( self._server, self._uuid, instance_name, offset_zyx, subvolume,
                               throttle=self._throttle, mutate=not self.disable_indexing )
 
