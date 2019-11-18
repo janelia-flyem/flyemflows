@@ -363,24 +363,25 @@ class MaskSegmentation(Workflow):
             roi_mask, _ = fetch_roi(self.input_service.server, self.input_service.uuid, roi, format='mask', mask_box=seg_box_s5)
         
         if invert_mask:
-            # Initialize the mask with entire segmentation at scale 5,
-            # then subtract the roi from it.
-            boxes = [*boxes_from_grid(seg_box_s5, (64, 64, 2048), clipped=True)]
-            
-            input_service = self.input_service
-            def fetch_seg_mask_s5(box_s5):
-                seg_s5 = input_service.get_subvolume(box_s5, scale=5)
-                return box_s5, (seg_s5 != 0)
-            
-            boxes_and_mask = dask.bag.from_sequence(boxes, 1).map(fetch_seg_mask_s5).compute()
-            
-            seg_mask = np.zeros(box_shape(seg_box_s5), bool)
-            for box_s5, box_mask in boxes_and_mask:
-                overwrite_subvol(seg_mask, box_s5, box_mask)
-            
-            seg_mask[roi_mask] = False
-            roi_mask = seg_mask
+            with Timer("Inverting mask", logger):
+                # Initialize the mask with entire segmentation at scale 5,
+                # then subtract the roi from it.
+                boxes = [*boxes_from_grid(seg_box_s5, (64, 64, 2048), clipped=True)]
                 
+                input_service = self.input_service
+                def fetch_seg_mask_s5(box_s5):
+                    seg_s5 = input_service.get_subvolume(box_s5, scale=5)
+                    return box_s5, (seg_s5 != 0)
+                
+                boxes_and_mask = dask.bag.from_sequence(boxes, 1).map(fetch_seg_mask_s5).compute()
+                
+                seg_mask = np.zeros(box_shape(seg_box_s5), bool)
+                for box_s5, box_mask in boxes_and_mask:
+                    overwrite_subvol(seg_mask, box_s5, box_mask)
+                
+                seg_mask[roi_mask] = False
+                roi_mask = seg_mask
+
         assert not (dilation_radius and erosion_radius)
         if dilation_radius > 0:
             with Timer(f"Dilating mask by {dilation_radius}", logger):
