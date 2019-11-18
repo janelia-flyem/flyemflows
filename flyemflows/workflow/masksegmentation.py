@@ -3,6 +3,7 @@ import copy
 import logging
 
 import h5py
+import vigra
 import numpy as np
 import pandas as pd
 from skimage.util import view_as_blocks
@@ -62,6 +63,16 @@ class MaskSegmentation(Workflow):
                 "description": "If True, mask out everything EXCEPT the given roi mask.",
                 "type": "boolean",
                 "default": False
+            },
+            "dilate-mask": {
+                "description": "If non-zero, dilate the ROI mask by the given radius (at scale 5)",
+                "type": "integer",
+                "default": 0
+            },
+            "erode-mask": {
+                "description": "If non-zero, erode the ROI mask by the given radius (at scale 5)",
+                "type": "integer",
+                "default": 0
             },
             "batch-size": {
                 "description": "Blocks of segmentation will be processed in batches. This specifies the batch size.",
@@ -284,6 +295,8 @@ class MaskSegmentation(Workflow):
             raise RuntimeError("Your 'resume-at' scale seems not to agree with your "
                                "original min-pyramid-scale. Is this really a resumed job?")
 
+        if options["dilate-mask"] > 0 and options["erode-mask"] > 0:
+            raise RuntimeError("Can't dilate mask and erode it, too.  Choose one or the other.")
 
     def _init_services(self):
         """
@@ -332,11 +345,12 @@ class MaskSegmentation(Workflow):
 
 
     def _init_mask(self):
-        # TODO: Option to dilate or erode mask
         options = self.config["masksegmentation"]
         roi = options["mask-roi"]
         invert_mask = options["invert-mask"]
         max_scale = options["max-pyramid-scale"]
+        dilation_radius = options["dilate-mask"]
+        erosion_radius = options["erode-mask"]
         
         block_width = self.output_service.block_width
 
@@ -367,6 +381,14 @@ class MaskSegmentation(Workflow):
             seg_mask[roi_mask] = False
             roi_mask = seg_mask
                 
+        assert not (dilation_radius and erosion_radius)
+        if dilation_radius > 0:
+            with Timer(f"Dilating mask by {dilation_radius}", logger):
+                roi_mask = vigra.filters.multiBinaryDilation(roi_mask, dilation_radius)
+        if erosion_radius > 0:
+            with Timer(f"Eroding mask by {erosion_radius}", logger):
+                roi_mask = vigra.filters.multiBinaryErosion(roi_mask, erosion_radius)
+
         # Downsample the roi_mask to dvid-block resolution, just to see how many blocks it touches. 
         block_mask = view_as_blocks(roi_mask, (2,2,2)).any(axis=(3,4,5))
         blocks_touched = block_mask.sum()
