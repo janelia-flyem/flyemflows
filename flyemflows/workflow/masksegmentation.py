@@ -189,6 +189,7 @@ class MaskSegmentation(Workflow):
         block_width = output_service.block_width
         
         def overwrite_box(box, lowres_mask):
+            assert lowres_mask.dtype == np.bool
             assert not (box[0] % block_width).any()
             assert lowres_mask.any(), \
                 "This function is supposed to be called on bricks that actually need masking"
@@ -209,6 +210,7 @@ class MaskSegmentation(Workflow):
             
             old_seg = input_service.get_subvolume(box, scale)
 
+            assert mask.dtype == np.bool
             new_seg = old_seg.copy()
             new_seg[mask] = 0
             

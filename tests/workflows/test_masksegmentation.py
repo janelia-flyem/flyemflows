@@ -226,8 +226,8 @@ def test_masksegmentation_resume(setup_dvid_segmentation_input, disable_auto_ret
     output_box_zyx = output_box_xyz[:,::-1]
     output_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, output_box_zyx, scale=0)
 
-    np.save('/tmp/original.npy', volume)
-    np.save('/tmp/output.npy', output_vol)
+    #np.save('/tmp/original.npy', volume)
+    #np.save('/tmp/output.npy', output_vol)
 
     # First part was untouched
     assert (output_vol[:128] == volume[:128]).all()
