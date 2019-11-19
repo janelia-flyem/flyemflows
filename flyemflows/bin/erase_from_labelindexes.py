@@ -54,13 +54,13 @@ def erase_from_labelindexes(src_info, dest_info, erased_block_stats_h5, batch_si
     
     (block_sv_stats, presorted_by, _agglo_path) = load_stats_h5_to_records(erased_block_stats_h5)
     
-    if mapping is None:
-        mapping = fetch_mappings(*src_info)
-
-    assert isinstance(mapping, pd.Series)
-    mapping_df = mapping.reset_index().rename(columns={'sv': 'segment_id', 'body': 'body_id'})
-
     if presorted_by != 'body_id':
+        if mapping is None:
+            mapping = fetch_mappings(*src_info)
+    
+        assert isinstance(mapping, pd.Series)
+        mapping_df = mapping.reset_index().rename(columns={'sv': 'segment_id', 'body': 'body_id'})
+    
         # sorts in-place, and saves a copy to hdf5
         sort_block_stats( block_sv_stats,
                           mapping_df,
