@@ -283,7 +283,7 @@ def ingest_label_indexes( server,
     instance_info = (server, uuid, instance_name)
     processor = StatsBatchProcessor(last_mutid, instance_info, tombstone_mode, block_sv_stats, subset_labels, check_mismatches)
 
-    gen = generate_stats_batches(block_sv_stats, batch_rows)
+    gen = generate_stats_batch_spans(block_sv_stats, batch_rows)
 
     progress_bar = tqdm_proxy(total=len(block_sv_stats), logger=logger)
 
@@ -320,7 +320,7 @@ def _check_instance(server, uuid, instance):
     assert bz == by == bx == 64, \
         "The code below makes the hard-coded assumption that the instance block width is 64."
 
-def generate_stats_batches( block_sv_stats, batch_rows=100_000 ):
+def generate_stats_batch_spans( block_sv_stats, batch_rows=100_000 ):
     """
     Generator.
     For the given array of with dtype=STATS_DTYPE, sort the array by [body_id,z,y,x] (IN-PLACE),

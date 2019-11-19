@@ -1,5 +1,6 @@
 import os
 import logging
+import argparse
 import datetime
 from contextlib import contextmanager
 from multiprocessing.pool import Pool, ThreadPool
@@ -8,22 +9,46 @@ import numpy as np
 import pandas as pd
 import requests
 
-from dvidutils import LabelMapper
-from neuclease.util import tqdm_proxy
+from neuclease import configure_default_logging
+from neuclease.logging_setup import initialize_excepthook
+from neuclease.util import tqdm_proxy, Timer, groupby_presorted, iter_batches
 from neuclease.dvid import fetch_repo_info, fetch_mappings, post_labelindex_batch, fetch_labelindex, LabelIndex, create_labelindex, PandasLabelIndex, post_mappings
-from flyemflows.bin.ingest_label_indexes import load_stats_h5_to_records, generate_stats_batches, sort_block_stats
+from flyemflows.bin.ingest_label_indexes import STATS_DTYPE, load_stats_h5_to_records, sort_block_stats
 
 logger = logging.getLogger(__name__)
 
 def main():
-    assert False, "FIXME"
+    configure_default_logging()
+    initialize_excepthook()
+    logger.setLevel(logging.INFO)
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--last-mutid', '-i', required=False, type=int)
+    parser.add_argument('--num-threads', '-n', default=1, type=int,
+                        help='How many threads to use when ingesting label indexes (does not currently apply to mappings)')
+    parser.add_argument('--num-processes', '-n', default=1, type=int,
+                        help='How many processes to use when ingesting label indexes (does not currently apply to mappings)')
+    parser.add_argument('--batch-size', '-b', default=100_000, type=int,
+                        help='Data is grouped in batches to the server. This is the batch size, as measured in ROWS of data to be processed for each batch.')
+    parser.add_argument('server')
+    parser.add_argument('src_uuid')
+    parser.add_argument('dest_uuid')
+    parser.add_argument('labelmap_instance')
+    parser.add_argument('supervoxel_block_stats_h5', nargs='?', # not required if only ingesting mapping
+                        help=f'An HDF5 file with a single dataset "stats", with dtype: {STATS_DTYPE[1:]} (Note: No column for body_id)')
+    args = parser.parse_args()
+
+    with Timer() as timer:
+        src_info = (args.server, args.src_uuid, args.labelmap_instance)
+        dest_info = (args.server, args.dest_uuid, args.labelmap_instance)
+        erase_from_labelindexes(src_info, dest_info, args.supervoxel_block_stats_h5, args.batch_size,
+                                threads=args.num_threads, processes=args.num_processes, last_mutid=args.last_mutid)
+    logger.info(f"DONE. Total time: {timer.timedelta}")
 
 
 def erase_from_labelindexes(src_info, dest_info, erased_block_stats_h5, batch_size=1_000_000, *, threads=0, processes=0, last_mutid=None, mapping=None):
-    assert not processes, "Multiprocessing in this function isn't stable yet. Use threads."
     assert not (threads and processes), \
-        "You can use threads or processes (or neither), but not both"
-
+        "Use threads or processes (or neither), but not both."
     if last_mutid is None:
         last_mutid = fetch_repo_info(*src_info[:2])["MutationID"]
     
@@ -42,15 +67,6 @@ def erase_from_labelindexes(src_info, dest_info, erased_block_stats_h5, batch_si
                           erased_block_stats_h5[:-3] + '-sorted-by-body.h5',
                           '<fetched-from-dvid>')
 
-    # 'processor' is declared as a global so it can be shared with
-    # subprocesses quickly via implicit memory sharing via after fork()
-    global processor
-    processor = ErasedStatsBatchProcessor(last_mutid, src_info, dest_info, block_sv_stats)
-    gen = generate_stats_batches(block_sv_stats, batch_size)
-    progress_bar = tqdm_proxy(total=len(block_sv_stats), logger=logger)
-
-    # Pool must be created AFTER processor is instantiated, above,
-    # to inherit it via fork()
     if threads > 0:
         pool = ThreadPool(threads)
     elif processes > 0:
@@ -59,8 +75,12 @@ def erase_from_labelindexes(src_info, dest_info, erased_block_stats_h5, batch_si
         @contextmanager
         def fakepool():
             yield
-        pool = fakepool
+        pool = fakepool()
     
+    processor = ErasedStatsBatchProcessor(last_mutid, src_info, dest_info)
+    gen = generate_stats_batches(block_sv_stats, batch_size)
+    progress_bar = tqdm_proxy(total=len(block_sv_stats), logger=logger)
+
     unexpected_dfs = []
     all_missing_bodies = []
     all_deleted_svs = []
@@ -68,9 +88,7 @@ def erase_from_labelindexes(src_info, dest_info, erased_block_stats_h5, batch_si
         if threads == 0 and processes == 0:
             batch_iter = map(processor.process_batch, gen)
         else:
-            # Rather than call pool.imap_unordered() with processor.process_batch(),
-            # we use globally declared process_batch(), as explained below.
-            batch_iter = pool.imap_unordered(process_batch, gen)
+            batch_iter = pool.imap_unordered(processor.process_batch, gen)
 
         for next_stats_batch_total_rows, missing_bodies, unexpected_df, deleted_svs in batch_iter:
             if missing_bodies:
@@ -90,27 +108,57 @@ def erase_from_labelindexes(src_info, dest_info, erased_block_stats_h5, batch_si
 
             progress_bar.update(next_stats_batch_total_rows)
 
-    # Now update the mapping to remove the deleted supervoxels.
-    mapper = LabelMapper(mapping.index.values, mapping.values)
-
     if all_deleted_svs:
         all_deleted_svs = np.concatenate(all_deleted_svs)
         assert all_deleted_svs.dtype == np.uint64
 
-    changed_bodies = mapper.apply(deleted_svs, True) # @UnusedVariable
-    q = 'body in @changed_bodies and sv not in @all_deleted_svs'
-    new_mapping = mapping.reset_index().query(q)['body']
-    post_mappings(*dest_info, new_mapping, last_mutid, batch_size=100_000)
+        # Now update the mapping to remove the deleted supervoxels.
+        # We can't use 'batch_size' in post_mappings(...) because that function
+        # still aims to group the mappings according to body, and we might have
+        # a lot of body-0 mappings to post here. We have to batch these ourselves.
+        for deleted_svs in iter_batches(all_deleted_svs, 100_000):
+            new_mapping = pd.Series(0, index=deleted_svs, dtype=np.uint64, name='body')
+            post_mappings(*dest_info, new_mapping, last_mutid)
+
+#     mapper = LabelMapper(mapping.index.values, mapping.values)
+#     changed_bodies = mapper.apply(deleted_svs, True) # @UnusedVariable
+#     q = 'body in @changed_bodies and sv not in @all_deleted_svs'
+#     new_mapping = mapping.reset_index().query(q)['body']
+#     post_mappings(*dest_info, new_mapping, last_mutid, batch_size=100_000)
 
 
-# This is a dirty little trick:
-# We declare 'processor' and 'process_batch()' as a globals to avoid
-# having it get implicitly pickled it when passing to subprocesses.
-# The memory for block_sv_stats is thus inherited by
-# child processes implicitly, via fork().
-processor = None
-def process_batch(*args):
-    return processor.process_batch(*args)
+
+
+def generate_stats_batches( block_sv_stats, batch_rows=100_000 ):
+    """
+    Generator.
+    For the given array of with dtype=STATS_DTYPE, sort the array by [body_id,z,y,x] (IN-PLACE),
+    and then break it up into groups of rows with contiguous body_id.
+    
+    The groups are then yielded in batches, where the total rowcount across all subarrays in
+    each batch has approximately batch_rows.
+    
+    Yields:
+        (batch, batch_total_rowcount)
+    """
+    def gen():
+        next_stats_batch = []
+        next_stats_batch_total_rows = 0
+    
+        for batch in groupby_presorted(block_sv_stats, block_sv_stats['body_id'][:, None]):
+            next_stats_batch.append( batch )
+            next_stats_batch_total_rows += len(batch)
+            if next_stats_batch_total_rows >= batch_rows:
+                yield (next_stats_batch, next_stats_batch_total_rows)
+                next_stats_batch = []
+                next_stats_batch_total_rows = 0
+    
+        # last batch
+        if next_stats_batch:
+            yield (next_stats_batch, next_stats_batch_total_rows)
+    
+    return gen()
+
 
 
 class ErasedStatsBatchProcessor:
@@ -122,9 +170,8 @@ class ErasedStatsBatchProcessor:
     Defined here as a class instead of a simple function to enable
     pickling (for multiprocessing), even when this file is run as __main__.
     """
-    def __init__(self, last_mutid, src_info, dest_info, block_sv_stats):
+    def __init__(self, last_mutid, src_info, dest_info):
         self.last_mutid = last_mutid
-        self.block_sv_stats = block_sv_stats
 
         self.user = os.environ.get("USER", "unknown")
         self.mod_time = datetime.datetime.now().isoformat()
@@ -144,8 +191,7 @@ class ErasedStatsBatchProcessor:
         missing_bodies = []
         unexpected_dfs = []
         all_deleted_svs = []
-        for body_group_start, body_group_stop in next_stats_batch:
-            body_group = self.block_sv_stats[body_group_start:body_group_stop]
+        for body_group in next_stats_batch:
             body_id = body_group[0]['body_id']
 
             try:

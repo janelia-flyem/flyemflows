@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from neuclease.util import extract_subvol, ndindex_array, switch_cwd
-from neuclease.dvid import create_labelmap_instance, fetch_labelmap_voxels, post_labelmap_voxels, post_roi, fetch_labelindex
+from neuclease.dvid import create_labelmap_instance, fetch_labelmap_voxels, post_labelmap_voxels, post_roi, fetch_labelindex, fetch_mapping
 from neuclease.dvid.rle import runlength_encode_to_ranges
 
 from flyemflows.util import upsample, downsample
@@ -198,7 +198,7 @@ def test_masksegmentation_basic(setup_dvid_segmentation_input, invert_mask, disa
     src_info = (dvid_address, repo_uuid, input_segmentation_name)
     dest_info = (dvid_address, repo_uuid, output_segmentation_name)
     with switch_cwd(execution_dir):
-        erase_from_labelindexes(src_info, dest_info, block_stats_path, batch_size=10, threads=1)
+        erase_from_labelindexes(src_info, dest_info, block_stats_path, batch_size=10, processes=4)
 
     # Verify deleted supervoxels
     assert os.path.exists(f'{execution_dir}/deleted-supervoxels.csv')
@@ -210,13 +210,29 @@ def test_masksegmentation_basic(setup_dvid_segmentation_input, invert_mask, disa
     assert deleted_svs == expected_deleted_svs
 
     # Verify remaining sizes
-    expected_sv_sizes = pd.Series(expected_vol.reshape(-1)).value_counts()
+    expected_sv_counts = (pd.Series(expected_vol.reshape(-1), name='sv')
+                            .value_counts()
+                            .drop(0)
+                            .sort_index()
+                            .rename('count'))
+    
+    index_dfs = []
     for sv in remaining_svs:
         index_df = fetch_labelindex(*dest_info, sv, format='pandas').blocks
-        sv_counts = index_df.groupby('sv')['count'].sum()
-        for sv, count in sv_counts.items():
-            assert count == expected_sv_sizes.loc[sv], \
-                f"Written index has the wrong supervoxel count for supervoxel {sv}: {count}"
+        index_dfs.append(index_df)
+    
+    sv_counts = (pd.concat(index_dfs, ignore_index=True)[['sv', 'count']]
+                 .groupby('sv')['count']
+                 .sum()
+                 .sort_index())
+    assert set(sv_counts.index.values) == set(expected_sv_counts.index.values)
+    assert (sv_counts == expected_sv_counts).all(), \
+        pd.DataFrame({'stored_count': sv_counts, 'expected_count': expected_sv_counts}).query('stored_count != expected_count')
+
+    # Verify mapping
+    # Deleted supervoxels exist in the mapping, but they map to 0.
+    assert (fetch_mapping(*dest_info, [*deleted_svs]) == 0).all()
+    assert (fetch_mapping(*dest_info, [*remaining_svs]) == [*remaining_svs]).all()
 
 
 def test_masksegmentation_resume(setup_dvid_segmentation_input, disable_auto_retry):
