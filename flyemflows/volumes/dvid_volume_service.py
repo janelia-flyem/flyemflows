@@ -351,7 +351,8 @@ class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
                 f"Instance '{self._instance_name}' does not yet exist on the server, "\
                 "so your volume_config must specify explicit values for bounding-box"
         else:
-            replace_default_entries(bounding_box_zyx, stored_extents)
+            if stored_extents is not None and stored_extents.any():
+                replace_default_entries(bounding_box_zyx, stored_extents)
 
         ##
         ## message-block-shape
