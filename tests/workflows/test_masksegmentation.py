@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from neuclease.util import extract_subvol, ndindex_array, switch_cwd
-from neuclease.dvid import create_labelmap_instance, fetch_labelmap_voxels, post_labelmap_voxels, post_roi, fetch_labelindex, fetch_mapping
+from neuclease.dvid import create_labelmap_instance, fetch_labelmap_voxels, post_labelmap_voxels, post_merge, post_roi, fetch_labelindex, fetch_mapping
 from neuclease.dvid.rle import runlength_encode_to_ranges
 
 from flyemflows.util import upsample, downsample
@@ -26,25 +26,40 @@ CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'local-cluster')
 
 MAX_SCALE = 7
 
+test_case_counter = 0
+
 @pytest.fixture
 def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
     dvid_address, repo_uuid = setup_dvid_repo
+ 
+    # Since the same UUID is re-used for each test case,
+    # this counter is a little hack used to make sure the segmentation
+    # has a unique name each time, so that previous test cases don't
+    # affect subsequent test casess.
+    global test_case_counter
+    test_case_counter += 1
  
     # Normally the MaskSegmentation workflow is used to update
     # a segmentation instance from a parent uuid to a child uuid.
     # But for this test, we'll simulate that by writing to two
     # different instances in the same uuid.
-    input_segmentation_name = 'masksegmentation-input'
-    output_segmentation_name = 'masksegmentation-output-from-dvid'
+    input_segmentation_name = f'masksegmentation-input-{test_case_counter}'
+    output_segmentation_name = f'masksegmentation-output-from-dvid-{test_case_counter}'
 
-    for instance in (input_segmentation_name, output_segmentation_name):    
-        try:
-            create_labelmap_instance(dvid_address, repo_uuid, instance, max_scale=MAX_SCALE)
-        except HTTPError as ex:
-            if ex.response is not None and 'already exists' in ex.response.content.decode('utf-8'):
-                pass
-        
+    # Agglomerate some supervoxels into bodies
+    # Choose supervoxels that intersect three Z-planes at 64, 128, 192
+    svs_1 = np.unique(random_segmentation[64])
+    svs_2 = np.unique(random_segmentation[128])
+    svs_3 = np.unique(random_segmentation[192])
+
+    for instance in (input_segmentation_name, output_segmentation_name):
+        create_labelmap_instance(dvid_address, repo_uuid, instance, max_scale=MAX_SCALE)
+
+        # Start with an empty mapping (the repo/instance are re-used for each test case)
         post_labelmap_voxels(dvid_address, repo_uuid, instance, (0,0,0), random_segmentation, downres=True)
+        post_merge(dvid_address, repo_uuid, instance, svs_1[0], svs_1[1:])
+        post_merge(dvid_address, repo_uuid, instance, svs_2[0], svs_2[1:])
+        post_merge(dvid_address, repo_uuid, instance, svs_3[0], svs_3[1:])
 
     # Create an ROI to test with -- a sphere with scale-5 resolution
     shape_s5 = np.array(random_segmentation.shape) // 2**5
@@ -140,16 +155,18 @@ def test_masksegmentation_basic(setup_dvid_segmentation_input, invert_mask, disa
     
     output_box_xyz = np.array( final_config['output']['geometry']['bounding-box'] )
     output_box_zyx = output_box_xyz[:,::-1]
-    output_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, output_box_zyx, scale=0)
+    output_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, output_box_zyx, scale=0, supervoxels=True)
 
     # Create a copy of the volume that contains only the voxels we removed
     erased_vol = volume.copy()
     erased_vol[~roi_mask] = 0
 
     # Debug visualization
-    #np.save('/tmp/erased.npy', erased_vol)
-    #np.save('/tmp/output.npy', output_vol)
-    #np.save('/tmp/expected.npy', expected_vol)
+    output_agglo_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, output_box_zyx, scale=0)
+    np.save('/tmp/output.npy', output_vol)
+    np.save('/tmp/output-agglo.npy', output_agglo_vol)
+    np.save('/tmp/expected.npy', expected_vol)
+    np.save('/tmp/erased.npy', erased_vol)
 
     assert (output_vol == expected_vol).all(), \
         "Written vol does not match expected"
@@ -157,7 +174,7 @@ def test_masksegmentation_basic(setup_dvid_segmentation_input, invert_mask, disa
     scaled_expected_vol = expected_vol
     for scale in range(1, 1+MAX_SCALE):
         scaled_expected_vol = downsample(scaled_expected_vol, 2, 'labels-numba')
-        scaled_output_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, output_box_zyx // 2**scale, scale=scale)
+        scaled_output_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, output_box_zyx // 2**scale, scale=scale, supervoxels=True)
 
         #np.save(f'/tmp/expected-{scale}.npy', scaled_expected_vol)
         #np.save(f'/tmp/output-{scale}.npy', scaled_output_vol)
@@ -198,7 +215,7 @@ def test_masksegmentation_basic(setup_dvid_segmentation_input, invert_mask, disa
     src_info = (dvid_address, repo_uuid, input_segmentation_name)
     dest_info = (dvid_address, repo_uuid, output_segmentation_name)
     with switch_cwd(execution_dir):
-        erase_from_labelindexes(src_info, dest_info, block_stats_path, batch_size=10, processes=4)
+        erase_from_labelindexes(src_info, dest_info, block_stats_path, batch_size=10, threads=4)
 
     # Verify deleted supervoxels
     assert os.path.exists(f'{execution_dir}/deleted-supervoxels.csv')
@@ -217,8 +234,8 @@ def test_masksegmentation_basic(setup_dvid_segmentation_input, invert_mask, disa
                             .rename('count'))
     
     index_dfs = []
-    for sv in remaining_svs:
-        index_df = fetch_labelindex(*dest_info, sv, format='pandas').blocks
+    for body in np.unique(fetch_mapping(*dest_info, remaining_svs)):
+        index_df = fetch_labelindex(*dest_info, body, format='pandas').blocks
         index_dfs.append(index_df)
     
     sv_counts = (pd.concat(index_dfs, ignore_index=True)[['sv', 'count']]
@@ -232,7 +249,9 @@ def test_masksegmentation_basic(setup_dvid_segmentation_input, invert_mask, disa
     # Verify mapping
     # Deleted supervoxels exist in the mapping, but they map to 0.
     assert (fetch_mapping(*dest_info, [*deleted_svs]) == 0).all()
-    assert (fetch_mapping(*dest_info, [*remaining_svs]) == [*remaining_svs]).all()
+    
+    # Remaining supervoxels still map to their original bodies
+    assert (fetch_mapping(*dest_info, [*remaining_svs]) == fetch_mapping(*src_info, [*remaining_svs])).all()
 
 
 def test_masksegmentation_resume(setup_dvid_segmentation_input, disable_auto_retry):
@@ -272,7 +291,7 @@ def test_masksegmentation_resume(setup_dvid_segmentation_input, disable_auto_ret
 
     output_box_xyz = np.array( final_config['output']['geometry']['bounding-box'] )
     output_box_zyx = output_box_xyz[:,::-1]
-    output_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, output_box_zyx, scale=0)
+    output_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, output_box_zyx, scale=0, supervoxels=True)
 
     #np.save('/tmp/original.npy', volume)
     #np.save('/tmp/output.npy', output_vol)
