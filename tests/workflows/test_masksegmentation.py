@@ -1,4 +1,5 @@
 import os
+import shutil
 import tempfile
 import textwrap
 from io import StringIO
@@ -126,18 +127,24 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
     return template_dir, config, random_segmentation, dvid_address, repo_uuid, roi_mask_s5, input_segmentation_name, output_segmentation_name
 
 
-@pytest.mark.parametrize('invert_mask', [False, True])
-def test_masksegmentation_basic(setup_dvid_segmentation_input, invert_mask, disable_auto_retry):
+EXPORT_DEBUG_FILES = True
+@pytest.mark.parametrize(
+    'invert_mask,roi_dilation', [
+        (False, 0),
+        (True, 1)
+    ])
+def test_masksegmentation_basic(setup_dvid_segmentation_input, invert_mask, roi_dilation, disable_auto_retry):
     template_dir, config, volume, dvid_address, repo_uuid, roi_mask_s5, input_segmentation_name, output_segmentation_name = setup_dvid_segmentation_input
 
     if invert_mask:
         roi_mask_s5 = ~roi_mask_s5
 
     config["masksegmentation"]["invert-mask"] = invert_mask
+    config["masksegmentation"]["dilate-roi"] = roi_dilation
 
     # re-dump config
     yaml = YAML()
-    yaml.default_flow_style = False    
+    yaml.default_flow_style = False
     with open(f"{template_dir}/workflow.yaml", 'w') as f:
         yaml.dump(config, f)
     
@@ -161,12 +168,27 @@ def test_masksegmentation_basic(setup_dvid_segmentation_input, invert_mask, disa
     erased_vol = volume.copy()
     erased_vol[~roi_mask] = 0
 
-    # Debug visualization
-    output_agglo_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, output_box_zyx, scale=0)
-    np.save('/tmp/output.npy', output_vol)
-    np.save('/tmp/output-agglo.npy', output_agglo_vol)
-    np.save('/tmp/expected.npy', expected_vol)
-    np.save('/tmp/erased.npy', erased_vol)
+    if EXPORT_DEBUG_FILES:
+        original_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, input_segmentation_name, output_box_zyx, scale=0, supervoxels=True)
+        original_agglo_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, input_segmentation_name, output_box_zyx, scale=0)
+        output_agglo_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, output_box_zyx, scale=0)
+        np.save('/tmp/original-svs.npy', original_vol)
+        np.save('/tmp/original-agglo.npy', original_agglo_vol)
+        np.save('/tmp/output.npy', output_vol)
+        np.save('/tmp/output-agglo.npy', output_agglo_vol)
+        np.save('/tmp/expected.npy', expected_vol)
+        np.save('/tmp/erased.npy', erased_vol)
+        
+        shutil.copyfile(f'{execution_dir}/roi-mask.h5', '/tmp/roi-mask.h5')
+        if roi_dilation:
+            shutil.copyfile(f'{execution_dir}/dilated-roi-mask.h5', '/tmp/dilated-roi-mask.h5')
+        if invert_mask:
+            shutil.copyfile(f'{execution_dir}/segmentation-mask.h5', '/tmp/segmentation-mask.h5')
+        shutil.copyfile(f'{execution_dir}/final-mask.h5', '/tmp/final-mask.h5')
+
+    if roi_dilation > 0:
+        # FIXME: We don't yet verify voxel-accuracy of ROI dilation.
+        return
 
     assert (output_vol == expected_vol).all(), \
         "Written vol does not match expected"
@@ -176,8 +198,10 @@ def test_masksegmentation_basic(setup_dvid_segmentation_input, invert_mask, disa
         scaled_expected_vol = downsample(scaled_expected_vol, 2, 'labels-numba')
         scaled_output_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, output_box_zyx // 2**scale, scale=scale, supervoxels=True)
 
-        #np.save(f'/tmp/expected-{scale}.npy', scaled_expected_vol)
-        #np.save(f'/tmp/output-{scale}.npy', scaled_output_vol)
+        if EXPORT_DEBUG_FILES:
+            np.save(f'/tmp/expected-{scale}.npy', scaled_expected_vol)
+            np.save(f'/tmp/expected-{scale}.npy', scaled_expected_vol)
+            np.save(f'/tmp/output-{scale}.npy', scaled_output_vol)
         
         if scale <= 5:
             assert (scaled_output_vol == scaled_expected_vol).all(), \

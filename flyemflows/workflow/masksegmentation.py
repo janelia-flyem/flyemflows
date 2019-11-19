@@ -60,17 +60,24 @@ class MaskSegmentation(Workflow):
                 # no default
             },
             "invert-mask": {
-                "description": "If True, mask out everything EXCEPT the given roi mask.",
+                "description": "If True, mask out everything EXCEPT the given ROI.",
                 "type": "boolean",
                 "default": False
             },
-            "dilate-mask": {
+            "dilate-roi": {
                 "description": "If non-zero, dilate the ROI mask by the given radius (at scale 5)",
                 "type": "integer",
                 "default": 0
             },
-            "erode-mask": {
+            "erode-roi": {
                 "description": "If non-zero, erode the ROI mask by the given radius (at scale 5)",
+                "type": "integer",
+                "default": 0
+            },
+            "dilate-segmentation": {
+                "description": "When 'invert-mask' is used, the inverted mask is intersected with the existing segmentation (at scale 5).\n"
+                               "In that case, you may want to dilate the segmentation before the intersection is performed,\n"
+                               "in case the scale-5 segmentation isn't perfect (e.g. it has holes due to inaccurate downsamplng).\n",
                 "type": "integer",
                 "default": 0
             },
@@ -292,13 +299,12 @@ class MaskSegmentation(Workflow):
             existing_depth = int(info["Extended"]["MaxDownresLevel"])
             options["max-pyramid-scale"] = existing_depth
 
-        # FIXME
-        #if options["resume-at"]["scale"] < options["min-pyramid-scale"]:
-        #    raise RuntimeError("Your 'resume-at' scale seems not to agree with your "
-        #                       "original min-pyramid-scale. Is this really a resumed job?")
+        if options["dilate-roi"] > 0 and options["erode-roi"] > 0:
+            raise RuntimeError("Can't dilate ROI and erode it, too.  Choose one or the other.")
 
-        if options["dilate-mask"] > 0 and options["erode-mask"] > 0:
-            raise RuntimeError("Can't dilate mask and erode it, too.  Choose one or the other.")
+        if options["dilate-segmentation"] > 0 and not options["invert-mask"]:
+            raise RuntimeError("Can't use 'dilate-segmentation'. "
+                               "The segmentation isn't downloaded unless 'invert-mask' is used.")
 
     def _init_services(self):
         """
@@ -351,8 +357,9 @@ class MaskSegmentation(Workflow):
         roi = options["mask-roi"]
         invert_mask = options["invert-mask"]
         max_scale = options["max-pyramid-scale"]
-        dilation_radius = options["dilate-mask"]
-        erosion_radius = options["erode-mask"]
+        roi_dilation = options["dilate-roi"]
+        roi_erosion = options["erode-roi"]
+        seg_dilation = options["dilate-segmentation"]
         
         block_width = self.output_service.block_width
 
@@ -363,6 +370,26 @@ class MaskSegmentation(Workflow):
 
         with Timer(f"Loading ROI '{roi}'", logger):
             roi_mask, _ = fetch_roi(self.input_service.server, self.input_service.uuid, roi, format='mask', mask_box=seg_box_s5)
+
+        with h5py.File('roi-mask.h5', 'w') as f:
+            f.create_dataset('mask', data=roi_mask.view(np.uint8), chunks=(128,128,128))
+
+        assert not (roi_dilation and roi_erosion)
+
+        if roi_dilation > 0:
+            with Timer(f"Dilating ROI by {roi_dilation}", logger):
+                roi_mask = vigra.filters.multiBinaryDilation(roi_mask, roi_dilation)
+            with h5py.File('dilated-roi-mask.h5', 'w') as f:
+                f.create_dataset('mask', data=roi_mask.view(np.uint8), chunks=(128,128,128))
+
+        if roi_erosion > 0:
+            with Timer(f"Eroding ROI by {roi_erosion}", logger):
+                roi_mask = vigra.filters.multiBinaryErosion(roi_mask, roi_erosion)
+            with h5py.File('eroded-roi-mask.h5', 'w') as f:
+                f.create_dataset('mask', data=roi_mask.view(np.uint8), chunks=(128,128,128))
+
+        assert not seg_dilation or invert_mask, \
+            "Can't use 'dilate-segmentation'. The segmentation isn't downloaded unless 'invert-mask' is used."
         
         if invert_mask:
             with Timer("Inverting mask", logger):
@@ -380,17 +407,22 @@ class MaskSegmentation(Workflow):
                 seg_mask = np.zeros(box_shape(seg_box_s5), bool)
                 for box_s5, box_mask in boxes_and_mask:
                     overwrite_subvol(seg_mask, box_s5, box_mask)
+
+                if seg_dilation == 0:                
+                    with h5py.File('segmentation-mask.h5', 'w') as f:
+                        f.create_dataset('mask', data=seg_mask.view(np.uint8), chunks=(128,128,128))
+                else:
+                    with Timer(f"Dilating segmentation by {seg_dilation}", logger):
+                        seg_mask = vigra.filters.multiBinaryDilation(seg_mask, seg_dilation)
+
+                    with h5py.File('dilated-segmentation-mask.h5', 'w') as f:
+                        f.create_dataset('mask', data=seg_mask.view(np.uint8), chunks=(128,128,128))
                 
                 seg_mask[roi_mask] = False
                 roi_mask = seg_mask
 
-        assert not (dilation_radius and erosion_radius)
-        if dilation_radius > 0:
-            with Timer(f"Dilating mask by {dilation_radius}", logger):
-                roi_mask = vigra.filters.multiBinaryDilation(roi_mask, dilation_radius)
-        if erosion_radius > 0:
-            with Timer(f"Eroding mask by {erosion_radius}", logger):
-                roi_mask = vigra.filters.multiBinaryErosion(roi_mask, erosion_radius)
+        with h5py.File('final-mask.h5', 'w') as f:
+            f.create_dataset('mask', data=roi_mask.view(np.uint8), chunks=(128,128,128))
 
         # Downsample the roi_mask to dvid-block resolution, just to see how many blocks it touches. 
         block_mask = view_as_blocks(roi_mask, (2,2,2)).any(axis=(3,4,5))
