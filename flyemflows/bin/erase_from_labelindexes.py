@@ -24,9 +24,9 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--last-mutid', '-i', required=False, type=int)
-    parser.add_argument('--num-threads', '-n', default=1, type=int,
+    parser.add_argument('--num-threads', '-t', default=0, type=int,
                         help='How many threads to use when ingesting label indexes (does not currently apply to mappings)')
-    parser.add_argument('--num-processes', '-n', default=1, type=int,
+    parser.add_argument('--num-processes', '-p', default=0, type=int,
                         help='How many processes to use when ingesting label indexes (does not currently apply to mappings)')
     parser.add_argument('--batch-size', '-b', default=100_000, type=int,
                         help='Data is grouped in batches to the server. This is the batch size, as measured in ROWS of data to be processed for each batch.')
