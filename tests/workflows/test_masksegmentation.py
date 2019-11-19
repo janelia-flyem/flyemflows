@@ -11,12 +11,13 @@ import h5py
 import numpy as np
 import pandas as pd
 
-from neuclease.util import extract_subvol, ndindex_array
-from neuclease.dvid import create_labelmap_instance, fetch_labelmap_voxels, post_labelmap_voxels, post_roi
+from neuclease.util import extract_subvol, ndindex_array, switch_cwd
+from neuclease.dvid import create_labelmap_instance, fetch_labelmap_voxels, post_labelmap_voxels, post_roi, fetch_labelindex
 from neuclease.dvid.rle import runlength_encode_to_ranges
 
 from flyemflows.util import upsample, downsample
 from flyemflows.bin.launchflow import launch_flow
+from flyemflows.bin.erase_from_labelindexes import erase_from_labelindexes
 from neuclease.dvid.repo import create_instance
 from neuclease.util.segmentation import BLOCK_STATS_DTYPES, block_stats_for_volume
 
@@ -33,8 +34,8 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
     # a segmentation instance from a parent uuid to a child uuid.
     # But for this test, we'll simulate that by writing to two
     # different instances in the same uuid.
-    input_segmentation_name = 'segmentation-input'
-    output_segmentation_name = 'segmentation-output-from-dvid'
+    input_segmentation_name = 'masksegmentation-input'
+    output_segmentation_name = 'masksegmentation-output-from-dvid'
 
     for instance in (input_segmentation_name, output_segmentation_name):    
         try:
@@ -107,11 +108,12 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
     with StringIO(config_text) as f:
         config = yaml.load(f)
  
-    return template_dir, config, random_segmentation, dvid_address, repo_uuid, roi_mask_s5, output_segmentation_name
+    return template_dir, config, random_segmentation, dvid_address, repo_uuid, roi_mask_s5, input_segmentation_name, output_segmentation_name
 
-@pytest.mark.parametrize('invert_mask', [True, False])
-def test_masksegmentation(setup_dvid_segmentation_input, invert_mask, disable_auto_retry):
-    template_dir, config, volume, dvid_address, repo_uuid, roi_mask_s5, output_segmentation_name = setup_dvid_segmentation_input
+
+@pytest.mark.parametrize('invert_mask', [False, True])
+def test_masksegmentation_basic(setup_dvid_segmentation_input, invert_mask, disable_auto_retry):
+    template_dir, config, volume, dvid_address, repo_uuid, roi_mask_s5, input_segmentation_name, output_segmentation_name = setup_dvid_segmentation_input
 
     if invert_mask:
         roi_mask_s5 = ~roi_mask_s5
@@ -152,15 +154,16 @@ def test_masksegmentation(setup_dvid_segmentation_input, invert_mask, disable_au
     assert (output_vol == expected_vol).all(), \
         "Written vol does not match expected"
 
+    scaled_expected_vol = expected_vol
     for scale in range(1, 1+MAX_SCALE):
-        expected_vol = downsample(expected_vol, 2, 'labels-numba')
-        output_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, output_box_zyx // 2**scale, scale=scale)
+        scaled_expected_vol = downsample(scaled_expected_vol, 2, 'labels-numba')
+        scaled_output_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, output_box_zyx // 2**scale, scale=scale)
 
-        np.save(f'/tmp/output-{scale}.npy', output_vol)
-        np.save(f'/tmp/expected-{scale}.npy', expected_vol)
+        #np.save(f'/tmp/expected-{scale}.npy', scaled_expected_vol)
+        #np.save(f'/tmp/output-{scale}.npy', scaled_output_vol)
         
         if scale <= 5:
-            assert (output_vol == expected_vol).all(), \
+            assert (scaled_output_vol == scaled_expected_vol).all(), \
                 f"Written vol does not match expected at scale {scale}"
         else:
             # For scale 6 and 7, some blocks are not even changed,
@@ -168,14 +171,17 @@ def test_masksegmentation(setup_dvid_segmentation_input, invert_mask, disable_au
             # downsampling method to our method ('labels-numba').
             # The two don't necessarily give identical results in the case of 'ties',
             # so we'll just verify that the nonzero voxels match, at least.
-            assert ((output_vol == 0) == (expected_vol == 0)).all(), \
+            assert ((scaled_output_vol == 0) == (scaled_expected_vol == 0)).all(), \
                 f"Written vol does not match expected at scale {scale}"
             
-        
-    with h5py.File(f'{execution_dir}/erased-block-statistics.h5', 'r') as f:
+
+    block_stats_path = f'{execution_dir}/erased-block-statistics.h5'
+    with h5py.File(block_stats_path, 'r') as f:
         stats_df = pd.DataFrame(f['stats'][:])
     
+    #
     # Check the exported block statistics
+    #
     stats_cols = [*BLOCK_STATS_DTYPES.keys()]
     assert stats_df.columns.tolist() == stats_cols
     stats_df = stats_df.sort_values(stats_cols).reset_index()
@@ -186,9 +192,35 @@ def test_masksegmentation(setup_dvid_segmentation_input, invert_mask, disable_au
     assert len(stats_df) == len(expected_stats_df)
     assert (stats_df == expected_stats_df).all().all()
 
+    #
+    # Try updating the labelindexes
+    #
+    src_info = (dvid_address, repo_uuid, input_segmentation_name)
+    dest_info = (dvid_address, repo_uuid, output_segmentation_name)
+    with switch_cwd(execution_dir):
+        erase_from_labelindexes(src_info, dest_info, block_stats_path, batch_size=10, threads=1)
+
+    # Verify deleted supervoxels
+    assert os.path.exists(f'{execution_dir}/deleted-supervoxels.csv')
+    deleted_svs = set(pd.read_csv(f'{execution_dir}/deleted-supervoxels.csv')['sv'])
+
+    orig_svs = {*pd.unique(volume.reshape(-1))} - {0}
+    remaining_svs = {*pd.unique(expected_vol.reshape(-1))} - {0}
+    expected_deleted_svs = orig_svs - remaining_svs
+    assert deleted_svs == expected_deleted_svs
+
+    # Verify remaining sizes
+    expected_sv_sizes = pd.Series(expected_vol.reshape(-1)).value_counts()
+    for sv in remaining_svs:
+        index_df = fetch_labelindex(*dest_info, sv, format='pandas').blocks
+        sv_counts = index_df.groupby('sv')['count'].sum()
+        for sv, count in sv_counts.items():
+            assert count == expected_sv_sizes.loc[sv], \
+                f"Written index has the wrong supervoxel count for supervoxel {sv}: {count}"
+
 
 def test_masksegmentation_resume(setup_dvid_segmentation_input, disable_auto_retry):
-    template_dir, config, volume, dvid_address, repo_uuid, roi_mask_s5, output_segmentation_name = setup_dvid_segmentation_input
+    template_dir, config, volume, dvid_address, repo_uuid, roi_mask_s5, _input_segmentation_name, output_segmentation_name = setup_dvid_segmentation_input
 
     brick_shape = config["input"]["geometry"]["message-block-shape"]
     batch_size = config["masksegmentation"]["batch-size"]
@@ -244,5 +276,7 @@ if __name__ == "__main__":
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_masksegmentation']
     args += ['-x']
-    #args += ['-k', 'masksegmentation_resume']
+    #args += ['-Werror']
+    #args += ['-k', 'masksegmentation_basic']
+    #args += ['-k', 'check_labelindexes']
     pytest.main(args)
