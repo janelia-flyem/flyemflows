@@ -88,14 +88,14 @@ class MaskSegmentation(Workflow):
             },
             "resume-at": {
                 "description": "You can resume a failed job by specifying which scale/batch to start\n"
-                               "with (assuming you haven't changed any other config settings).\n",
+                               "with (assuming you haven't changed any other config settings).\n"
+                               "NOTE: Scales are processed from high to low.\n",
                 "type": "object",
-                "default": {"scale": 0, "batch-index": 0},
+                "default": {},
                 "properties": {
                     "scale": {
                         "type": "integer",
-                        "default": 0,
-                        "minValue": 0
+                        "default": -1
                     },
                     "batch-index": {
                         "type": "integer",
@@ -128,16 +128,23 @@ class MaskSegmentation(Workflow):
         min_scale = options["min-pyramid-scale"]
         max_scale = options["max-pyramid-scale"]
 
-        starting_scale = options["resume-at"]["scale"]
-        starting_batch = options["resume-at"]["batch-index"]
+        resumed_scale = options["resume-at"]["scale"]
+        resumed_batch = options["resume-at"]["batch-index"]
         
-        if starting_scale != 0 or starting_batch != 0:
-            logger.info(f"Resuming at scale {starting_scale} batch {starting_batch}")
-        starting_scale = max(min_scale, starting_scale)
+        if resumed_scale != -1 or resumed_batch != 0:
+            logger.info(f"Resuming at scale {resumed_scale} batch {resumed_batch}")
         
+        if resumed_scale == -1:
+            starting_scale = max_scale
+        else:
+            starting_scale = resumed_scale
+
         mask_s5, mask_box_s5 = self._init_mask()
 
-        for scale in range(starting_scale, 1+max_scale):
+        # Process in reverse-order, since it's convenient to check the
+        # low-res scales while the higher ones are still processing.
+        starting_batch = max(0, resumed_batch)
+        for scale in range(starting_scale, min_scale-1, -1):
             if scale != starting_scale:
                 starting_batch = 0
             

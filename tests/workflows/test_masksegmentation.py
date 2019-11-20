@@ -337,5 +337,5 @@ if __name__ == "__main__":
     args += ['-x']
     #args += ['-Werror']
     #args += ['-k', 'masksegmentation_basic']
-    #args += ['-k', 'check_labelindexes']
+    #args += ['-k', 'masksegmentation_resume']
     pytest.main(args)
