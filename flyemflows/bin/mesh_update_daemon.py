@@ -14,7 +14,7 @@ Example usage:
      
     # Start the job in the background.
     # Since it handles SIGHUP, it should remain running after your terminal closes.
-    ${DAEMON_CMD} 2>&1 >> daemon.log &
+    ${DAEMON_CMD} &>> daemon.log &
 """
 
 #
