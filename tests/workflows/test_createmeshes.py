@@ -430,7 +430,7 @@ if __name__ == "__main__":
     os.chdir(os.path.dirname(flyemflows.__file__))
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_createmeshes']
-    #args += ['-x']
+    args += ['-x']
     #args += ['-Werror']
     #args += ['-k', 'createmeshes_subset_bodies_in_batches']
     pytest.main(args)

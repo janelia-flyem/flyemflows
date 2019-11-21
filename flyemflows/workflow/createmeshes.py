@@ -5,13 +5,15 @@ from itertools import chain
 
 import numpy as np
 import pandas as pd
+import lz4.frame
 from requests import HTTPError
 
+import dask
 import dask.bag as db
 import dask.dataframe as ddf
 from dask.delayed import delayed
 
-from neuclease.util import Timer, SparseBlockMask, compute_nonzero_box, box_intersection, extract_subvol, parse_timestamp, switch_cwd, iter_batches
+from neuclease.util import Timer, SparseBlockMask, compute_nonzero_box, box_intersection, extract_subvol, parse_timestamp, switch_cwd, iter_batches, box_shape
 from neuclease.dvid import (fetch_mappings, fetch_repo_instances, create_tarsupervoxel_instance,
                             create_instance, is_locked, post_load, post_keyvalues, fetch_exists, fetch_keys,
                             fetch_supervoxels, fetch_server_info, fetch_mapping, compute_affected_bodies,
@@ -262,6 +264,15 @@ class CreateMeshes(Workflow):
                                "Only allowed when using 'subset-supervoxels' or 'subset-bodies'.\n",
                 "type": "integer",
                 "default": 0
+            },
+            "parallelize-within-bricks": {
+                "description": "If multiple labels-of-interest exist within a single brick, \n"
+                               "their brick meshes can be computed in parallel, at the expense of\n"
+                               "duplicating the brick data to more workers.  It's probably faster\n"
+                               "in most cases, but this parallelism this can be disabled if it seems\n"
+                               "to be causing issues.\n",
+                "type": "boolean",
+                "default": True
             }
         }
     }
@@ -1148,23 +1159,40 @@ def compute_meshes_for_brick(brick, stats_df, options):
         return pd.DataFrame([empty64, empty64, emptyObject, empty64, empty64], columns=cols)
     
     volume = brick.volume
-    brick.compress()
-    
-    meshes = []
-    for row in stats_df.itertuples():
-        mesh, vertex_count, compressed_size = generate_mesh(volume, brick.physical_box, row.sv,
-                                                            smoothing, decimation, rescale_factor)
-        meshes.append( (row.sv, row.body, mesh, vertex_count, compressed_size) )
-    
+    brick.compress() # Is this necessary? Or will the brick be discarded?
+
+    def generate_mesh_for_row(sv, body, mask, compressed):
+        if compressed:
+            mask = np.frombuffer(lz4.frame.decompress(mask), np.bool).reshape(box_shape(brick.physical_box))
+
+        result = generate_mesh(mask, brick.physical_box, smoothing, decimation, rescale_factor)
+        return (sv, body, *result)
+
+    if len(stats_df) == 1 or not options["parallelize-within-bricks"]:
+        mesh_results = []
+        for row in stats_df.itertuples():
+            mask = (volume == row.sv)
+            mesh_results.append( generate_mesh_for_row(row.sv, row.body, mask, False) )
+    else:
+        # Use dask's ability to launch tasks-within-tasks
+        # https://distributed.dask.org/en/latest/task-launch.html
+        # We compress the mask before passing it to delayed(),
+        # mostly to save RAM if there are lots of tasks that end up on one node.
+        tasks = []
+        for row in stats_df.itertuples():
+            mask = (volume == row.sv)
+            compressed_mask = lz4.frame.compress(mask)
+            tasks.append(delayed(generate_mesh_for_row)(row.sv, row.body, compressed_mask, True))
+        mesh_results = dask.compute(*tasks)
+
     dtypes = {'sv': np.uint64, 'body': np.uint64,
               'mesh': object,
               'vertex_count': int, 'compressed_size': int}
-    return pd.DataFrame(meshes, columns=cols).astype(dtypes)
+    
+    return pd.DataFrame(mesh_results, columns=cols).astype(dtypes)
 
 
-def generate_mesh(volume, box, label, smoothing, decimation, rescale_factor):
-    mask = (volume == label)
-
+def generate_mesh(mask, box, smoothing, decimation, rescale_factor):
     # Pre-crop the volume, leaving a 1-px halo where possible
     mask_box = compute_nonzero_box(mask)
     mask_box[:] += [(-1, -1, -1), (1, 1, 1)]
