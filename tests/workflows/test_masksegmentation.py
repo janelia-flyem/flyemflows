@@ -131,7 +131,7 @@ EXPORT_DEBUG_FILES = True
 @pytest.mark.parametrize(
     'invert_mask,roi_dilation', [
         (False, 0),
-        (True, 1)
+        (True, 1) # FIXME: We don't yet verify voxel-accuracy of ROI dilation.
     ])
 def test_masksegmentation_basic(setup_dvid_segmentation_input, invert_mask, roi_dilation, disable_auto_retry):
     template_dir, config, volume, dvid_address, repo_uuid, roi_mask_s5, input_segmentation_name, output_segmentation_name = setup_dvid_segmentation_input
