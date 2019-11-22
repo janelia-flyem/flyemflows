@@ -159,7 +159,7 @@ def setup_createmeshes_config(setup_segmentation_input, disable_auto_retry):
     return template_dir, config, dvid_address, repo_uuid, object_boxes, object_sizes
 
 
-def check_outputs(execution_dir, object_boxes, subset_labels=None, stats_dir=None):
+def check_outputs(execution_dir, object_boxes, subset_labels=None, stats_dir=None, max_vertices=None):
     """
     Basic checks to make sure the meshes for the given labels were
     generated and not terribly wrong.
@@ -180,12 +180,15 @@ def check_outputs(execution_dir, object_boxes, subset_labels=None, stats_dir=Non
         # Here's where our test meshes ended up:
         #print(f"{execution_dir}/meshes/{label}.obj")
         assert os.path.exists(f"{execution_dir}/meshes/{label}.obj")
-    
+
         # Make sure the mesh vertices appeared in the right place.
         # (If they weren't rescaled, this won't work.)
         mesh = Mesh.from_file(f"{execution_dir}/meshes/{label}.obj")
         assert np.allclose(mesh.vertices_zyx.min(axis=0), object_boxes[label][0], 1)
         assert np.allclose(mesh.vertices_zyx.max(axis=0), object_boxes[label][1], 1)
+
+        if max_vertices is not None:
+            assert len(mesh.vertices_zyx) <= 1.1*max_vertices
 
 
 def test_createmeshes_basic(setup_createmeshes_config, disable_auto_retry):
@@ -194,6 +197,17 @@ def test_createmeshes_basic(setup_createmeshes_config, disable_auto_retry):
     execution_dir, _workflow = launch_flow(template_dir, 1)
     #print(execution_dir)
     check_outputs(execution_dir, object_boxes)
+
+def test_createmeshes_max_vertices(setup_createmeshes_config, disable_auto_retry):
+    template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
+    max_vertices = 1000
+    config['createmeshes']['post-stitch-parameters']['max-vertices'] = max_vertices
+    YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
+
+    execution_dir, _workflow = launch_flow(template_dir, 1)
+    #print(execution_dir)
+    check_outputs(execution_dir, object_boxes, max_vertices=max_vertices)
+
 
 def test_createmeshes_to_tarsupervoxels(setup_createmeshes_config, disable_auto_retry):
     template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
@@ -432,5 +446,5 @@ if __name__ == "__main__":
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_createmeshes']
     args += ['-x']
     #args += ['-Werror']
-    #args += ['-k', 'createmeshes_subset_bodies_in_batches']
+    #args += ['-k', 'createmeshes_max_vertices']
     pytest.main(args)

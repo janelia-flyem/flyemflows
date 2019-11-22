@@ -124,6 +124,12 @@ class CreateMeshes(Workflow):
                 "maximum": 1.0, # 1.0 == disable
                 "default": 1.0
             },
+            "max-vertices": {
+                "description": "If necessary, decimate the mesh even further to avoid exceeding this maximum vertex count.\n",
+                "type": "number",
+                "minValue": 0,
+                "default": 0 # no max
+            },
             "compute-normals": {
                 "description": "Compute vertex normals and include them in the uploaded results.",
                 "type": "boolean",
@@ -927,7 +933,8 @@ class CreateMeshes(Workflow):
     def _combine_brick_meshes(self, batch_index, brick_meshes_ddf):
         options = self.config["createmeshes"]
         final_smoothing = options["post-stitch-parameters"]["smoothing"]
-        final_decimation = options["post-stitch-parameters"]["decimation"]
+        post_decimation = options["post-stitch-parameters"]["decimation"]
+        max_vertices = options["post-stitch-parameters"]["max-vertices"]
         compute_normals = options["post-stitch-parameters"]["compute-normals"]
 
         stitch_method = options["stitch-method"]
@@ -939,12 +946,18 @@ class CreateMeshes(Workflow):
             except Exception as ex:
                 # Re-raise with the whole input
                 # (Can't use exception chaining, sadly.)
+                # NOTE:
+                #   If any of the code below raises an exception,
+                #   it can have strage consequences for subsequent calls to this function.
+                #   If you're seeing weird errors here, like KeyError: 'sv',
+                #   that's probably a sign that something BELOW is failing.
+                #   Step through the code below in a debugger.
                 np.save('failed-sv_brick_meshes_df.npy', sv_brick_meshes_df.to_records(index=True))
                 raise Exception('WrappedError:', type(ex), ex,
                                 sv_brick_meshes_df.index,
                                 sv_brick_meshes_df.columns.tolist(),
-                                str(sv_brick_meshes_df.iloc[0],
-                                'See failed-sv_brick_meshes_df.npy'))
+                                str(sv_brick_meshes_df.iloc[0]),
+                                'See failed-sv_brick_meshes_df.npy')
 
             assert (sv_brick_meshes_df['sv'] == sv).all()
 
@@ -956,6 +969,10 @@ class CreateMeshes(Workflow):
             if final_smoothing != 0:
                 mesh.laplacian_smooth(final_smoothing)
             
+            final_decimation = post_decimation
+            if max_vertices != 0 and len(mesh.vertices_zyx) > max_vertices:
+                final_decimation = min( post_decimation, max_vertices / len(mesh.vertices_zyx) )
+                
             if final_decimation != 1.0:
                 mesh.simplify(final_decimation, in_memory=True)
             
@@ -974,7 +991,7 @@ class CreateMeshes(Workflow):
                                 index=[sv])
 
         sv_brick_meshes_dgb = brick_meshes_ddf.groupby('sv')
-        del brick_meshes_ddf
+        #del brick_meshes_ddf
         
         dtypes = {'sv': np.uint64, 'mesh': object, 'vertex_count': np.int64, 'compressed_size': int}
         sv_meshes_ddf = sv_brick_meshes_dgb.apply(assemble_sv_meshes, meta=dtypes)
@@ -1144,7 +1161,9 @@ def compute_meshes_for_brick(brick, stats_df, options):
     
     smoothing = options["pre-stitch-parameters"]["smoothing"]
     decimation = options["pre-stitch-parameters"]["decimation"]
+    max_vertices = options["pre-stitch-parameters"]["max-vertices"]
     rescale_factor = options["rescale-before-write"]
+    
     if isinstance(rescale_factor, list):
         rescale_factor = np.array( rescale_factor[::-1] ) # zyx
     else:
@@ -1161,28 +1180,36 @@ def compute_meshes_for_brick(brick, stats_df, options):
     volume = brick.volume
     brick.compress() # Is this necessary? Or will the brick be discarded?
 
-    def generate_mesh_for_row(sv, body, mask, compressed):
-        if compressed:
-            mask = np.frombuffer(lz4.frame.decompress(mask), np.bool).reshape(box_shape(brick.physical_box))
+    def crop(mask, orig_mask_box):
+        # Pre-crop the volume, leaving a 1-px halo where possible
+        mask_box = compute_nonzero_box(mask)
+        mask_box[:] += [(-1, -1, -1), (1, 1, 1)]
+        mask_box = box_intersection(mask_box, [(0,0,0), mask.shape])
 
-        result = generate_mesh(mask, brick.physical_box, smoothing, decimation, rescale_factor)
-        return (sv, body, *result)
+        mask = extract_subvol(mask, mask_box)
+        mask_box += orig_mask_box[0]
+        return mask, mask_box
 
     if len(stats_df) == 1 or not options["parallelize-within-bricks"]:
         mesh_results = []
         for row in stats_df.itertuples():
             mask = (volume == row.sv)
-            mesh_results.append( generate_mesh_for_row(row.sv, row.body, mask, False) )
+            mask, mask_box = crop(mask, brick.physical_box)
+            mesh_results.append( generate_mesh(row.sv, row.body, mask, mask_box, smoothing, decimation, max_vertices, rescale_factor, False) )
     else:
-        # Use dask's ability to launch tasks-within-tasks
-        # https://distributed.dask.org/en/latest/task-launch.html
-        # We compress the mask before passing it to delayed(),
-        # mostly to save RAM if there are lots of tasks that end up on one node.
         tasks = []
         for row in stats_df.itertuples():
             mask = (volume == row.sv)
-            compressed_mask = lz4.frame.compress(mask)
-            tasks.append(delayed(generate_mesh_for_row)(row.sv, row.body, compressed_mask, True))
+            mask, mask_box = crop(mask, brick.physical_box)
+
+            # We compress the mask before passing it to delayed(),
+            # mostly to save RAM if there are lots of tasks that end up on one node.
+            compressed_mask = lz4.frame.compress(np.asarray(mask, order='C'))
+
+            # Parallelize using dask's ability to launch tasks-within-tasks
+            # https://distributed.dask.org/en/latest/task-launch.html
+            task = delayed(generate_mesh)(row.sv, row.body, compressed_mask, mask_box, smoothing, decimation, max_vertices, rescale_factor, True)
+            tasks.append( task )
         mesh_results = dask.compute(*tasks)
 
     dtypes = {'sv': np.uint64, 'body': np.uint64,
@@ -1192,19 +1219,18 @@ def compute_meshes_for_brick(brick, stats_df, options):
     return pd.DataFrame(mesh_results, columns=cols).astype(dtypes)
 
 
-def generate_mesh(mask, box, smoothing, decimation, rescale_factor):
-    # Pre-crop the volume, leaving a 1-px halo where possible
-    mask_box = compute_nonzero_box(mask)
-    mask_box[:] += [(-1, -1, -1), (1, 1, 1)]
-    mask_box = box_intersection(mask_box, [(0,0,0), mask.shape])
-
-    mask = extract_subvol(mask, mask_box)
-    mask_box += box[0]
+def generate_mesh(sv, body, mask, mask_box, smoothing, decimation, max_vertices, rescale_factor, compressed=False):
+    if compressed:
+        mask_shape = box_shape(mask_box)
+        mask = np.frombuffer(lz4.frame.decompress(mask), np.bool).reshape(mask_shape)
     
     mesh = Mesh.from_binary_vol(mask, mask_box)
     
     if smoothing != 0:
         mesh.laplacian_smooth(smoothing)
+    
+    if max_vertices != 0 and len(mesh.vertices_zyx) > max_vertices:
+        decimation = min( decimation, max_vertices / len(mesh.vertices_zyx) )
     
     # Don't bother decimating really tiny meshes -- something usually goes wrong anyway.
     if decimation != 1.0 and len(mesh.vertices_zyx) > 10:
@@ -1217,7 +1243,7 @@ def generate_mesh(mask, box, smoothing, decimation, rescale_factor):
     vertex_count = len(mesh.vertices_zyx)
     compressed_size = mesh.compress()
 
-    return mesh, vertex_count, compressed_size
+    return sv, body, mesh, vertex_count, compressed_size
 
 
 def serialize_mesh(sv, mesh, path=None, fmt=None, log=True):
