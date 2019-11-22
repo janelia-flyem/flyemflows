@@ -12,7 +12,7 @@ import dask
 import dask.bag as db
 import dask.dataframe as ddf
 from dask.delayed import delayed
-from distributed import worker_client
+from distributed import get_client, worker_client
 
 from neuclease.util import Timer, SparseBlockMask, compute_nonzero_box, box_intersection, extract_subvol, parse_timestamp, switch_cwd, iter_batches, box_shape
 from neuclease.dvid import (fetch_mappings, fetch_repo_instances, create_tarsupervoxel_instance,
@@ -25,7 +25,7 @@ from dvidutils import LabelMapper
 
 from vol2mesh import Mesh
 
-from ..util.dask_util import drop_empty_partitions
+from ..util.dask_util import drop_empty_partitions, DebugClient
 from .util.config_helpers import BodyListSchema, load_body_list
 from ..volumes import VolumeService, SegmentationVolumeSchema, DvidVolumeService
 from ..brick import BrickWall
@@ -1191,12 +1191,20 @@ def compute_meshes_for_brick(brick, stats_df, options):
         mask_box += orig_mask_box[0]
         return mask, mask_box
 
-    if len(stats_df) == 1 or not options["parallelize-within-bricks"]:
+    # Are we running via a distributed cluster?
+    try:
+        get_client()
+        can_parallelize = True
+    except Exception:
+        can_parallelize = False
+
+    if not can_parallelize or len(stats_df) == 1 or not options["parallelize-within-bricks"]:
         mesh_results = []
         for row in stats_df.itertuples():
             mask = (volume == row.sv)
             mask, mask_box = crop(mask, brick.physical_box)
-            mesh_results.append( generate_mesh(row.sv, row.body, mask, mask_box, smoothing, decimation, max_vertices, rescale_factor, False) )
+            args = (row.sv, row.body, mask, mask_box, smoothing, decimation, max_vertices, rescale_factor, False)
+            mesh_results.append( generate_mesh(*args) )
     else:
         # Parallelize using dask's ability to launch tasks-within-tasks
         # https://distributed.dask.org/en/latest/task-launch.html
