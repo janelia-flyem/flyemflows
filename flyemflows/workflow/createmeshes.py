@@ -12,6 +12,7 @@ import dask
 import dask.bag as db
 import dask.dataframe as ddf
 from dask.delayed import delayed
+from distributed import worker_client
 
 from neuclease.util import Timer, SparseBlockMask, compute_nonzero_box, box_intersection, extract_subvol, parse_timestamp, switch_cwd, iter_batches, box_shape
 from neuclease.dvid import (fetch_mappings, fetch_repo_instances, create_tarsupervoxel_instance,
@@ -1197,20 +1198,32 @@ def compute_meshes_for_brick(brick, stats_df, options):
             mask, mask_box = crop(mask, brick.physical_box)
             mesh_results.append( generate_mesh(row.sv, row.body, mask, mask_box, smoothing, decimation, max_vertices, rescale_factor, False) )
     else:
-        tasks = []
-        for row in stats_df.itertuples():
-            mask = (volume == row.sv)
-            mask, mask_box = crop(mask, brick.physical_box)
+        # Parallelize using dask's ability to launch tasks-within-tasks
+        # https://distributed.dask.org/en/latest/task-launch.html
+        with worker_client() as client:
+            tasks = []
+            for row in stats_df.itertuples():
+                mask = (volume == row.sv)
+                mask, mask_box = crop(mask, brick.physical_box)
+    
+                # We compress the mask before passing it to delayed(),
+                # mostly to save RAM if there are lots of tasks that end up on one node.
+                compressed_mask = lz4.frame.compress(np.asarray(mask, order='C'))
+    
+                args = (row.sv, row.body, compressed_mask, mask_box, smoothing, decimation, max_vertices, rescale_factor, True)
+                
+                # Apparently the delayed() approach doesn't work
+                # (I get errors "Workers don't have promised key")
+                #task = delayed(generate_mesh)(*args)
 
-            # We compress the mask before passing it to delayed(),
-            # mostly to save RAM if there are lots of tasks that end up on one node.
-            compressed_mask = lz4.frame.compress(np.asarray(mask, order='C'))
+                # Use client/future method instead
+                future = client.submit(generate_mesh, *args)
+                
+                tasks.append( future )
 
-            # Parallelize using dask's ability to launch tasks-within-tasks
-            # https://distributed.dask.org/en/latest/task-launch.html
-            task = delayed(generate_mesh)(row.sv, row.body, compressed_mask, mask_box, smoothing, decimation, max_vertices, rescale_factor, True)
-            tasks.append( task )
-        mesh_results = dask.compute(*tasks)
+            # See note above.  Use client/future method
+            #mesh_results = dask.compute(*tasks)
+            mesh_results = client.gather(tasks)
 
     dtypes = {'sv': np.uint64, 'body': np.uint64,
               'mesh': object,
