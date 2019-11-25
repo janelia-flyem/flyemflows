@@ -483,6 +483,13 @@ class CreateMeshes(Workflow):
         bricks_ddf, subset_supervoxels = self.init_bricks_ddf(self.input_service, subset_supervoxels)
         bricks_ddf = bricks_ddf.persist()
         
+        # Randomize the supervoxel order, to reduce incidence of shared bricks within a batch.
+        # (Computation is not parallelized within a brick (or even a partition),
+        # unless 'parallelize-within-bricks' is working.)
+        np.random.seed(0)
+        subset_supervoxels = np.asarray(subset_supervoxels)
+        np.random.shuffle(subset_supervoxels)
+        
         if batch_size == 0:
             self.execute_batch(0, bricks_ddf, subset_supervoxels, existing_svs)
         else:
@@ -759,9 +766,9 @@ class CreateMeshes(Workflow):
             # it via dask.delayed rather than a normally captured variable.
             brick_counts_df = (bricks_ddf
                                 .map_partitions(compute_brick_labelcounts,
-                                                    subset_labels=delayed(subset_supervoxels),
-                                                    export_labelcounts=export_labelcounts,
-                                                    meta=dtypes)
+                                                subset_labels=delayed(subset_supervoxels),
+                                                export_labelcounts=export_labelcounts,
+                                                meta=dtypes)
                                 .clear_divisions()
                                 .compute())
 
