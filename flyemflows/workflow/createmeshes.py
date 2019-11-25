@@ -273,13 +273,14 @@ class CreateMeshes(Workflow):
                 "default": 0
             },
             "parallelize-within-bricks": {
-                "description": "If multiple labels-of-interest exist within a single brick, \n"
+                "description": "FIXME: This doesn't work yet.  Leave it set to False.\n"
+                               "If multiple labels-of-interest exist within a single brick, \n"
                                "their brick meshes can be computed in parallel, at the expense of\n"
                                "duplicating the brick data to more workers.  It's probably faster\n"
                                "in most cases, but this parallelism this can be disabled if it seems\n"
                                "to be causing issues.\n",
                 "type": "boolean",
-                "default": True
+                "default": False
             }
         }
     }
@@ -1208,6 +1209,9 @@ def compute_meshes_for_brick(brick, stats_df, options):
     else:
         # Parallelize using dask's ability to launch tasks-within-tasks
         # https://distributed.dask.org/en/latest/task-launch.html
+        # FIXME: This doesn't work well right now.
+        #        The issue is probably the sheer number of extra tasks
+        #        (and workers) this adds to the graph.
         with worker_client() as client:
             tasks = []
             for row in stats_df.itertuples():
