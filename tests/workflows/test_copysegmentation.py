@@ -191,6 +191,7 @@ def test_copysegmentation_from_dvid_to_dvid_with_labelmap(setup_dvid_segmentatio
     _box_zyx, _expected_vol = _run_to_dvid(setup)
 
 
+
 def test_copysegmentation_from_dvid_to_dvid_input_mask(setup_dvid_segmentation_input, disable_auto_retry):
     template_dir, config, volume, dvid_address, repo_uuid, _output_segmentation_name = setup_dvid_segmentation_input
     
@@ -221,6 +222,10 @@ def test_copysegmentation_from_dvid_to_dvid_input_mask(setup_dvid_segmentation_i
 
     setup = template_dir, config, expected_vol, dvid_address, repo_uuid, output_segmentation_name
     _box_zyx, _expected_vol = _run_to_dvid(setup)
+
+
+# def test_copysegmentation_from_dvid_to_dvid_both_masks(setup_dvid_segmentation_input, disable_auto_retry):
+# TODO
 
 
 def test_copysegmentation_from_hdf5_to_dvid(setup_hdf5_segmentation_input, disable_auto_retry):
@@ -421,6 +426,6 @@ if __name__ == "__main__":
     
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_copysegmentation']
-    #args += ['-x']
-    #args += ['-k', 'copysegmentation_from_dvid_to_dvid_input_mask']
+    args += ['-x']
+    #args += ['-k', 'copysegmentation_from_hdf5_to_dvid_output_mask']
     pytest.main(args)

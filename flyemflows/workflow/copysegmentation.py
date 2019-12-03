@@ -9,7 +9,8 @@ import h5py
 import numpy as np
 import pandas as pd
 
-from neuclease.util import Timer, Grid, slabs_from_box, block_stats_for_volume, BLOCK_STATS_DTYPES, mask_for_labels
+from neuclease.util import (Timer, Grid, slabs_from_box, block_stats_for_volume, BLOCK_STATS_DTYPES,
+                            mask_for_labels, box_intersection, extract_subvol, SparseBlockMask)
 from neuclease.dvid import fetch_repo_instances, fetch_instance_info
 from neuclease.dvid.rle import runlength_encode_to_ranges
 
@@ -313,20 +314,50 @@ class CopySegmentation(Workflow):
         output_mask_labels = load_body_list(options["output-mask-labels"], is_supervoxels)
         self.output_mask_labels = set(output_mask_labels)
 
-        # FIXME: also fetch a sparseblock mask for the output labels,
-        #        and take the intersection of the input and output masks.
-        #        Or, if no input mask was specified, use the output mask alone
-        #        to determine which blocks to fetch.
-        #        (All of that needs to account for translation offsets, of course.) 
+        output_sbm = None
+        if len(output_mask_labels) > 0:
+            if (self.output_service.preferred_message_shape != self.input_service.preferred_message_shape).any():
+                logger.warn("Not using output mask to reduce data fetching: Your input service and output service don't have the same brick shape")
+            elif (self.output_service.bounding_box_zyx != self.input_service.bounding_box_zyx).any():
+                logger.warn("Not using output mask to reduce data fetching: Your input service and output service don't have the same bounding box")
+            else:
+                try:
+                    output_sbm = self.output_service.sparse_block_mask_for_labels(output_mask_labels)
+                except NotImplementedError:
+                    output_sbm = None
+
         input_mask_labels = load_body_list(options["input-mask-labels"], is_supervoxels)
-        if len(input_mask_labels) == 0:
-            self.sbm = None
-        else:
+
+        input_sbm = None
+        if len(input_mask_labels) > 0:
             try:
-                self.sbm = self.input_service.sparse_block_mask_for_labels(input_mask_labels)
+                input_sbm = self.input_service.sparse_block_mask_for_labels(input_mask_labels)
             except NotImplementedError:
-                self.sbm = None
-        
+                input_sbm = None
+
+        if input_sbm is None:
+            self.sbm = output_sbm
+        elif output_sbm is None:
+            self.sbm = input_sbm
+        else:
+            assert (input_sbm.resolution == output_sbm.resolution).all(), \
+                "FIXME: At the moment, you can't supply both an input mask and an output "\
+                "mask unless the input and output sources use the same brick shape (message-block-shape)"
+
+
+            final_box = box_intersection(input_sbm.box, output_sbm.box)
+            
+            input_box = (input_sbm.box - final_box) // input_sbm.resolution
+            input_mask = extract_subvol(input_sbm.lowres_mask, input_box)
+            
+            output_box = (output_sbm - final_box) // output_sbm.resolution
+            output_mask = extract_subvol(output_sbm.lowres_mask, output_box)
+            
+            assert input_mask.shape == output_mask.shape
+            assert input_mask.dtype == output_mask.dtype == np.bool
+            final_mask = (input_mask & output_mask)
+            
+            self.sbm = SparseBlockMask(final_mask, final_box, input_sbm.resolution)
 
         id_offset = options["add-offset-to-ids"]
         if id_offset != 0:
