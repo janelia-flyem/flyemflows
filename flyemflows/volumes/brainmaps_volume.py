@@ -1,6 +1,7 @@
 import os
 import json
 import threading
+from collections import defaultdict
 from itertools import chain
 
 from httplib2 import Http
@@ -297,6 +298,9 @@ class BrainMapsVolume:
         if 'boundingBox' in geometry:
             corner = geometry['boundingBox'][0]['corner']
             size = geometry['boundingBox'][0]['size']
+            
+            corner = defaultdict(lambda: 0, corner)
+            size = defaultdict(lambda: 0, size)
         
             shape = [int(size[k]) for k in 'zyx']
             if not corner:
