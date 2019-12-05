@@ -369,7 +369,10 @@ def test_copysegmentation_from_brainmaps_to_dvid(setup_dvid_repo):
             project: '274750196357'
             dataset: hemibrain
             volume-id: base20180227_8nm_watershed_fixed
-            change-stack-id: ffn_agglo_20180312_32_16_8_freeze10
+            change-stack-id: ''
+
+            # Uh-oh, apparently this change stack is no longer available in BrainMaps??
+            #change-stack-id: ffn_agglo_20180312_32_16_8_freeze10
 
           geometry:
             bounding-box: {box_xyz.tolist()}
@@ -427,5 +430,5 @@ if __name__ == "__main__":
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_copysegmentation']
     args += ['-x']
-    #args += ['-k', 'copysegmentation_from_hdf5_to_dvid_output_mask']
+    #args += ['-k', 'copysegmentation_from_brainmaps_to_dvid']
     pytest.main(args)
