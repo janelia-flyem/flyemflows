@@ -534,7 +534,13 @@ class CopySegmentation(Workflow):
 
         id_offset = options["add-offset-to-ids"]
         if id_offset != 0:
-            input_wall = input_wall.map_brick_volumes(lambda b: b.volume + id_offset)
+            def add_offset(brick):
+                # Offset everything except for label 0, which remains 0
+                vol = brick.volume.copy()
+                brick.compress()
+                vol[vol != 0] += id_offset
+                return vol
+            input_wall = input_wall.map_brick_volumes(add_offset)
 
         output_service = self.output_service
 
@@ -552,7 +558,9 @@ class CopySegmentation(Workflow):
                 block_shape = 3*[self.output_service.base_service.block_width]
 
                 def block_stats_for_brick(brick):
-                    return block_stats_for_volume(block_shape, brick.volume, brick.physical_box)
+                    vol = brick.volume
+                    brick.compress()
+                    return block_stats_for_volume(block_shape, vol, brick.physical_box)
                 
                 slab_block_stats_per_brick = padded_wall.bricks.map(block_stats_for_brick).compute()
                 slab_block_stats_df = pd.concat(slab_block_stats_per_brick, ignore_index=True)
@@ -601,10 +609,17 @@ class CopySegmentation(Workflow):
         Returns a pre-executed and persisted BrickWall.
         """
         options = self.config["copysegmentation"]
+
+        # We'll pad from previously-existing pyramid data until
+        # we have full storage blocks, e.g. (64,64,64),
+        # but not necessarily full bricks, e.g. (64,64,6400)
         output_writing_grid = Grid(output_service.preferred_message_shape)
+        storage_block_width = output_service.block_width
+        output_padding_grid = Grid( (storage_block_width, storage_block_width, storage_block_width), output_writing_grid.offset )
+        output_accessor_func = partial(output_service.get_subvolume, scale=scale)
 
         # Consolidate bricks to full-size, aligned blocks (shuffles data)
-        realigned_wall = input_wall.realign_to_new_grid( output_writing_grid )
+        realigned_wall = input_wall.realign_to_new_grid(output_writing_grid,  output_accessor_func)
         del input_wall
         realigned_wall.persist_and_execute(f"Slab {slab_index}: Scale {scale}: Shuffling bricks into alignment", logger)
 
@@ -641,6 +656,7 @@ class CopySegmentation(Workflow):
                 # Start with the complete output, then
                 # change voxels that fall within both masks.
                 output_vol[mask] = input_brick.volume[mask]
+                input_brick.compress()
                 return output_vol
 
             combined_wall = realigned_wall.map_brick_volumes(combine_with_output)
@@ -648,13 +664,6 @@ class CopySegmentation(Workflow):
             realigned_wall = combined_wall
 
 
-        # Pad from previously-existing pyramid data until
-        # we have full storage blocks, e.g. (64,64,64),
-        # but not necessarily full bricks, e.g. (64,64,6400)
-        storage_block_width = output_service.block_width
-        output_padding_grid = Grid( (storage_block_width, storage_block_width, storage_block_width), output_writing_grid.offset )
-        output_accessor_func = partial(output_service.get_subvolume, scale=scale)
-        
         padded_wall = realigned_wall.fill_missing(output_accessor_func, output_padding_grid)
         del realigned_wall
         padded_wall.persist_and_execute(f"Slab {slab_index}: Scale {scale}: Padding", logger)
@@ -742,6 +751,8 @@ class CopySegmentation(Workflow):
                 #       and/or the resource manager muddy the numbers a bit...
                 #megavoxels_per_second = datacrop.size / 1e6 / put_timer.seconds
                 #logger.info(f"Put block {data_offset_zyx} in {put_timer.seconds:.3f} seconds ({megavoxels_per_second:.1f} Megavoxels/second)")
+
+            brick.compress()
 
         logger.info(f"Slab {slab_index}: Scale {scale}: Writing bricks to {instance_name}...")
         with Timer() as timer:

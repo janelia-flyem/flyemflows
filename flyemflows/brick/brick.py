@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import dask.bag
 
-from neuclease.util import Timer, Grid, boxes_from_grid, box_intersection, box_to_slicing, overwrite_subvol, extract_subvol
+from neuclease.util import Timer, Grid, boxes_from_grid, box_intersection, box_to_slicing, overwrite_subvol, extract_subvol, is_box_coverage_complete
 from ..util import compress_volume, uncompress_volume, DebugClient
 from ..util.dask_util import drop_empty_partitions
 
@@ -473,13 +473,21 @@ def apply_label_mapping(bricks, mapping_pairs):
     return remapped_bricks
 
 
-def realign_bricks_to_new_grid(new_grid, original_bricks):
+def realign_bricks_to_new_grid(new_grid, original_bricks, output_accessor_fn=None):
     """
     Given a dask.Bag of Bricks which are tiled over some original grid,
     chop them up and reassemble them into a new Bag of Bricks,
     tiled according to the given new_grid.
     
     Requires data shuffling.
+    
+    Args:
+        new_grid:
+            TODO
+        original_bricks:
+            TODO
+        output_accessor_fn:
+            TODO
     
     Returns: dask.Bag of Bricks
     """
@@ -507,7 +515,8 @@ def realign_bricks_to_new_grid(new_grid, original_bricks):
     grouped_brick_fragments = brick_fragments.groupby(lambda brick: brick.location_id)
     
     # Re-assemble fragments into the new grid structure.
-    realigned_bricks = grouped_brick_fragments.map(lambda k_v: k_v[1]).map(assemble_brick_fragments)
+    assemble = partial(assemble_brick_fragments, output_accessor_fn=output_accessor_fn)
+    realigned_bricks = grouped_brick_fragments.map(lambda k_v: k_v[1]).map(assemble)
     realigned_bricks = realigned_bricks.filter( lambda brick: brick is not None )
     realigned_bricks = drop_empty_partitions(realigned_bricks)
     return realigned_bricks
@@ -569,7 +578,7 @@ def split_brick(new_grid, original_brick):
     return fragments
 
 
-def assemble_brick_fragments( fragments ):
+def assemble_brick_fragments( fragments, output_accessor_fn=None ):
     """
     Given a list of Bricks with identical logical_boxes, splice their volumes
     together into a final Brick that contains a full volume containing all of
@@ -580,6 +589,14 @@ def assemble_brick_fragments( fragments ):
         not cover the entire logical_box for the brick.
         Each fragment's physical_box indicates where that fragment's data
         should be located within the final returned Brick.
+
+    Args:
+        fragments:
+            TODO: docs.
+            
+        output_accessor_fn:
+            Callable with signature: f(box) -> ndarray
+            TODO: docs.
     
     Returns:
         A Brick containing the data from all fragments,
@@ -621,11 +638,16 @@ def assemble_brick_fragments( fragments ):
         # none intersect with the interior logical_box,
         # so we don't bother keeping this brick.
         return None
-    
+
     final_volume_shape = final_physical_box[1] - final_physical_box[0]
     dtype = fragments[0].volume.dtype
 
-    final_volume = np.zeros(final_volume_shape, dtype)
+    # If the physical boxes don't completely fill the final_box,
+    # then we will need to use the output_accessor_fn (if given).
+    if output_accessor_fn is None or is_box_coverage_complete(physical_boxes, final_physical_box):
+        final_volume = np.zeros(final_volume_shape, dtype)
+    else:
+        final_volume = output_accessor_fn(final_physical_box)
 
     for frag in fragments:
         internal_box = frag.physical_box - final_physical_box[0]

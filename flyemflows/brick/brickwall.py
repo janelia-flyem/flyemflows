@@ -202,7 +202,7 @@ class BrickWall:
         return BrickWall( self.bounding_box, self.grid, filtered_bricks, None ) # Don't know num_bricks any more
 
 
-    def realign_to_new_grid(self, new_grid):
+    def realign_to_new_grid(self, new_grid, output_accessor_fn=None):
         """
         Chop upand the Bricks in this BrickWall reassemble them into a new BrickWall,
         tiled according to the given new_grid.
@@ -211,7 +211,7 @@ class BrickWall:
         
         Returns: A a new BrickWall, with a new internal RDD for bricks.
         """
-        new_bricks = realign_bricks_to_new_grid( new_grid, self.bricks )
+        new_bricks = realign_bricks_to_new_grid( new_grid, self.bricks, output_accessor_fn )
         new_wall = BrickWall( self.bounding_box, new_grid, new_bricks ) # Don't know num_bricks any more
         return new_wall
 
