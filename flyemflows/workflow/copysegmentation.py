@@ -439,7 +439,12 @@ class CopySegmentation(Workflow):
             slab_depth = block_width * 2**pyramid_depth
         options["slab-depth"] = slab_depth
 
-        if options["download-pre-downsampled"] and (options["input-mask-labels"] or options["output-mask-labels"]):
+        # If you're applying a mask, then the input source's pyramids won't correspond to the final output you're producing.
+        # But if you're also skipping the masking step, then it's fine.
+        # In that case, you're just using the mask as a means of specifying the sparse blocks to fetch, but not actually using it as a voxel-wise mask.
+        if (options["download-pre-downsampled"]
+          and (options["input-mask-labels"] or options["output-mask-labels"])
+          and not options["skip-masking-step"]):
             raise RuntimeError("You aren't allow to use download-pre-downsampled if you're using a mask.")
 
         if options["skip-scale-0-write"] and pyramid_depth == 0 and not options["compute-block-statistics"]:
