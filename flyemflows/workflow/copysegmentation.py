@@ -113,6 +113,14 @@ class CopySegmentation(Workflow):
                 "enum": COMPRESSION_METHODS,
                 "default": "lz4_2x"
             },
+            "write-empty-blocks": {
+                "description": "If a copied block would be completely empty, it can be skipped\n"
+                               "if you're writing to a brand new volume.\n"
+                               "By default, we don't bother writing such blocks.\n"
+                               "Set this to True if you want to overwrite existing blocks with empty ones.",
+                "type": "boolean",
+                "default": False,
+            },
             "dont-overwrite-identical-blocks": {
                 "description": "Before writing each block, read the existing segmentation from DVID\n"
                                "and check to see if it already matches what will be written.\n"
@@ -678,6 +686,7 @@ class CopySegmentation(Workflow):
         block_width = output_service.block_width
         EMPTY_VOXEL = 0
         dont_overwrite_identical_blocks = self.config["copysegmentation"]["dont-overwrite-identical-blocks"]
+        write_empty_blocks = self.config["copysegmentation"]["write-empty-blocks"]
         
         def write_brick(brick):
             logger = logging.getLogger(__name__)
@@ -699,7 +708,7 @@ class CopySegmentation(Workflow):
                 new_block = brick.volume[:, :, block_x:block_x+block_width]
                 
                 # By default, write this block if it is non-empty
-                write_block = (new_block != EMPTY_VOXEL).any()
+                write_block = write_empty_blocks or (new_block != EMPTY_VOXEL).any()
 
                 # If dont-overwrite-identical-blocks is enabled,
                 # write the block if it DIFFERS from the block that was already stored in DVID.
