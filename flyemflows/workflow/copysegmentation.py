@@ -448,7 +448,7 @@ class CopySegmentation(Workflow):
                                "What exactly are you hoping will happen here?")
 
         if options["skip-masking-step"] and options["output-mask-labels"]:
-            raise RuntimeError("Can't skip the combine step if you are specifying specific output labels to overwrite.")
+            logger.warning("You specified output-mask-labels but also skip-masking-step. That's usually a mistake!")
 
     def _init_stats_file(self):
         stats_path = self.config["copysegmentation"]["block-statistics-file"]
