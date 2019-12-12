@@ -518,13 +518,15 @@ class CopySegmentation(Workflow):
         pyramid_depth = options["pyramid-depth"]
 
         input_slab_box = output_slab_box - self.translation_offset_zyx
+        slab_sbm = SparseBlockMask.create_from_sbm_box(self.sbm, input_slab_box)
+        
         try:
             input_wall = BrickWall.from_volume_service( self.input_service,
                                                         0,
                                                         input_slab_box,
                                                         self.client,
                                                         self.target_partition_size_voxels,
-                                                        sparse_block_mask=self.sbm,
+                                                        sparse_block_mask=slab_sbm,
                                                         compression=options['brick-compression'] )
 
             if input_wall.num_bricks == 0:
