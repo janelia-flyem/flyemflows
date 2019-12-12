@@ -58,9 +58,9 @@ DvidInstanceCreationSettingsSchema = \
         "compression": {
             "description": "(Grayscale instances only -- labelmap instances are always compressed in a custom format.)\n"
                            "What type of compression is used by DVID to store this instance.\n"
-                           "Choices: 'none' and 'jpeg'.\n",
+                           "Choices: 'none', 'lz4', and 'jpeg'.\n",
             "type": "string",
-            "enum": ["none", "jpeg"],
+            "enum": ["none", "jpeg", "lz4"],
             "default": "none"
         },
         "max-scale": {
