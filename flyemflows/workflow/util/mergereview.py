@@ -29,6 +29,7 @@ def extract_assignment_fragments( server, uuid, syn_instance,
                                   fragment_rois=None,
                                   processes=16,
                                   *,
+                                  request_processes=None,
                                   synapse_table=None,
                                   boi_table=None,
                                   seg_instance=None,
@@ -146,6 +147,13 @@ def extract_assignment_fragments( server, uuid, syn_instance,
         processes:
             Various steps in this function can be parallelized.
             This specifies how much parallelism to use.
+
+        request_processes:
+            By default, requests to DVID are also made in parallel,
+            with parallelism set by the 'processes' argument.
+            But if you would like to reduce (or increase) the processes used when
+            fetching from dvid (e.g. to reduce burden on the dvid server),
+            specify a separate parallelism level via request_processes.
         
         synapse_table:
             Optional.  If you already fetched the synapses from DVID
@@ -213,7 +221,9 @@ def extract_assignment_fragments( server, uuid, syn_instance,
 
     if isinstance(fragment_rois, str):
         fragment_rois = [fragment_rois]
-    
+
+    request_processes = request_processes or processes
+
     if seg_instance is None:
         syn_info = fetch_instance_info(server, uuid, syn_instance)
         seg_instance = syn_info["Base"]["Syncs"][0]
@@ -227,7 +237,7 @@ def extract_assignment_fragments( server, uuid, syn_instance,
         # Update the table for consistency with the given UUID,
         # and re-post-process it to find the correct "central" and "closest" edges,
         # (in case some groups were merged).
-        edges_df = update_localized_edges(*ref_seg, edges_df, processes)
+        edges_df = update_localized_edges(*ref_seg, edges_df, request_processes)
 
     # Technically, you could provide 0 for either of these,
     # but that's probably a mistake on your part.
@@ -245,7 +255,7 @@ def extract_assignment_fragments( server, uuid, syn_instance,
         boi_table = determine_bodies_of_interest( server, uuid, syn_instance,
                                                   boi_rois,
                                                   min_tbars_in_roi, min_psds_in_roi,
-                                                  processes,
+                                                  request_processes,
                                                   synapse_table=synapse_table )
     
     assert boi_table.index.name == 'body'
@@ -274,8 +284,8 @@ def extract_assignment_fragments( server, uuid, syn_instance,
     with Timer("Sampling supervoxel IDs", logger):
         points_a = fragment_edges_df[['za', 'ya', 'xa']].values
         points_b = fragment_edges_df[['zb', 'yb', 'xb']].values
-        fragment_edges_df['sv_a'] = fetch_labels_batched(*ref_seg, points_a, True, processes=processes)
-        fragment_edges_df['sv_b'] = fetch_labels_batched(*ref_seg, points_b, True, processes=processes)
+        fragment_edges_df['sv_a'] = fetch_labels_batched(*ref_seg, points_a, True, processes=request_processes)
+        fragment_edges_df['sv_b'] = fetch_labels_batched(*ref_seg, points_b, True, processes=request_processes)
     
     # Divide into 'focused' and 'merge review' fragments,
     # i.e. single-edge fragments and multi-edge fragments
