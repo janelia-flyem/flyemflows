@@ -10,7 +10,7 @@ Example usage:
     # or run this daemon as a foreground process and use --ask-for-password
     # See mesh_update_daemon.py for an example of starting an ssh-agent.
 
-    DAEMON_CMD="mesh_update_daemon update-meshes --starting-timestamp=2019-11-11 --submission-node=login1.int.janelia.org"
+    DAEMON_CMD="mesh_update_daemon update-meshes --reset-kafka-offset --starting-timestamp=2019-12-11 --interval=15 --submission-node=login1.int.janelia.org"
      
     # Start the job in the background.
     # Since it handles SIGHUP, it should remain running after your terminal closes.
