@@ -236,9 +236,10 @@ def extract_body_ids_and_launch(c, args, seg_instance, body_csv, msgs_df):
     logger.info(f"Launching mesh computation for {len(subset_bodies)} bodies, "
                 f"modified between [{first_timestamp}] and [{last_timestamp}]")
 
+    # FIXME: Instead of hard-coding -W to one hour, read the template dask-config.yaml
     cmd = (f"source $({args.conda_path} info --base)/bin/activate {args.conda_env} "
            f"&& cd {args.cwd} "
-           f"&& bsub -n {args.driver_slots} -o /dev/null launchflow -n {args.worker_slots} {args.template_dir}")
+           f"&& bsub -W 01:00 -n {args.driver_slots} -o /dev/null launchflow -n {args.worker_slots} {args.template_dir}")
 
     run_cmd(c, cmd)
     return True
