@@ -360,6 +360,13 @@ class MaskSegmentation(Workflow):
 
 
     def _init_mask(self):
+        """
+        - read the mask ROI as a volume
+        - dilate/erode it if necessary
+        - invert it if necessary
+        - save to .h5 (just for offline debug)
+        - return the scale-5 mask and its scale-5 bounding-box
+        """
         options = self.config["masksegmentation"]
         roi = options["mask-roi"]
         invert_mask = options["invert-mask"]
