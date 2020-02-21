@@ -119,7 +119,8 @@ class Workflow(object):
         Args:
             config (dict): loaded config data for workflow, as a dict
             num_workers: How many workers to launch for the job.
-                         Note that this is not necessarily the same as the number of nodes (machines),
+                         Note that this is not necessarily the same as
+                         the number of nodes (machines),
                          depending on the dask config.
         """
         self.config = config

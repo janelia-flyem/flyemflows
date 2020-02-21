@@ -26,13 +26,13 @@ GrayscaleVolumeSchema = \
     "type": "object",
     "default": {},
     "oneOf": [
-        { "properties": { "boss": BossServiceSchema } },
-        { "properties": { "brainmaps": BrainMapsServiceSchema } },
-        { "properties": { "hdf5": Hdf5ServiceSchema } },
         { "properties": { "dvid": DvidGrayscaleServiceSchema } },
         { "properties": { "slice-files": SliceFilesServiceSchema } },
+        { "properties": { "zarr": ZarrServiceSchema } },
         { "properties": { "n5": N5ServiceSchema } },
-        { "properties": { "zarr": ZarrServiceSchema } }
+        { "properties": { "hdf5": Hdf5ServiceSchema } },
+        { "properties": { "boss": BossServiceSchema } },
+        { "properties": { "brainmaps": BrainMapsServiceSchema } },
     ],
     "properties": {
         "geometry": GeometrySchema,
@@ -56,11 +56,12 @@ SegmentationVolumeSchema = \
     "required": ["geometry"],
     "default": {},
     "oneOf": [
-        { "properties": { "zarr": ZarrServiceSchema }, "required": ["zarr"] },
-        { "properties": { "hdf5": Hdf5ServiceSchema }, "required": ["hdf5"] },
         { "properties": { "dvid": DvidSegmentationServiceSchema }, "required": ["dvid"] },
+        { "properties": { "zarr": ZarrServiceSchema }, "required": ["zarr"] },
+        { "properties": { "n5": N5ServiceSchema } },
+        { "properties": { "hdf5": Hdf5ServiceSchema }, "required": ["hdf5"] },
         { "properties": { "boss": BossServiceSchema }, "required": ["boss"] },
-        { "properties": { "brainmaps": BrainMapsServiceSchema }, "required": ["brainmaps"] }
+        { "properties": { "brainmaps": BrainMapsServiceSchema }, "required": ["brainmaps"] },
     ],
     "properties": {
         "geometry": GeometrySchema,

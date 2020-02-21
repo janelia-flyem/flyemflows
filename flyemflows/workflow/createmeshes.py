@@ -440,8 +440,10 @@ class CreateMeshes(Workflow):
 
     def execute(self):
         """
-        This workflow is designed for generating supervoxel meshes from a labelmap input (with supervoxels: true).
-        But other sources. In those cases, each object is treated as a 'supervoxel', and each 'body' has only one supervoxel.
+        This workflow is designed for generating supervoxel meshes
+        from a labelmap input (with supervoxels: true).
+        But it also supports other sources. In those cases, each object is
+        treated as a 'supervoxel', and each 'body' has only one supervoxel.
         
         NOTE:
             If your input is a labelmap, but you have configured it to read body labels (i.e. supervoxels: false),
