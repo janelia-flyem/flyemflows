@@ -144,7 +144,7 @@ class RoiStats(Workflow):
 
             return stats
 
-        stats_bag = dask.bag.from_sequence(batch_boxes_and_bricks).starmap(process_brick)
+        stats_bag = dask.bag.from_sequence(batch_boxes_and_bricks, partition_size=1 ).starmap(process_brick)
         stats = stats_bag.compute()
         stats = pd.concat(stats, ignore_index=True)
         stats = stats.groupby(['body', 'roi_id'], as_index=False)['voxels'].sum()
