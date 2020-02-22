@@ -20,7 +20,10 @@ logger = logging.getLogger(__name__)
 
 class RoiStats(Workflow):
     """
-    Simple workflow to calculate the per-ROI voxel counts for a set of bodies. 
+    Simple workflow to calculate the per-ROI voxel counts for a set of bodies.
+
+    See Also:
+        flyemflows/workflow/util/roistats_table.py
     """
     OptionsSchema = {
         "type": "object",
