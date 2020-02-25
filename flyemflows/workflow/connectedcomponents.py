@@ -9,14 +9,14 @@ import skimage.measure as skm
 from dask.bag import zip as bag_zip
 
 from dvid_resource_manager.client import ResourceManagerClient
-from neuclease.util import Timer, Grid, connected_components_nonconsecutive, apply_mask_for_labels, block_stats_for_volume, BLOCK_STATS_DTYPES
-from neuclease.dvid import fetch_instance_info, fetch_maxlabel, post_maxlabel, post_nextlabel
+from neuclease.util import Timer, connected_components_nonconsecutive, apply_mask_for_labels, block_stats_for_volume, BLOCK_STATS_DTYPES, round_box, SparseBlockMask
+from neuclease.dvid import fetch_instance_info, fetch_maxlabel, post_maxlabel, post_nextlabel, fetch_roi
 
 from dvidutils import LabelMapper
 
 from ..util import replace_default_entries
 from ..brick import Brick, BrickWall, extract_halos, PB_COLS, clip_to_logical
-from ..volumes import VolumeService, VolumeServiceWriter, SegmentationVolumeSchema, DvidVolumeService
+from ..volumes import VolumeService, VolumeServiceWriter, SegmentationVolumeSchema, DvidVolumeService, ScaledVolumeService
 from .util.config_helpers import BodyListSchema, load_body_list
 from . import Workflow
 
@@ -36,6 +36,12 @@ class ConnectedComponents(Workflow):
         "additionalProperties": False,
         "properties": {
             "subset-labels": BodyListSchema,
+            "roi": {
+                "description": "Limit analysis to bricks that intersect the given ROI.\n"
+                               "(Only for DVID inputs.)",
+                "type": "string",
+                "default": ""
+            },
             "halo": {
                 "description": "How much overlapping context between bricks in the grid (in voxels)\n",
                 "type": "integer",
@@ -123,7 +129,7 @@ class ConnectedComponents(Workflow):
         subset_labels = load_body_list(options["subset-labels"], is_supervoxels)
         subset_labels = set(subset_labels)
         
-        input_wall = self.init_brickwall(input_service, subset_labels)
+        input_wall = self.init_brickwall(input_service, subset_labels, options["roi"])
         
         def brick_cc(brick):
             orig_vol = brick.volume
@@ -265,7 +271,7 @@ class ConnectedComponents(Workflow):
             # FIXME: Wouldn't the following be faster?  (Too lazy to test right now.)
             #
             #        keep_rows = cc_mapping_df['orig'].duplicated(keep=False)
-            #        node_df = cc_mapping_df.loc[keep_rows]
+            #        node_df = cc_mapping_df.loc[~keep_rows]
             # 
             repeated_orig_labels = (cc_mapping_df['orig'].value_counts() > 2).index #@UnusedVariable
             node_df = cc_mapping_df.query('orig in @repeated_orig_labels')
@@ -406,10 +412,39 @@ class ConnectedComponents(Workflow):
         logger.info(f"Output bounding box: {self.output_service.bounding_box_zyx[:,::-1].tolist()}")
         
 
-    def init_brickwall(self, volume_service, subset_labels):
-        if not subset_labels:
-            sbm = None
-        else:
+    def init_brickwall(self, volume_service, subset_labels, roi):
+        sbm = None
+
+        if roi:
+            base_service = volume_service.base_service
+            assert isinstance(base_service, DvidVolumeService), \
+                "Can't specify an ROI unless you're using a dvid input"
+
+            assert isinstance(volume_service, (ScaledVolumeService, DvidVolumeService)), \
+                "The 'roi' option doesn't support adapters other than 'rescale-level'" 
+            scale = 0
+            if isinstance(volume_service, ScaledVolumeService):
+                scale = volume_service.scale_delta
+                assert scale <= 5, \
+                    "The 'roi' option doesn't support volumes downscaled beyond level 5"
+                
+            server, uuid, _seg_instance = base_service.instance_triple
+
+            brick_shape = volume_service.preferred_message_shape
+            assert not (brick_shape % 2**(5-scale)).any(), \
+                "If using an ROI, select a brick shape that is divisible by 32"
+
+            seg_box = volume_service.bounding_box_zyx
+            seg_box = round_box(seg_box, brick_shape)
+            seg_box_s0 = seg_box * 2**scale
+            seg_box_s5 = seg_box // 2**(5-scale)
+            
+            with Timer(f"Fetching mask for ROI '{roi}'", logger):
+                roi_mask_s5, _ = fetch_roi(server, uuid, roi, format='mask', mask_box=seg_box_s5)
+
+            sbm = SparseBlockMask.create_from_highres_mask(roi_mask_s5, 2**5, seg_box_s0, brick_shape*(2**scale))
+
+        elif subset_labels:
             try:
                 sbm = volume_service.sparse_block_mask_for_labels(subset_labels)
                 if ((sbm.box[1] - sbm.box[0]) == 0).any():
