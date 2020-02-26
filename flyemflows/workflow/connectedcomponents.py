@@ -229,7 +229,7 @@ class ConnectedComponents(Workflow):
             #table.rename(columns={'left': 'cc_outer', 'right': 'cc_inner'}, inplace=True)
 
             # Omit label 0
-            table.query('cc_outer != 0 and cc_inner != 0', inplace=True)
+            table = table.query('cc_outer != 0 and cc_inner != 0')
             return table
 
         def find_partition_links(combined_halos_df):
