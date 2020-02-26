@@ -66,7 +66,7 @@ Hdf5VolumeSchema = \
 
 DEFAULT_CHUNK_WIDTH = 64
 
-class Hdf5VolumeService(VolumeServiceReader, VolumeServiceWriter):
+class Hdf5VolumeService(VolumeServiceWriter):
     """
     Note: Writability is not currently safe in multi-process mode.
           Writing HDF5 volumes via this class is suitable only for testing (in a single process).

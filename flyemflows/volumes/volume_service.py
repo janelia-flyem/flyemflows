@@ -313,7 +313,7 @@ class VolumeServiceReader(VolumeService):
         return filtered_df
 
 
-class VolumeServiceWriter(VolumeService):
+class VolumeServiceWriter(VolumeServiceReader):
 
     @abstractmethod
     def write_subvolume(self, subvolume, offset_zyx, scale):

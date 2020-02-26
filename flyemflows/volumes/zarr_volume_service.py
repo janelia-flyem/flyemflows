@@ -70,7 +70,7 @@ ZarrVolumeSchema = \
 
 DEFAULT_CHUNK_WIDTH = 64
 
-class ZarrVolumeService(VolumeServiceReader, VolumeServiceWriter):
+class ZarrVolumeService(VolumeServiceWriter):
     """
     Note:
       It is not safe for multiple processes to write to the same brick simultaneously.

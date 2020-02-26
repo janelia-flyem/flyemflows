@@ -238,7 +238,7 @@ DvidSegmentationVolumeSchema = \
 }
 
 
-class DvidVolumeService(VolumeServiceReader, VolumeServiceWriter):
+class DvidVolumeService(VolumeServiceWriter):
 
     def __init__(self, volume_config, resource_manager_client=None):
         validate(volume_config, DvidGenericVolumeSchema, inject_defaults=True)
