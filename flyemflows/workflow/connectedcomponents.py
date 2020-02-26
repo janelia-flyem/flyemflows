@@ -36,6 +36,12 @@ class ConnectedComponents(Workflow):
         "additionalProperties": False,
         "properties": {
             "subset-labels": BodyListSchema,
+            "skip-sparse-fetch": {
+                "description": "If True, do not attempt to fetch the sparsevol-coarse for the given subset-labels.\n"
+                               "Just fetch the entire bounding-box.\n",
+                "type": "boolean",
+                "default": False
+            },
             "roi": {
                 "description": "Limit analysis to bricks that intersect the given ROI.\n"
                                "(Only for DVID inputs.)",
@@ -129,7 +135,9 @@ class ConnectedComponents(Workflow):
         subset_labels = load_body_list(options["subset-labels"], is_supervoxels)
         subset_labels = set(subset_labels)
         
-        input_wall = self.init_brickwall(input_service, subset_labels, options["roi"])
+        sparse_fetch = not options["skip-sparse-fetch"]
+        roi = options["roi"]
+        input_wall = self.init_brickwall(input_service, sparse_fetch and subset_labels, roi)
         
         def brick_cc(brick):
             orig_vol = brick.volume
@@ -439,7 +447,7 @@ class ConnectedComponents(Workflow):
             seg_box_s0 = seg_box * 2**scale
             seg_box_s5 = seg_box // 2**(5-scale)
             
-            with Timer(f"Fetching mask for ROI '{roi}'", logger):
+            with Timer(f"Fetching mask for ROI '{roi}' ({seg_box_s0[:, ::-1].tolist()})", logger):
                 roi_mask_s5, _ = fetch_roi(server, uuid, roi, format='mask', mask_box=seg_box_s5)
 
             sbm = SparseBlockMask.create_from_highres_mask(roi_mask_s5, 2**5, seg_box_s0, brick_shape*(2**scale))
