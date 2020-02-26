@@ -398,10 +398,10 @@ class ConnectedComponents(Workflow):
             "The output format you are attempting to use does not support writing"
 
         if isinstance(self.output_service.base_service, DvidVolumeService):
-            if not self.output_service.supervoxels:
+            if not self.output_service.base_service.supervoxels:
                 raise RuntimeError("Can't write to a non-supervoxels output service.")
             
-            if not self.output_service.disable_indexing:
+            if not self.output_service.base_service.disable_indexing:
                 logger.warning("******************************************************************************")
                 logger.warning("Your output config does not specify 'disable-indexing', which means DVID will "
                                "attempt to index all voxels as they are written to the volume. "
