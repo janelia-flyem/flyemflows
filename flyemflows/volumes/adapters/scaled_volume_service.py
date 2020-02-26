@@ -3,7 +3,7 @@ import numpy as np
 from neuclease.util import box_to_slicing
 
 from ...util import downsample, upsample
-from .. import VolumeServiceReader
+from .. import VolumeServiceWriter
 
 RescaleLevelSchema = \
 {
@@ -28,7 +28,7 @@ RescaleLevelSchema = \
     "default": None
 }
 
-class ScaledVolumeService(VolumeServiceReader):
+class ScaledVolumeService(VolumeServiceWriter):
     """
     Wraps an existing VolumeServiceReader and presents
     a scaled view of it.
@@ -140,6 +140,38 @@ class ScaledVolumeService(VolumeServiceReader):
             # Force contiguous so caller doesn't have to worry about it.
             return np.asarray(requested_data, order='C')
 
+
+    def write_subvolume(self, subvolume, offset_zyx, scale):
+        """
+        Write the given data into the original volume source
+        at the given scale, but upsample/downsample it first
+        according to our scale_delta.
+        
+        The scale_delta indicates how much downsampling to apply
+        to data that is read, and how much upsampling to apply
+        to data that is written.
+        
+        But in general, workflows should only be writing into
+        scale 0 if they are using a scaled volume service.
+        Other pyramid levels should be comuted afterwards.
+        """
+        if self.scale_delta >= 0:
+            offset_zyx = offset_zyx * 2**self.scale_delta
+            upsampled_data = upsample(subvolume, 2**(self.delta_scale))
+            self.original_volume_service.write_subvolume(upsampled_data, offset_zyx, scale)
+        else:
+            offset_zyx = offset_zyx // 2**self.scale_delta
+            if np.dtype(self.dtype) == np.uint64:
+                # Assume that uint64 means labels.
+                
+                ## FIXME: Our C++ method for downsampling ('labels')
+                ##        seems to have a bad build at the moment (it segfaults and/or produces zeros)
+                ##        For now, we use the 'labels-numba' method
+                downsampled_data = downsample( subvolume, 2**(-self.delta_scale), 'labels-numba' )
+            else:
+                downsampled_data = downsample( subvolume, 2**(-self.delta_scale), 'block-mean' )
+            self.original_volume_service.write_subvolume(downsampled_data, offset_zyx, scale)
+            
 
     def sparse_brick_coords_for_labels(self, labels, clip=True):
         coords_df = self.original_volume_service.sparse_brick_coords_for_labels(labels, clip)
