@@ -238,7 +238,10 @@ class ConnectedComponents(Workflow):
                 table = find_pairwise_links(row.brick_outer, row.brick_inner)
                 tables.append(table)
 
-            return pd.concat(tables, ignore_index=True)
+            if tables:
+                return pd.concat(tables, ignore_index=True)
+            else:
+                return pd.DataFrame({'cc_outer': [], 'cc_inner': []})
             
         links_meta = { 'cc_outer': np.uint64, 'cc_inner': np.uint64 }
         
