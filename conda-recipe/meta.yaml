@@ -23,7 +23,7 @@ requirements:
     - requests
     - psutil
     - numpy
-    - pandas
+    - pandas <1.0
     - numba
     - scipy
     - scikit-image
