@@ -449,7 +449,7 @@ class ConnectedComponents(Workflow):
 
         elif subset_labels:
             try:
-                sbm = volume_service.sparse_block_mask_for_labels(subset_labels)
+                sbm = volume_service.sparse_block_mask_for_labels([*subset_labels])
                 if ((sbm.box[1] - sbm.box[0]) == 0).any():
                     raise RuntimeError("Could not find sparse masks for any of the subset-labels")
             except NotImplementedError:
