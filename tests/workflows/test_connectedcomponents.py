@@ -60,7 +60,11 @@ def setup_connectedcomponents_hdf5_zarr():
                 "path": 'cc-vol.zarr',
                 "dataset": "volume",
                 "writable": True,
-                "dtype": 'uint64'
+                "create-if-necessary": True,
+                "creation-settings": {
+                    "dtype": "uint64",
+                    "chunk-shape": [4,4,1]
+                }
             },
             "geometry": {
                 "message-block-shape": [4,4,1],
@@ -90,11 +94,8 @@ def test_connectedcomponents(setup_connectedcomponents_hdf5_zarr, disable_auto_r
     output_path = final_config["output"]["zarr"]["path"]
     dset_name = final_config["output"]["zarr"]["dataset"]
 
-    import sys
-    sys.stdout.flush()
-    print(f"{execution_dir}/{output_path}")
-
-    f = zarr.open(f"{execution_dir}/{output_path}", 'r')
+    store = zarr.NestedDirectoryStore(output_path)
+    f = zarr.open(store=store, mode='r')
     output_vol = f[dset_name][:]
     assert output_vol.shape == input_vol.shape
 
@@ -116,7 +117,7 @@ def test_connectedcomponents(setup_connectedcomponents_hdf5_zarr, disable_auto_r
     assert 3 not in final_labels
     
     for corner in map(np.array, ndrange((0,0,0), (1,8,8), (1,4,4))):
-        box = (corner, corner + 4)
+        box = (corner, corner + (1,4,4))
         input_block = extract_subvol(input_vol, box)
         output_block = extract_subvol(output_vol, box)
         
@@ -168,7 +169,8 @@ def test_connectedcomponents_subset_labels(setup_connectedcomponents_hdf5_zarr, 
     output_path = final_config["output"]["zarr"]["path"]
     dset_name = final_config["output"]["zarr"]["dataset"]
     
-    f = zarr.open(f"{execution_dir}/{output_path}", 'r')
+    store = zarr.NestedDirectoryStore(output_path)
+    f = zarr.open(store=store, mode='r')
     output_vol = f[dset_name][:]
     assert output_vol.shape == input_vol.shape
 
@@ -193,7 +195,7 @@ def test_connectedcomponents_subset_labels(setup_connectedcomponents_hdf5_zarr, 
     assert 1 not in final_labels
     
     for corner in map(np.array, ndrange((0,0,0), (1,8,8), (1,4,4))):
-        box = (corner, corner + 4)
+        box = (corner, corner + (1,4,4))
         input_block = extract_subvol(input_vol, box)
         output_block = extract_subvol(output_vol, box)
         
@@ -391,5 +393,5 @@ if __name__ == "__main__":
     
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_connectedcomponents']
-    args = ['-k', 'connectedcomponents'] + args
+    #args = ['-k', 'connectedcomponents'] + args
     pytest.main(args)

@@ -277,7 +277,7 @@ class ConnectedComponents(Workflow):
             #     node_df = cc_mapping_df.query(orig in @repeated_orig_labels or orig in @linked_nodes_orig')
 
             singleton_rows = cc_mapping_df['orig'].duplicated(keep=False)
-            node_df = cc_mapping_df.loc[singleton_rows]
+            node_df = cc_mapping_df.loc[singleton_rows].copy()
 
         with Timer("Computing link CC", logger):
             # Compute connected components across all linked objects
@@ -356,8 +356,13 @@ class ConnectedComponents(Workflow):
                                  compression=orig_brick.compression )
             return final_brick        
 
-        block_shape = 3*[self.output_service.base_service.block_width]
         collect_stats = options["compute-block-statistics"]
+
+        bw = self.output_service.base_service.block_width
+        if bw > 0:
+            block_shape = 3*[self.output_service.base_service.block_width]
+        else:
+            block_shape = self.output_service.base_service.preferred_message_shape
          
         def write_brick(brick):
             brick = clip_to_logical(brick, False)
