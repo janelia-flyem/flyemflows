@@ -1,39 +1,34 @@
 import os
-import logging
 import platform
 
 import zarr
 import numpy as np
 
-from confiddler import validate
-from neuclease.util import box_to_slicing
+from confiddler import validate, flow_style
+from neuclease.util import box_to_slicing, choose_pyramid_depth
 
 from ..util import replace_default_entries
-from . import GeometrySchema, VolumeServiceReader, VolumeServiceWriter, SegmentationAdapters
+from . import VolumeServiceWriter, GeometrySchema, GrayscaleAdapters
 
+import logging
 logger = logging.getLogger(__name__)
 
 
-ZarrServiceSchema = \
+ZarrCreationSettingsSchema = \
 {
-    "description": "Parameters specify an Zarr volume (a directory on the filesystem).\n"
-                   "We always use zarr's NestedDirectoryStore, not the default DirectoryStore.\n"
-                   "For now, no compression is used.\n",
+    "description": "Settings to use when creating an Zarr volume.\n",
     "type": "object",
-    "required": ["path", "dataset"],
-
     "default": {},
+    "additionalProperties": False,
     "properties": {
-        "path": {
-            "description": "Path of the .zarr directory, which may be a 'group' or an array",
-            "type": "string",
-            "minLength": 1
-        },
-        "dataset": {
-            "description": "If the .zarr directory specified in 'path' is a zarr 'group',\n"
-                           "specify the complete name of a dataset (array) within the zarr directory.\n",
-            "type": "string",
-            "default": ""
+        "shape": {
+            "description": "The shape of the volume.\n"
+                           "If not provided, it is automatically set from the bounding-box upper coordinate.\n",
+            "type": "array",
+            "items": { "type": "integer" },
+            "minItems": 3,
+            "maxItems": 3,
+            "default": flow_style([-1,-1,-1])
         },
         "dtype": {
             "description": "Datatype of the volume.  Must be specified when creating a new volume.",
@@ -41,176 +36,149 @@ ZarrServiceSchema = \
             "enum": ["auto", "uint8", "uint16", "uint32", "uint64", "int8", "int16", "int32", "int64", "float32", "float64"],
             "default": "auto"
         },
+        "chunk-shape": {
+            "desription": "The shape of the chunks on disk.",
+            "type": "array",
+            "items": { "type": "integer" },
+            "minItems": 3,
+            "maxItems": 3,
+            "default": flow_style([128,128,128])
+        },
+        "max-scale": {
+            "description": "How many additional subdirectories to create for multi-scale volumes.\n"
+                           "If unset (-1), then a default max-scale will be chosen automatically \n "
+                           "based on a heuristic involving the volume shape.\n",
+            "type": "integer",
+            "minValue": -1,
+            "maxValue": 10, # arbitrary limit, but if you're using a higher value, you're probably mistaken.
+            "default": -1
+        }
+    }
+}
+
+
+ZarrServiceSchema = \
+{
+    "description": "Parameters to specify an Zarr volume (or set of multiscale volumes)",
+    "type": "object",
+    "required": ["path", "dataset"],
+    "default": {},
+    "additionalProperties": False,
+    "properties": {
+        "path": {
+            "description": "Path to the zarr parent directory, which may contain multiple datasets",
+            "type": "string",
+            "minLength": 1
+        },
+        "dataset": {
+            "description": "Name of the volume.\n"
+                           "If the volume is stored at multiple scales,\n"
+                           "then by convention the scale must be included as a suffix on each volume name.\n"
+                           "In this config, please list the scale-0 name, e.g. 'my-grayscale0', or '22-34/s0', etc.\n",
+            "type": "string",
+            "minLength": 1
+        },
         "writable": {
-            "description": "Open the array in read/write mode.\n"
-                           "If the directory (or dataset) doesn't exist yet, create it upon initialization.\n"
-                           "(Requires an explicit dtype and bounding box.)\n"
-                           "Note: \n"
-                           "  It is not safe for multiple processes to write to the same brick simultaneously.\n"
-                           "  Clients should ensure that each process is responsible for writing brick-aligned portions of the dataset.\n",
+            "description": "If True, open the array in read/write mode, otherwise open in read-only mode.\n"
+                           "By default, guess based on create-if-necessary.\n",
+            "oneOf": [ {"type": "boolean"}, {"type": "null"} ],
+            "default": None
+        },
+        "create-if-necessary": {
+            "description": "Whether or not to create the array directory on disk if it doesn't already exist.\n"
+                           "If you expect the array to exist on the server already, leave this\n"
+                           "set to False to avoid confusion in the case of typos, etc.\n",
             "type": "boolean",
             "default": False
-        }
+        },
+        "creation-settings": ZarrCreationSettingsSchema,
     }
 }
 
 ZarrVolumeSchema = \
 {
-    "description": "Schema for an Zarr volume", # (for when a generic SegmentationVolumeSchema or GrayscaleVolumeSchema won't suffice)
+    "description": "Describes a volume from Zarr.\n"
+                   "Note: \n"
+                   "  It is not safe for multiple processes to write to the same block simultaneously.\n"
+                   "  Clients should ensure that each process is responsible for writing brick-aligned portions of the dataset.\n",
     "type": "object",
     "default": {},
-    #"additionalProperties": False, # Can't use this in conjunction with 'oneOf' schema feature
     "properties": {
         "zarr": ZarrServiceSchema,
         "geometry": GeometrySchema,
-        "adapters": SegmentationAdapters
+        "adapters": GrayscaleAdapters
     }
 }
 
-
-DEFAULT_CHUNK_WIDTH = 64
-
 class ZarrVolumeService(VolumeServiceWriter):
-    """
-    Note:
-      It is not safe for multiple processes to write to the same brick simultaneously.
-      Clients should ensure that each process is responsible for writing brick-aligned portions of the dataset.
-    """
+
     def __init__(self, volume_config):
         validate(volume_config, ZarrVolumeSchema, inject_defaults=True)
-
-        # Zarr settings
-        path = volume_config["zarr"]["path"]
-        dataset_name = volume_config["zarr"]["dataset"]
-        dtype = volume_config["zarr"]["dtype"]
-        writable = volume_config["zarr"]["writable"]
-
-        if dataset_name == '/':
-            dataset_name = ''
-
-        # Geometry
-        bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
-        preferred_message_shape_zyx = np.array( volume_config["geometry"]["message-block-shape"][::-1] )
-        block_width = volume_config["geometry"]["block-width"]
-        assert list(volume_config["geometry"]["available-scales"]) == [0], \
-            "ZarrVolumeService supports only scale 0"
-
-        if not writable and not os.path.exists(path):
-            raise RuntimeError(f"File does not exist: {path}\n"
-                               "You did not specify 'writable' in the config, so I won't create it.:\n")
-
-        if not writable and dataset_name and not os.path.exists(f"{path}/{dataset_name}"):
-            raise RuntimeError(f"File does not exist: {path}\n"
-                               "You did not specify 'writable' in the config, so I won't create it.:\n")
-
-        mode = 'r'
-        if writable:
-            mode = 'a'
         
-        if os.path.exists(f'{path}/{dataset_name}'):
-            # If no dataset, then the path is direct to an array.
-            if not dataset_name:
-                self._group = None
-                self._dataset = zarr.open(path, mode)
-            else:
-                #self._group = zarr.open(path, mode)
-                store = zarr.NestedDirectoryStore(path)
-                self._group = zarr.open(store=store, mode=mode)
-                self._dataset = self._group[dataset_name]
-        else:
-            if not writable:
-                raise RuntimeError(f"{path}/{dataset_name} does not exist.\n"
-                                   "You did not specify 'writable' in the config, so I won't create it.\n")
-
-            if dtype == "auto":
-                raise RuntimeError(f"Can't create Zarr array {path}/{dataset_name}: No dtype specified in the config.")
-            
-            if -1 in bounding_box_zyx.flat:
-                raise RuntimeError(f"Can't create Zarr array {path}/{dataset_name}: Bounding box is not completely specified in the config.")
-
-            if block_width == -1:
-                chunks = np.minimum(3*(DEFAULT_CHUNK_WIDTH,), bounding_box_zyx[1])
-                replace_default_entries(chunks, 3*(DEFAULT_CHUNK_WIDTH,))
-            else:
-                chunks = 3*(block_width,)
-            
-            if not dataset_name:
-                self._group = None
-                self._dataset = zarr.open(path, mode)
-            else:
-                #self._group = zarr.open(path, mode)
-                store = zarr.NestedDirectoryStore(path)
-                self._group = zarr.open(store=store, mode=mode)
-                self._dataset = self._group.create_dataset( dataset_name,
-                                                            shape=bounding_box_zyx[1],
-                                                            dtype=np.dtype(dtype),
-                                                            chunks=tuple(chunks),
-                                                            compressor=None )
-
-                # Set default permissions to be group-writable
-                os.system(f"chmod g+rw {path}")
-                if platform.system() == "Linux":
-                    os.system(f'setfacl -d -m g::rw {path}')
-                elif platform.system() == "Darwin":
-                    pass # FIXME: I don't know how to do this on macOS.
-
-
-        ###
-        ### bounding_box_zyx
-        ###
-        replace_default_entries(bounding_box_zyx, [(0,0,0), self._dataset.shape])
-        assert (bounding_box_zyx[0] >= 0).all()
-        assert (bounding_box_zyx[1] <= self._dataset.shape).all(), \
-            f"bounding box ({bounding_box_zyx.tolist()}) exceeds the stored zarr volume shape ({self._dataset.shape})"
-        
-        ###
-        ### dtype
-        ###
-        dtype = self._dataset.dtype
-
-        ###
-        ### preferred_message_shape_zyx
-        ###
-        chunk_shape = self._dataset.chunks or self._dataset.shape
-        assert len(self._dataset.shape) == 3, f"Dataset '{dataset_name} isn't 3D"
-        if -1 in preferred_message_shape_zyx:
-            assert (preferred_message_shape_zyx == -1).all(), \
-                "Please specify the entire message shape in your config (or omit it entirely)"
-
-            # Aim for bricks of ~256 MB
-            MB = 2**20
-            chunk_bytes = np.prod(chunk_shape) * dtype.itemsize
-            chunks_per_brick = max(1, 256*MB // chunk_bytes)
-            preferred_message_shape_zyx = np.array((*chunk_shape[:2], chunk_shape[2]*chunks_per_brick))
-        
-        if block_width == -1:
-            block_width = chunk_shape[0]
-        else:
-            assert block_width == chunk_shape[0], \
-                "block-width does not match file chunk shape"
-
-        ##
-        ## Store members
-        ##
-        self._mode = mode
+        # Convert path to absolute if necessary (and write back to the config)
+        path = os.path.abspath(volume_config["zarr"]["path"])
         self._path = path
+        volume_config["zarr"]["path"] = self._path
+
+        dataset_name = volume_config["zarr"]["dataset"]
         self._dataset_name = dataset_name
+        if self._dataset_name.startswith('/'):
+            self._dataset_name = self._dataset_name[1:]
+        volume_config["zarr"]["dataset"] = self._dataset_name
+
+        self._zarr_file = None
+        self._zarr_datasets = {}
+        
+        self._ensure_datasets_exist(volume_config)
+
+        if isinstance(self.zarr_dataset(0), zarr.hierarchy.Group):
+            raise RuntimeError("The Zarr dataset you specified appears to be a 'group', not a volume.\n"
+                               "Please pass the complete dataset name.  If your dataset is multi-scale,\n"
+                               "pass the name of scale 0 as the dataset name (e.g. 's0').\n")
+
+        chunk_shape = np.array(self.zarr_dataset(0).chunks)
+        assert len(chunk_shape) == 3
+
+        preferred_message_shape_zyx = np.array(volume_config["geometry"]["message-block-shape"])[::-1]
+
+        # Replace -1's in the message-block-shape with the corresponding chunk_shape dimensions.
+        replace_default_entries(preferred_message_shape_zyx, chunk_shape)
+        missing_shape_dims = (preferred_message_shape_zyx == -1)
+        preferred_message_shape_zyx[missing_shape_dims] = chunk_shape[missing_shape_dims]
+        assert not (preferred_message_shape_zyx % chunk_shape).any(), \
+            f"Expected message-block-shape ({preferred_message_shape_zyx}) "\
+            f"to be a multiple of the chunk shape ({chunk_shape})"
+
+        if chunk_shape[0] == chunk_shape[1] == chunk_shape[2]:
+            block_width = int(chunk_shape[0])
+        else:
+            # The notion of 'block-width' doesn't really make sense if the chunks aren't cubes.
+            block_width = -1
+        
+        auto_bb = np.array([(0,0,0), self.zarr_dataset(0).shape])
+
+        bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
+        assert (auto_bb[1] >= bounding_box_zyx[1]).all(), \
+            f"Volume config bounding box ({bounding_box_zyx}) exceeds the bounding box of the data ({auto_bb})."
+
+        # Replace -1 bounds with auto
+        missing_bounds = (bounding_box_zyx == -1)
+        bounding_box_zyx[missing_bounds] = auto_bb[missing_bounds]
+
+        # Store members
         self._bounding_box_zyx = bounding_box_zyx
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
-        self._dtype = self._dataset.dtype
+        self._block_width = block_width
+        self._available_scales = volume_config["geometry"]["available-scales"]
 
-        ##
-        ## Overwrite config entries that we might have modified
-        ##
-        volume_config["zarr"]["dtype"] = self._dtype.name
-        volume_config["geometry"]["block-width"] = chunk_shape[0]
+        # Overwrite config entries that we might have modified
+        volume_config["geometry"]["block-width"] = self._block_width
         volume_config["geometry"]["bounding-box"] = self._bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["message-block-shape"] = self._preferred_message_shape_zyx[::-1].tolist()
-        
 
     @property
     def dtype(self):
-        return self._dtype
+        return self.zarr_dataset(0).dtype
 
     @property
     def preferred_message_shape(self):
@@ -218,10 +186,7 @@ class ZarrVolumeService(VolumeServiceWriter):
 
     @property
     def block_width(self):
-        chunk_shape = self._dataset.chunks or self._dataset.shape
-        assert (chunk_shape[0] == chunk_shape[1] == chunk_shape[2]), \
-            ("Dataset chunks are not isotropic. block-width shouldn't be used.")
-        return chunk_shape[0]
+        return self._block_width
     
     @property
     def bounding_box_zyx(self):
@@ -229,18 +194,121 @@ class ZarrVolumeService(VolumeServiceWriter):
 
     @property
     def available_scales(self):
-        return [0]
-    
-    def get_subvolume(self, box_zyx, scale=0):
-        assert scale == 0, \
-            ("Zarr volume service only supports scale 0 for now.\n"
-             "As a workaround, try wrapping in a ScaledVolumeService by adding 'rescale-level: 0' to your 'adapters' config section.")
-        return self._dataset[box_to_slicing(*box_zyx)]
-    
-    def write_subvolume(self, subvolume, offset_zyx, scale=0):
-        assert scale == 0
-        
-        box = np.array([offset_zyx, offset_zyx])
-        box[1] += subvolume.shape
+        return self._available_scales
 
-        self._dataset[box_to_slicing(*box)] = subvolume
+    def get_subvolume(self, box_zyx, scale=0):
+        box_zyx = np.asarray(box_zyx)
+        return self.zarr_dataset(scale)[box_to_slicing(*box_zyx.tolist())]
+    
+
+    def write_subvolume(self, subvolume, offset_zyx, scale=0):
+        offset_zyx = np.asarray(offset_zyx)
+        box = np.array([offset_zyx, offset_zyx+subvolume.shape])
+        self.zarr_dataset(scale)[box_to_slicing(*box)] = subvolume
+
+
+    @property
+    def zarr_file(self):
+        # This member is memoized because that makes it
+        # easier to support pickling/unpickling.
+        if self._zarr_file is None:
+            need_permissions_fix = not os.path.exists(self._path)
+            store = zarr.NestedDirectoryStore(self._path)
+            self._zarr_file = zarr.open(store=store, mode=self._filemode)
+
+            if need_permissions_fix:
+                # Set default permissions to be group-writable
+                if platform.system() == "Linux":
+                    os.system(f"chmod g+rw {self._path}")
+                    os.system(f'setfacl -d -m g::rw {self._path}')
+                elif platform.system() == "Darwin":
+                    pass # FIXME: I don't know how to do this on macOS.
+
+        return self._zarr_file
+
+
+    def zarr_dataset(self, scale):
+        if scale not in self._zarr_datasets:
+            if scale == 0:
+                name = self._dataset_name
+            else:
+                assert 0 <= scale < 10 # need to fix the logic below if you want to support higher scales
+                assert self._dataset_name[-1] == '0', \
+                    "The Zarr dataset does not appear to be a multi-resolution dataset."
+                name = self._dataset_name[:-1] + f'{scale}'
+
+            self._zarr_datasets[scale] = self.zarr_file[name]
+
+        return self._zarr_datasets[scale]
+
+
+    def _ensure_datasets_exist(self, volume_config):
+        dtype = volume_config["zarr"]["creation-settings"]["dtype"]
+        create_if_necessary = volume_config["zarr"]["create-if-necessary"]
+        writable = volume_config["zarr"]["writable"]
+        if writable is None:
+            writable = create_if_necessary
+        
+        mode = 'r'
+        if writable:
+            mode = 'a'
+        self._filemode = mode
+
+        block_shape = volume_config["zarr"]["creation-settings"]["chunk-shape"][::-1]
+
+        bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
+        creation_shape = np.array(volume_config["zarr"]["creation-settings"]["shape"][::-1])
+        replace_default_entries(creation_shape, bounding_box_zyx[1])
+        
+        if create_if_necessary:
+            max_scale = volume_config["zarr"]["creation-settings"]["max-scale"]
+            if max_scale == -1:
+                if -1 in creation_shape:
+                    raise RuntimeError("Can't auto-determine the appropriate max-scale to create "
+                                       "(or extend) the data with, because you didn't specify a "
+                                       "volume creation shape (or bounding box")
+                max_scale = choose_pyramid_depth(creation_shape, 512)
+            
+            available_scales = [*range(1+max_scale)]
+        else:
+            available_scales = volume_config["geometry"]["available-scales"]
+
+            if not os.path.exists(self._path):
+                raise RuntimeError(f"File does not exist: {self._path}\n"
+                                   "You did not specify 'create-if-necessary' in the config, so I won't create it.:\n")
+
+            if self._dataset_name and not os.path.exists(f"{self._path}/{self._dataset_name}"):
+                raise RuntimeError(f"File does not exist: {self._path}/{self._dataset_name}\n"
+                                   "You did not specify 'create-if-necessary' in the config, so I won't create it.:\n")
+
+        for scale in available_scales:
+            if scale == 0:
+                name = self._dataset_name
+            else:
+                name = self._dataset_name[:-1] + f'{scale}'
+
+            if name not in self.zarr_file:
+                if not writable:
+                    raise RuntimeError(f"Dataset for scale {scale} does not exist, and you "
+                                       "didn't specify 'writable' in the config, so I won't create it.")
+
+                if dtype == "auto":
+                    raise RuntimeError(f"Can't create Zarr array {self._path}/{self._dataset_name}: "
+                                       "No dtype specified in the config.")
+
+                # Use 128 if the user didn't specify a chunkshape
+                replace_default_entries(block_shape, 3*[128])
+
+                # zarr misbehaves if the chunks are larger than the shape,
+                # which could happen here if we aren't careful (for higher scales).
+                scaled_shape = (creation_shape // (2**scale))
+                chunks = np.minimum(scaled_shape, block_shape).tolist()
+                if (chunks != block_shape) and (scale == 0):
+                    logger.warning(f"Block shape ({block_shape}) is too small for "
+                                   f"the dataset shape ({creation_shape}). Shrinking block shape.")
+                
+                self._zarr_datasets[scale] = self.zarr_file.create_dataset( name,
+                                                                            shape=scaled_shape.tolist(),
+                                                                            dtype=np.dtype(dtype),
+                                                                            chunks=chunks,
+                                                                            compressor=None )

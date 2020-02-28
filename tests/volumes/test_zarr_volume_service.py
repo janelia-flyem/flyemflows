@@ -27,7 +27,7 @@ def volume_setup():
 
     store = zarr.NestedDirectoryStore(path)
     f = zarr.open(store=store, mode='w')
-    f.create_dataset(dataset, data=volume, chunks=(64,64,64))
+    f.create_dataset(dataset, data=volume, chunks=(64,64,64), compressor=None)
 
     return config, volume
 
@@ -41,12 +41,9 @@ def test_read(volume_setup):
 
     # Service INSERTS geometry into config if necessary
     assert config["geometry"]["bounding-box"] == [[0,0,0], list(volume.shape[::-1])]
-    assert config["zarr"]["dtype"] == volume.dtype.name
     
     box = [(30,40,50), (50,60,70)]
     subvol = service.get_subvolume(box)
-    
-
     assert (subvol == volume[box_to_slicing(*box)]).all()
 
 
@@ -62,9 +59,14 @@ def test_write(volume_setup):
         ZarrVolumeService(config)
     assert 'writable' in str(excinfo.value)
 
-    # After setting writable=true, we can initialize the service.    
     assert not os.path.exists(config["zarr"]["path"])
-    config["zarr"]["writable"] = True
+    config["zarr"]["create-if-necessary"] = True
+    config["zarr"]["creation-settings"] = {
+        "shape": [*volume.shape][::-1],
+        "dtype": str(volume.dtype),
+        "block-shape": [32,32,32],
+        "max-scale": 0
+    }
 
     # Write some data
     box = [(30,40,50), (50,60,70)]

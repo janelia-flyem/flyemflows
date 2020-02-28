@@ -89,7 +89,11 @@ def test_connectedcomponents(setup_connectedcomponents_hdf5_zarr, disable_auto_r
 
     output_path = final_config["output"]["zarr"]["path"]
     dset_name = final_config["output"]["zarr"]["dataset"]
-    
+
+    import sys
+    sys.stdout.flush()
+    print(f"{execution_dir}/{output_path}")
+
     f = zarr.open(f"{execution_dir}/{output_path}", 'r')
     output_vol = f[dset_name][:]
     assert output_vol.shape == input_vol.shape
@@ -387,5 +391,5 @@ if __name__ == "__main__":
     
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_connectedcomponents']
-    #args = ['-k', 'connectedcomponents_dvid_subset_labels'] + args
+    args = ['-k', 'connectedcomponents'] + args
     pytest.main(args)
