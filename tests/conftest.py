@@ -33,10 +33,19 @@ logfile = "{TEST_DATA_DIR}/dvid.log"
 max_log_size = 500 # MB
 max_log_age = 30   # days
 
+[backend]
+    [backend.default]
+    store = "mutable"
+    log = "mutationlog"
+
 [store]
     [store.mutable]
     engine = "basholeveldb"
     path = "{DVID_STORE_PATH}"
+
+[store.mutationlog]
+    engine = "filelog"
+    path = "{DVID_STORE_PATH}/mutationlog"
 """
 
 
