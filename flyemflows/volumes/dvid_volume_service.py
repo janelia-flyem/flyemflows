@@ -696,6 +696,7 @@ class DvidVolumeService(VolumeServiceWriter):
             where z,y,x represents the starting corner (in full-res coordinates)
             of a brick that contains the label.
         """
+        assert not isinstance(labels, set), "Pass labels as a list or array, not a set"
         labels = pd.unique(labels)
         is_supervoxels = self.supervoxels
         brick_shape = self.preferred_message_shape
