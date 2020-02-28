@@ -276,13 +276,8 @@ class ConnectedComponents(Workflow):
             #     linked_nodes_orig = set(links_df['orig_outer'].values) | set(links_df['orig_inner'].values)
             #     node_df = cc_mapping_df.query(orig in @repeated_orig_labels or orig in @linked_nodes_orig')
 
-            # FIXME: Wouldn't the following be faster?  (Too lazy to test right now.)
-            #
-            #        keep_rows = cc_mapping_df['orig'].duplicated(keep=False)
-            #        node_df = cc_mapping_df.loc[~keep_rows]
-            # 
-            repeated_orig_labels = (cc_mapping_df['orig'].value_counts() > 2).index #@UnusedVariable
-            node_df = cc_mapping_df.query('orig in @repeated_orig_labels')
+            singleton_rows = cc_mapping_df['orig'].duplicated(keep=False)
+            node_df = cc_mapping_df.loc[singleton_rows]
 
         with Timer("Computing link CC", logger):
             # Compute connected components across all linked objects
