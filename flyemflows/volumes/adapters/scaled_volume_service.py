@@ -157,7 +157,7 @@ class ScaledVolumeService(VolumeServiceWriter):
         """
         if self.scale_delta >= 0:
             offset_zyx = offset_zyx * 2**self.scale_delta
-            upsampled_data = upsample(subvolume, 2**(self.delta_scale))
+            upsampled_data = upsample(subvolume, 2**(self.scale_delta))
             self.original_volume_service.write_subvolume(upsampled_data, offset_zyx, scale)
         else:
             offset_zyx = offset_zyx // 2**self.scale_delta
@@ -167,9 +167,9 @@ class ScaledVolumeService(VolumeServiceWriter):
                 ## FIXME: Our C++ method for downsampling ('labels')
                 ##        seems to have a bad build at the moment (it segfaults and/or produces zeros)
                 ##        For now, we use the 'labels-numba' method
-                downsampled_data = downsample( subvolume, 2**(-self.delta_scale), 'labels-numba' )
+                downsampled_data = downsample( subvolume, 2**(-self.scale_delta), 'labels-numba' )
             else:
-                downsampled_data = downsample( subvolume, 2**(-self.delta_scale), 'block-mean' )
+                downsampled_data = downsample( subvolume, 2**(-self.scale_delta), 'block-mean' )
             self.original_volume_service.write_subvolume(downsampled_data, offset_zyx, scale)
             
 

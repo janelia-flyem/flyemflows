@@ -13,6 +13,9 @@ from flyemflows.util import downsample
 from flyemflows.volumes import VolumeService, Hdf5VolumeService, ScaledVolumeService, GrayscaleVolumeSchema
 from confiddler import validate
 
+##
+## FIXME: Need writing tests, not just reading
+##
 
 @pytest.fixture(scope="module")
 def _setup_hdf5_service():
