@@ -155,12 +155,13 @@ class ScaledVolumeService(VolumeServiceWriter):
         scale 0 if they are using a scaled volume service.
         Other pyramid levels should be comuted afterwards.
         """
+        offset_zyx = np.asarray(offset_zyx)
+        offset_zyx = (offset_zyx * 2**self.scale_delta).astype(int)
+        
         if self.scale_delta >= 0:
-            offset_zyx = offset_zyx * 2**self.scale_delta
             upsampled_data = upsample(subvolume, 2**(self.scale_delta))
             self.original_volume_service.write_subvolume(upsampled_data, offset_zyx, scale)
         else:
-            offset_zyx = offset_zyx // 2**self.scale_delta
             if np.dtype(self.dtype) == np.uint64:
                 # Assume that uint64 means labels.
                 
