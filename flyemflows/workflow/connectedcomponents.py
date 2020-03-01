@@ -142,6 +142,7 @@ class ConnectedComponents(Workflow):
         def brick_cc(brick):
             orig_vol = brick.volume
             orig_max = orig_vol.max()
+            brick.compress()
             
             if subset_labels:
                 orig_vol = apply_mask_for_labels(orig_vol, subset_labels)
@@ -188,6 +189,7 @@ class ConnectedComponents(Workflow):
             cc_overlaps = cc_overlaps.copy()
             cc_overlaps.loc[(cc_overlaps['cc'] != 0), 'cc'] += np.uint64(cc_offset)
             
+            brick.compress()
             new_brick = Brick( brick.logical_box,
                                brick.physical_box,
                                offset_cc_vol,
@@ -228,6 +230,8 @@ class ConnectedComponents(Workflow):
             #table = contingency_table(outer_brick.volume, inner_brick.volume).reset_index()
             #table.rename(columns={'left': 'cc_outer', 'right': 'cc_inner'}, inplace=True)
 
+            outer_brick.compress()
+            inner_brick.compress()
             # Omit label 0
             table = table.query('cc_outer != 0 and cc_inner != 0')
             return table
@@ -352,6 +356,9 @@ class ConnectedComponents(Workflow):
             # Overwrite zero voxels from the original segmentation.
             final_vol = np.where(final_vol, final_vol, orig_brick.volume)
             
+            orig_brick.compress()
+            cc_brick.compress()
+            
             final_brick = Brick( orig_brick.logical_box,
                                  orig_brick.physical_box,
                                  final_vol,
@@ -367,12 +374,17 @@ class ConnectedComponents(Workflow):
         else:
             block_shape = self.output_service.base_service.preferred_message_shape
          
-        def write_brick(brick):
-            brick = clip_to_logical(brick, False)
+        def write_brick(full_brick):
+            brick = clip_to_logical(full_brick, False)
+            
+            # Don't re-compress; we're done with the brick entirely
+            full_brick.destroy()
+
             output_service.write_subvolume(brick.volume, brick.physical_box[0], 0)
             if collect_stats:
                 stats = block_stats_for_volume(block_shape, brick.volume, brick.physical_box)
                 return stats
+
 
         with Timer("Relabeling bricks and writing to output", logger):
             final_bricks = bag_zip(input_wall.bricks, cc_bricks).map(remap_cc_to_final)
