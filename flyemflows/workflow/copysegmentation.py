@@ -518,7 +518,10 @@ class CopySegmentation(Workflow):
         pyramid_depth = options["pyramid-depth"]
 
         input_slab_box = output_slab_box - self.translation_offset_zyx
-        slab_sbm = SparseBlockMask.create_from_sbm_box(self.sbm, input_slab_box)
+        if self.sbm is None:
+            slab_sbm = None
+        else:
+            slab_sbm = SparseBlockMask.create_from_sbm_box(self.sbm, input_slab_box)
         
         try:
             input_wall = BrickWall.from_volume_service( self.input_service,
