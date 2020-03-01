@@ -404,6 +404,7 @@ class ConnectedComponents(Workflow):
             output_config["dvid"]["creation-settings"]["max-scale"] = pyramid_depth
 
         replace_default_entries(output_config["geometry"]["bounding-box"], self.input_service.bounding_box_zyx[:, ::-1])
+
         self.output_service = VolumeService.create_from_config( output_config, self.resource_mgr_client )
         assert isinstance( self.output_service, VolumeServiceWriter ), \
             "The output format you are attempting to use does not support writing"
@@ -453,7 +454,8 @@ class ConnectedComponents(Workflow):
             with Timer(f"Fetching mask for ROI '{roi}' ({seg_box_s0[:, ::-1].tolist()})", logger):
                 roi_mask_s5, _ = fetch_roi(server, uuid, roi, format='mask', mask_box=seg_box_s5)
 
-            sbm = SparseBlockMask.create_from_highres_mask(roi_mask_s5, 2**5, seg_box_s0, brick_shape*(2**scale))
+            # SBM 'full-res' corresponds to the input service voxels, not necessarily scale-0.
+            sbm = SparseBlockMask.create_from_highres_mask(roi_mask_s5, 2**(5-scale), seg_box, brick_shape)
 
         elif subset_labels:
             try:
