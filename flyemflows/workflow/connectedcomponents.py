@@ -1,5 +1,6 @@
 import os
 import copy
+import pickle
 import logging
 
 import h5py
@@ -257,12 +258,15 @@ class ConnectedComponents(Workflow):
             assert links_df.columns.tolist() == ['cc_outer', 'cc_inner'] 
             assert (links_df.dtypes == np.uint64).all()
 
-        with Timer("Joining link CC column with original labels", logger):
-            #
-            # Append columns for original labels
-            #
+        with Timer("Writing links_df.pkl", logger):
+            pickle.dump(links_df, open('links_df.pkl', 'wb'))
+
+        with Timer("Concatenating cc_overlaps", logger):
             cc_mapping_df = pd.concat(cc_overlaps.compute(), ignore_index=True)
             assert cc_mapping_df.columns.tolist() == ['orig', 'cc']
+            
+        with Timer("Writing cc_mapping_df.pkl", logger):
+            pickle.dump(cc_mapping_df, open('cc_mapping_df.pkl', 'wb'))
             
         #
         # Append columns for original labels
@@ -283,6 +287,9 @@ class ConnectedComponents(Workflow):
 
             links_df = links_df[['cc_outer', 'cc_inner', 'orig_outer', 'orig_inner']]
             assert (links_df.dtypes == np.uint64).all()
+
+        with Timer("Writing links_df.pkl", logger):
+            pickle.dump(links_df, open('links_df.pkl', 'wb'))
 
         with Timer("Dropping 'island' components", logger):
             # Before computing the CC of the whole graph, we can 
