@@ -178,7 +178,7 @@ def construct_rtm_url(job_id=None, tab='jobgraph'):
     
     submit_time = get_job_submit_time(job_id)
     submit_timestamp = int(submit_time.timestamp())
-    rtm_url = ( "http://lsf-rtm/cacti/plugins/grid/grid_bjobs.php"
+    rtm_url = ( "http://lsf-rtm.int.janelia.org/cacti/plugins/grid/grid_bjobs.php"
                 "?action=viewjob"
                f"&tab={tab}"
                 "&clusterid=1"
