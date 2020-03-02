@@ -225,13 +225,15 @@ class ConnectedComponents(Workflow):
             #       we'll probably want to permit the user to specify a minimum required
             #       overlap for neighboring objects to be considered 'linked'.
 
-            table = pd.DataFrame({'cc_outer': outer_brick.volume.reshape(-1), 'cc_inner': inner_brick.volume.reshape(-1)})
+            table = pd.DataFrame({ 'cc_outer': outer_brick.volume.reshape(-1),
+                                   'cc_inner': inner_brick.volume.reshape(-1) })
             table = table.drop_duplicates()
             #table = contingency_table(outer_brick.volume, inner_brick.volume).reset_index()
             #table.rename(columns={'left': 'cc_outer', 'right': 'cc_inner'}, inplace=True)
 
             outer_brick.compress()
             inner_brick.compress()
+
             # Omit label 0
             table = table.query('cc_outer != 0 and cc_inner != 0')
             return table
@@ -261,8 +263,24 @@ class ConnectedComponents(Workflow):
             #
             cc_mapping_df = pd.concat(cc_overlaps.compute(), ignore_index=True)
             assert cc_mapping_df.columns.tolist() == ['orig', 'cc']
-            links_df = links_df.merge(cc_mapping_df, 'left', left_on='cc_outer', right_on='cc')[['cc_outer', 'cc_inner', 'orig']]
-            links_df = links_df.merge(cc_mapping_df, 'left', left_on='cc_inner', right_on='cc', suffixes=['_outer', '_inner'])
+            
+        #
+        # Append columns for original labels
+        #
+        with Timer("Joining link CC column with original labels", logger):
+            # The pandas way...
+            #cc_mapping = cc_mapping_df.set_index('cc')['orig']
+            #links_df = links_df.merge(cc_mapping, 'left', left_on='cc_outer', right_index=True)[['cc_outer', 'cc_inner', 'orig']]
+            #links_df = links_df.merge(cc_mapping, 'left', left_on='cc_inner', right_index=True, suffixes=['_outer', '_inner'])
+
+            # The LabelMapper way...
+            assert (cc_mapping_df.dtypes == np.uint64).all()
+            cc = cc_mapping_df['cc'].values
+            cc_orig = cc_mapping_df['orig'].values
+            cc_mapper = LabelMapper(cc, cc_orig)
+            links_df['orig_outer'] = cc_mapper.apply(links_df['cc_outer'].values)
+            links_df['orig_inner'] = cc_mapper.apply(links_df['cc_inner'].values)
+
             links_df = links_df[['cc_outer', 'cc_inner', 'orig_outer', 'orig_inner']]
             assert (links_df.dtypes == np.uint64).all()
 
@@ -283,8 +301,8 @@ class ConnectedComponents(Workflow):
             #     linked_nodes_orig = set(links_df['orig_outer'].values) | set(links_df['orig_inner'].values)
             #     node_df = cc_mapping_df.query(orig in @repeated_orig_labels or orig in @linked_nodes_orig')
 
-            singleton_rows = cc_mapping_df['orig'].duplicated(keep=False)
-            node_df = cc_mapping_df.loc[singleton_rows].copy()
+            multiblock_rows = cc_mapping_df['orig'].duplicated(keep=False)
+            node_df = cc_mapping_df.loc[multiblock_rows].copy()
 
         with Timer("Computing link CC", logger):
             # Compute connected components across all linked objects
