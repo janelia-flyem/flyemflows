@@ -177,6 +177,13 @@ class ConnectedComponents(Workflow):
         with Timer("Computing blockwise CC", logger):
             max_brick_cc = cc_maxes.max().compute()
         
+        with Timer("Saving brick maxes", logger):
+            def corner_and_maxes(cc_brick, _cc_overlaps, cc_max, orig_max):
+                return (*cc_brick.logical_box[0], cc_max, orig_max)
+            brick_maxes = cc_results.starmap(corner_and_maxes).compute()
+            brick_maxes_df = pd.DataFrame(brick_maxes, columns=['z', 'y', 'x', 'cc_max', 'orig_max'])
+            brick_maxes_df.to_csv('brick-maxes.csv', header=True, index=False)
+        
         wall_box = input_wall.bounding_box
         wall_grid = input_wall.grid
         
