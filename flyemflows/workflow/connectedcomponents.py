@@ -248,7 +248,7 @@ class ConnectedComponents(Workflow):
             if tables:
                 return pd.concat(tables, ignore_index=True)
             else:
-                return pd.DataFrame({'cc_outer': [], 'cc_inner': []})
+                return pd.DataFrame({'cc_outer': [], 'cc_inner': []}, dtype=np.uint64)
             
         links_meta = { 'cc_outer': np.uint64, 'cc_inner': np.uint64 }
         
