@@ -425,9 +425,12 @@ class ConnectedComponents(Workflow):
             # Don't re-compress; we're done with the brick entirely
             full_brick.destroy()
 
-            output_service.write_subvolume(brick.volume, brick.physical_box[0], 0)
+            vol = brick.volume
+            brick.destroy()
+
+            output_service.write_subvolume(vol, brick.physical_box[0], 0)
             if collect_stats:
-                stats = block_stats_for_volume(block_shape, brick.volume, brick.physical_box)
+                stats = block_stats_for_volume(block_shape, vol, brick.physical_box)
                 return stats
 
 
