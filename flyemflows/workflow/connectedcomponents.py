@@ -157,9 +157,13 @@ class ConnectedComponents(Workflow):
             
             cc_overlaps = pd.DataFrame({'orig': orig_vol.reshape(-1), 'cc': cc_vol.reshape(-1)})
             cc_overlaps.query('orig != 0 and cc != 0', inplace=True)
-            cc_overlaps.drop_duplicates(inplace=True)
+            cc_overlaps = cc_overlaps.drop_duplicates()
+            assert (cc_overlaps.dtypes == np.uint64).all()
 
-            cc_max = cc_overlaps['cc'].max()
+            if len(cc_overlaps) > 0:
+                cc_max = cc_overlaps['cc'].max()
+            else:
+                cc_max = np.uint64(0)
             
             cc_brick = Brick( brick.logical_box,
                               brick.physical_box,
@@ -284,12 +288,23 @@ class ConnectedComponents(Workflow):
             #links_df = links_df.merge(cc_mapping, 'left', left_on='cc_inner', right_index=True, suffixes=['_outer', '_inner'])
 
             # The LabelMapper way...
+            assert (links_df.dtypes == np.uint64).all()
             assert (cc_mapping_df.dtypes == np.uint64).all()
+
             cc = cc_mapping_df['cc'].values
             cc_orig = cc_mapping_df['orig'].values
             cc_mapper = LabelMapper(cc, cc_orig)
             links_df['orig_outer'] = cc_mapper.apply(links_df['cc_outer'].values)
             links_df['orig_inner'] = cc_mapper.apply(links_df['cc_inner'].values)
+            
+            # If we know the input segmentation source is the same for every brick
+            # (i.e. it comes from a pre-computed source, where the halos should exactly match),
+            # Then this assertion is true. 
+            # It will not be true if we ever change this workflow to a general connected
+            # components workflow, where each block of segmentaiton might be generated
+            # independently, and thus halos may not match exactly.
+            assert links_df.eval('orig_outer == orig_inner').all(), \
+                "Something is wrong -- either the halos are not aligned, or the mapping of CC->orig is wrong."
 
             links_df = links_df[['cc_outer', 'cc_inner', 'orig_outer', 'orig_inner']]
             assert (links_df.dtypes == np.uint64).all()
