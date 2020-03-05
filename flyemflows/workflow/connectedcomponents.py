@@ -187,8 +187,7 @@ class ConnectedComponents(Workflow):
         wall_box = input_wall.bounding_box
         wall_grid = input_wall.grid
         
-        def add_cc_offsets(brick_and_cc_overlaps):
-            brick, cc_overlaps = brick_and_cc_overlaps
+        def add_cc_offsets(brick, cc_overlaps):
             brick_index = BrickWall.compute_brick_index(brick, wall_box, wall_grid)
             cc_offset = np.uint64(brick_index * (max_brick_cc+1))
             
@@ -207,7 +206,7 @@ class ConnectedComponents(Workflow):
             return new_brick, cc_overlaps
 
         # Now relabel each cc_brick so that label ids in different bricks never coincide
-        offset_cc_results = bag_zip(cc_bricks, cc_overlaps).map(add_cc_offsets)
+        offset_cc_results = bag_zip(cc_bricks, cc_overlaps).starmap(add_cc_offsets)
         offset_cc_results.persist()
         cc_bricks, cc_overlaps = offset_cc_results.unzip(2)
 
@@ -217,13 +216,13 @@ class ConnectedComponents(Workflow):
         outer_halos = extract_halos(cc_bricks, input_wall.grid, 'outer', 'lower')
         inner_halos = extract_halos(cc_bricks, input_wall.grid, 'inner', 'upper')
 
-        outer_halos_df = BrickWall.bricks_as_ddf(outer_halos, logical=False, physical=True, names='long')
-        inner_halos_df = BrickWall.bricks_as_ddf(inner_halos, logical=False, physical=True, names='long')
+        outer_halos_ddf = BrickWall.bricks_as_ddf(outer_halos, logical=False, physical=True, names='long')
+        inner_halos_ddf = BrickWall.bricks_as_ddf(inner_halos, logical=False, physical=True, names='long')
         
         # Combine halo DFs along physical boxes, so that each outer halo is paired
         # with its overlapping partner (an inner halo, extracted from a different original brick).
         # Note: This is a pandas 'inner' merge, not to be confused with the 'inner' halos!
-        combined_halos_df = outer_halos_df.merge(inner_halos_df, 'inner', PB_COLS, suffixes=['_outer', '_inner'])
+        combined_halos_ddf = outer_halos_ddf.merge(inner_halos_ddf, 'inner', PB_COLS, suffixes=['_outer', '_inner'])
 
         def find_pairwise_links(outer_brick, inner_brick):
             assert (outer_brick.physical_box == inner_brick.physical_box).all()
@@ -260,7 +259,7 @@ class ConnectedComponents(Workflow):
         links_meta = { 'cc_outer': np.uint64, 'cc_inner': np.uint64 }
         
         with Timer("Offsetting block CC and computing links", logger):
-            links_df = combined_halos_df.map_partitions(find_partition_links, meta=links_meta).clear_divisions()
+            links_df = combined_halos_ddf.map_partitions(find_partition_links, meta=links_meta).clear_divisions()
             links_df = links_df.compute()
             assert links_df.columns.tolist() == ['cc_outer', 'cc_inner'] 
             assert (links_df.dtypes == np.uint64).all()
@@ -364,7 +363,7 @@ class ConnectedComponents(Workflow):
         del node_df['orig']
         del node_df['link_cc']
 
-        def remap_cc_to_final(orig_and_cc):
+        def remap_cc_to_final(orig_brick, cc_brick):
             """
             Given an original brick and the corresponding CC brick,
             Relabel the CC brick according to the final label mapping.
@@ -373,7 +372,6 @@ class ConnectedComponents(Workflow):
                 The final mapping (node_df) is implicitly broadcasted to all workers.
                 Hopefully it isn't prohibitively large.
             """
-            orig_brick, cc_brick = orig_and_cc
             assert (orig_brick.logical_box == cc_brick.logical_box).all()
             assert (orig_brick.physical_box == cc_brick.physical_box).all()
             
@@ -419,7 +417,7 @@ class ConnectedComponents(Workflow):
 
 
         with Timer("Relabeling bricks and writing to output", logger):
-            final_bricks = bag_zip(input_wall.bricks, cc_bricks).map(remap_cc_to_final)
+            final_bricks = bag_zip(input_wall.bricks, cc_bricks).starmap(remap_cc_to_final)
             all_stats = final_bricks.map(write_brick).compute()
 
         if collect_stats:
