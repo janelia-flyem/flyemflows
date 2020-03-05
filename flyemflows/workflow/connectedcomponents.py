@@ -7,6 +7,7 @@ import h5py
 import numpy as np
 import pandas as pd
 import skimage.measure as skm
+from dask import delayed
 from dask.bag import zip as bag_zip
 
 from dvid_resource_manager.client import ResourceManagerClient
@@ -366,7 +367,7 @@ class ConnectedComponents(Workflow):
             split_orig_objects = final_cc_counts.query('num_components > 1').index #@UnusedVariable
             node_df = node_df.query('orig in @split_orig_objects').copy()
             num_final_fragments = len(pd.unique(node_df['link_cc']))
-        
+
         # Compute the final label for each cc
         # Start by determining where the final label range should start.
         next_label = self.determine_next_label(num_final_fragments, orig_maxes)
@@ -387,7 +388,7 @@ class ConnectedComponents(Workflow):
         del node_df['orig']
         del node_df['link_cc']
 
-        def remap_cc_to_final(orig_brick, cc_brick):
+        def remap_cc_to_final(orig_brick, cc_brick, node_df):
             """
             Given an original brick and the corresponding CC brick,
             Relabel the CC brick according to the final label mapping.
@@ -444,7 +445,8 @@ class ConnectedComponents(Workflow):
 
 
         with Timer("Relabeling bricks and writing to output", logger):
-            final_bricks = bag_zip(input_wall.bricks, cc_bricks).starmap(remap_cc_to_final)
+            final_bricks = (bag_zip(input_wall.bricks, cc_bricks)
+                            .starmap(remap_cc_to_final, node_df=delayed(node_df)))
             all_stats = final_bricks.map(write_brick).compute()
 
         if collect_stats:
