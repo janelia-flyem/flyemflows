@@ -334,7 +334,13 @@ class ConnectedComponents(Workflow):
 
         with Timer("Computing link CC", logger):
             # Compute connected components across all linked objects
-            node_df['link_cc'] = connected_components_nonconsecutive(links_df[['cc_outer', 'cc_inner']].values, node_df['cc'].values)
+            halo_links = links_df[['cc_outer', 'cc_inner']].values
+            link_cc = connected_components_nonconsecutive(halo_links, node_df['cc'].values)
+            node_df['link_cc'] = link_cc.astype(np.uint64)
+            del halo_links, link_cc
+
+        with Timer("Writing node_df_unfiltered.pkl", logger):
+            pickle.dump(node_df, open('node_df_unfiltered.pkl', 'wb'))
 
         with Timer("Dropping unsplit objects", logger):
             # Original objects that ended up with only a single
@@ -371,6 +377,9 @@ class ConnectedComponents(Workflow):
             mapper = LabelMapper(link_ccs, np.arange(next_label, next_label+len(link_ccs), dtype=np.uint64))
             node_df['final_cc'] = mapper.apply(node_df['link_cc'].values)
         
+        with Timer("Writing node_df_final.pkl", logger):
+            pickle.dump(node_df, open('node_df_final.pkl', 'wb'))
+       
         csv_df = node_df[['final_cc', 'orig']].rename(columns={'final_cc': 'final_label', 'orig': 'orig_label'}, copy=False).drop_duplicates()
         csv_df.to_csv('relabeled-objects.csv', index=False, header=True)
 
