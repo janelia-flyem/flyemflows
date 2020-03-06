@@ -438,12 +438,12 @@ class ConnectedComponents(Workflow):
             return (brick_index, orig_brick, cc_brick)
 
         dtypes = {'brick_index': np.int32, 'orig_brick': object, 'cc_brick': object}
-        bricks_ddf = bag_zip(input_wall.bricks, cc_bricks).starmap(coords_and_bricks).to_dataframe(dtypes)
+        bricks_ddf = bag_zip(input_wall.bricks, cc_bricks).starmap(coords_and_bricks).to_dataframe(dtypes).set_index('brick_index')
 
         # This merge associates each brick's part of the mapping with the correct row of bricks_ddf 
-        bricks_ddf = bricks_ddf.merge(grouped_mapping_ddf, 'left', left_on='brick_index', right_index=True)
+        bricks_ddf = bricks_ddf.merge(grouped_mapping_ddf, 'left', left_index=True, right_index=True)
 
-        def remap_cc_to_final(_brick_index, orig_brick, cc_brick, wrapped_brick_mapping_df):
+        def remap_cc_to_final(orig_brick, cc_brick, wrapped_brick_mapping_df):
             """
             Given an original brick and the corresponding CC brick,
             Relabel the CC brick according to the final label mapping,
