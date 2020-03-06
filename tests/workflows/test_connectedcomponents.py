@@ -288,6 +288,7 @@ def setup_connectedcomponents_dvid(setup_dvid_repo):
           geometry: {{}} # Auto-set from input
  
         connectedcomponents:
+          orig-max-label: 4
           halo: 1
           subset-labels: [1,2,4] # Not 3
           compute-block-statistics: true
@@ -393,5 +394,5 @@ if __name__ == "__main__":
     
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_connectedcomponents']
-    #args = ['-k', 'connectedcomponents'] + args
+    #args = ['-k', 'connectedcomponents_dvid_subset_labels'] + args
     pytest.main(args)

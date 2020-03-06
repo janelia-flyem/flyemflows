@@ -371,7 +371,7 @@ class BrickWall:
     @classmethod
     def compute_brick_index(cls, brick, wall_box, wall_grid):
         """
-        For a given brick in this BrickWall,
+        For a given brick in a BrickWall corresponding to wall_box and wall_grid,
         compute a unique index based on the brick's logical_box.
         (We just compute the scan-order index.)
         Note that in the case of a sparsely populated brick wall,
@@ -401,3 +401,50 @@ class BrickWall:
             return np.int32(index)
 
         return _scan_order_index(location_id, wall_index_shape)
+
+
+    @classmethod
+    def compute_brick_indexes(cls, logical_corners, wall_box, wall_grid):
+        """
+        For an array of brick locations (logical_box[0]) in a BrickWall
+        corresponding to wall_box and wall_grid,
+        compute unique indexes for each brick based on the brick's logical_box.
+        (We just compute the scan-order index.)
+        Note that in the case of a sparsely populated brick wall,
+        brick indexes will not be consecutive.
+        """
+        logical_corners = np.asarray(logical_corners)
+        assert logical_corners.ndim == 2
+        assert logical_corners.shape[1] == 3
+        
+        wall_box = round_box( wall_box, wall_grid.block_shape, 'out' )
+        wall_shape = wall_box[1] - wall_box[0]
+        
+        wall_index_box = np.array(([0,0,0], wall_shape)) // wall_grid.block_shape
+        wall_index_shape = wall_index_box[1] - wall_index_box[0]
+
+        location_ids = (logical_corners - wall_box[0]) // wall_grid.block_shape
+
+        def _scan_order_indexes(coords, shape):
+            # Example:
+            #  coords = [(z,y,x,c),
+            #            (z,y,x,c),
+            #            ...]
+            #
+            #  shape = (Z,Y,X,C)
+            #  strides = (Y*X*C, X*C, C, 1)
+            #  indexes = [z*Y*X*C + y*X*C + x*C + c*1,
+            #             z*Y*X*C + y*X*C + x*C + c*1,
+            #             ...]
+            
+            # Accumulate products in reverse
+            reverse_shape = tuple(shape[::-1]) # (C,X,Y,Z)
+            reverse_strides = np.multiply.accumulate((1,) + reverse_shape[:-1]) # (1, C, C*X, C*X*Y)
+
+            strides = reverse_strides[::-1]
+            indexes = (coords * strides).sum(axis=1)
+            return indexes.astype(np.int32)
+
+        return _scan_order_indexes(location_ids, wall_index_shape)
+
+

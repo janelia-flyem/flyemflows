@@ -9,6 +9,7 @@ import pandas as pd
 import skimage.measure as skm
 from dask import delayed
 from dask.bag import zip as bag_zip
+import dask.dataframe as ddf
 
 from dvid_resource_manager.client import ResourceManagerClient
 from neuclease.util import Timer, connected_components_nonconsecutive, apply_mask_for_labels, block_stats_for_volume, BLOCK_STATS_DTYPES, round_box, SparseBlockMask
@@ -156,6 +157,7 @@ class ConnectedComponents(Workflow):
             # Leave 0-pixels alone.
             cc_vol[orig_vol == 0] = np.uint64(0)
             
+            # Keep track of which original values each cc corresponds to.
             cc_overlaps = pd.DataFrame({'orig': orig_vol.reshape(-1), 'cc': cc_vol.reshape(-1)})
             cc_overlaps.query('orig != 0 and cc != 0', inplace=True)
             cc_overlaps = cc_overlaps.drop_duplicates()
@@ -201,6 +203,10 @@ class ConnectedComponents(Workflow):
             cc_overlaps = cc_overlaps.copy()
             cc_overlaps.loc[(cc_overlaps['cc'] != 0), 'cc'] += np.uint64(cc_offset)
             
+            # Append columns for brick location while we're at it.
+            cc_overlaps['lz0'] = cc_overlaps['ly0'] = cc_overlaps['lx0'] = np.int32(0)
+            cc_overlaps.loc[:, ['lz0', 'ly0', 'lx0']] = brick.logical_box[0]
+
             brick.compress()
             new_brick = Brick( brick.logical_box,
                                brick.physical_box,
@@ -274,7 +280,7 @@ class ConnectedComponents(Workflow):
 
         with Timer("Concatenating cc_overlaps", logger):
             cc_mapping_df = pd.concat(cc_overlaps.compute(), ignore_index=True)
-            assert cc_mapping_df.columns.tolist() == ['orig', 'cc']
+            cc_mapping_df = cc_mapping_df[['lz0', 'ly0', 'lx0', 'orig', 'cc']]
             
         with Timer("Writing cc_mapping_df.pkl", logger):
             pickle.dump(cc_mapping_df, open('cc_mapping_df.pkl', 'wb'))
@@ -290,7 +296,7 @@ class ConnectedComponents(Workflow):
 
             # The LabelMapper way...
             assert (links_df.dtypes == np.uint64).all()
-            assert (cc_mapping_df.dtypes == np.uint64).all()
+            assert (cc_mapping_df[['cc', 'orig']].dtypes == np.uint64).all()
 
             cc = cc_mapping_df['cc'].values
             cc_orig = cc_mapping_df['orig'].values
@@ -381,45 +387,90 @@ class ConnectedComponents(Workflow):
         with Timer("Writing node_df_final.pkl", logger):
             pickle.dump(node_df, open('node_df_final.pkl', 'wb'))
        
-        csv_df = node_df[['final_cc', 'orig']].rename(columns={'final_cc': 'final_label', 'orig': 'orig_label'}, copy=False).drop_duplicates()
-        csv_df.to_csv('relabeled-objects.csv', index=False, header=True)
+        with Timer("Writing relabeled-objects.csv", logger):
+            csv_df = node_df[['final_cc', 'orig']].rename(columns={'final_cc': 'final_label', 'orig': 'orig_label'}, copy=False).drop_duplicates()
+            csv_df.to_csv('relabeled-objects.csv', index=False, header=True)
 
-        # Delete unnecessary columns before broadcasting this DF to all workers.
-        del node_df['orig']
-        del node_df['link_cc']
+        # The final mapping (node_df) might be too large to broadcast to all workers entirely.
+        # We need to send only the relevant portion to each brick.
+        
+        class WrappedDf:
+            """
+            Trivial wrapper to allow us to store an entire
+            DataFrame in every row of the following groupby()
+            result."""
+            def __init__(self, df):
+                self.df = df.copy()
+        
+        with Timer("Grouping final CC mapping by brick", logger):
+            grouped_mapping_df = (node_df[['lz0', 'ly0', 'lx0', 'cc', 'final_cc']]
+                                    .groupby(['lz0', 'ly0', 'lx0'])
+                                    .apply(WrappedDf)
+                                    .rename('wrapped_brick_mapping_df')
+                                    .reset_index())
 
-        def remap_cc_to_final(orig_brick, cc_brick, node_df):
+        wall_box = input_wall.bounding_box
+        wall_grid = input_wall.grid
+
+        # We will need to merge according to brick location.
+        # We could do that on [lz0,ly0,lx0], but a single-column merge will be faster,
+        # so compute the brick_indexes and use that.
+        brick_corners = grouped_mapping_df[['lz0', 'ly0', 'lx0']].values
+        grouped_mapping_df['brick_index'] = BrickWall.compute_brick_indexes(brick_corners, wall_box, wall_grid)
+        grouped_mapping_df = grouped_mapping_df.set_index('brick_index')[['wrapped_brick_mapping_df']]
+        grouped_mapping_ddf = ddf.from_pandas(grouped_mapping_df, name='grouped_mapping', npartitions=input_wall.bricks.npartitions)
+
+        #
+        # Construct a Dask Dataframe holding the bricks we need to write.
+        #
+
+        def coords_and_bricks(orig_brick, cc_brick):
+            assert (orig_brick.logical_box == cc_brick.logical_box).all()
+            brick_index = BrickWall.compute_brick_index(orig_brick, wall_box, wall_grid)
+            return (brick_index, orig_brick, cc_brick)
+
+        dtypes = {'brick_index': np.int32, 'orig_brick': object, 'cc_brick': object}
+        bricks_ddf = bag_zip(input_wall.bricks, cc_bricks).starmap(coords_and_bricks).to_dataframe(dtypes)
+
+        # This merge associates each brick's part of the mapping with the correct row of bricks_ddf 
+        bricks_ddf = bricks_ddf.merge(grouped_mapping_ddf, 'left', left_on='brick_index', right_index=True)
+
+        def remap_cc_to_final(_brick_index, orig_brick, cc_brick, wrapped_brick_mapping_df):
             """
             Given an original brick and the corresponding CC brick,
-            Relabel the CC brick according to the final label mapping.
-            
-            Note:
-                The final mapping (node_df) is implicitly broadcasted to all workers.
-                Hopefully it isn't prohibitively large.
+            Relabel the CC brick according to the final label mapping,
+            as provided in wrapped_brick_mapping_df.
             """
             assert (orig_brick.logical_box == cc_brick.logical_box).all()
             assert (orig_brick.physical_box == cc_brick.physical_box).all()
-            
-            # Construct mapper from only the rows we need
-            cc_labels = pd.unique(cc_brick.volume.reshape(-1)) # @UnusedVariable
-            mapping = node_df.query('cc in @cc_labels')[['cc', 'final_cc']].values
-            mapper = LabelMapper(*mapping.transpose())
 
-            # Apply mapping to CC vol, writing zeros whereever the CC isn't mapped.
-            final_vol = mapper.apply_with_default(cc_brick.volume, 0)
+            # Check for NaN, which implies that the mapping for this
+            # brick is empty (no objects to relabel).
+            if isinstance(wrapped_brick_mapping_df, float):
+                assert np.isnan(wrapped_brick_mapping_df)
+                final_vol = orig_brick.volume
+                orig_brick.compress()
+            else:
+                # Construct mapper from only the rows we need
+                cc_labels = pd.unique(cc_brick.volume.reshape(-1)) # @UnusedVariable
+                mapping = wrapped_brick_mapping_df.df.query('cc in @cc_labels')[['cc', 'final_cc']].values
+                mapper = LabelMapper(*mapping.transpose())
+    
+                # Apply mapping to CC vol, writing zeros whereever the CC isn't mapped.
+                final_vol = mapper.apply_with_default(cc_brick.volume, 0)
+                
+                # Overwrite zero voxels from the original segmentation.
+                final_vol = np.where(final_vol, final_vol, orig_brick.volume)
             
-            # Overwrite zero voxels from the original segmentation.
-            final_vol = np.where(final_vol, final_vol, orig_brick.volume)
-            
-            orig_brick.compress()
-            cc_brick.compress()
+                orig_brick.compress()
+                cc_brick.compress()
             
             final_brick = Brick( orig_brick.logical_box,
                                  orig_brick.physical_box,
                                  final_vol,
                                  location_id=orig_brick.location_id,
                                  compression=orig_brick.compression )
-            return final_brick        
+            return final_brick
 
         collect_stats = options["compute-block-statistics"]
 
@@ -445,8 +496,7 @@ class ConnectedComponents(Workflow):
 
 
         with Timer("Relabeling bricks and writing to output", logger):
-            final_bricks = (bag_zip(input_wall.bricks, cc_bricks)
-                            .starmap(remap_cc_to_final, node_df=delayed(node_df)))
+            final_bricks = bricks_ddf.to_bag().starmap(remap_cc_to_final)
             all_stats = final_bricks.map(write_brick).compute()
 
         if collect_stats:
