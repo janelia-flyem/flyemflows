@@ -78,6 +78,11 @@ class ConnectedComponents(Workflow):
                                "Supported formats: .csv and .h5\n",
                 "type": "string",
                 "default": "block-statistics.h5"
+            },
+            "log-relabeled-objects": {
+                "description": "Write relabeled object mapping to CSV.\n",
+                "type": "boolean",
+                "default": False
             }
         }
     }
@@ -386,11 +391,14 @@ class ConnectedComponents(Workflow):
         
         with Timer("Writing node_df_final.pkl", logger):
             pickle.dump(node_df, open('node_df_final.pkl', 'wb'))
-       
-        with Timer("Writing relabeled-objects.csv", logger):
-            csv_df = node_df[['final_cc', 'orig']].rename(columns={'final_cc': 'final_label', 'orig': 'orig_label'}, copy=False).drop_duplicates()
-            csv_df.to_csv('relabeled-objects.csv', index=False, header=True)
 
+        if options["log-relabeled-objects"]:
+            # This is mostly for convenient unit testing
+            with Timer("Writing relabeled-objects.csv", logger):
+                columns = {'final_cc': 'final_label', 'orig': 'orig_label'}
+                csv_df = node_df[['final_cc', 'orig']].rename(columns=columns, copy=False).drop_duplicates()
+                csv_df.to_csv('relabeled-objects.csv', index=False, header=True)
+       
         # The final mapping (node_df) might be too large to broadcast to all workers entirely.
         # We need to send only the relevant portion to each brick.
         

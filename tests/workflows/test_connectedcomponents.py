@@ -20,6 +20,12 @@ from neuclease.dvid import create_labelmap_instance, post_labelmap_voxels, fetch
 # Overridden below when running from __main__
 CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'local-cluster')
 
+#
+# TODO:
+# 
+#  - Test with empty blocks
+#  - Test with dvid roi
+#  - 
 
 @pytest.fixture
 def setup_connectedcomponents_hdf5_zarr():
@@ -73,7 +79,8 @@ def setup_connectedcomponents_hdf5_zarr():
         },
         
         "connectedcomponents": {
-            "halo": 1
+            "halo": 1,
+            "log-relabeled-objects": True
         }
     }
 
@@ -292,6 +299,7 @@ def setup_connectedcomponents_dvid(setup_dvid_repo):
           halo: 1
           subset-labels: [1,2,4] # Not 3
           compute-block-statistics: true
+          log-relabeled-objects: true
     """)
  
     template_dir = tempfile.mkdtemp(suffix="connectedcomponents-template")
