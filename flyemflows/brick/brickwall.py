@@ -334,10 +334,34 @@ class BrickWall:
         return BrickWall( new_bounding_box, new_grid, new_bricks, self.num_bricks )
 
     @classmethod
-    def bricks_as_ddf(cls, bricks, logical=True, physical=False, names='short'):
+    def bricks_as_ddf(cls, bricks, logical=True, physical=False, names='short', set_index=False, wall_box=None, wall_grid=None):
         """
         Return given dask Bag of bricks as a dask DataFrame,
         with columns for the logical and physical boxes.
+        
+        Args:
+            bricks:
+                A dask.Bag of bricks
+            logical:
+                If True, include columns for the logical box coordinates
+            physical:
+                If True, include columns for the physical box coordinates
+            names:
+                How to name the columns. Must be 'short' or 'long'.
+                See LB_COLS and LB_SHORT_COLS
+            set_index:
+                If True, add an index to the DataFrame, which corresponds to
+                the scan-order index of each brick's logical box.
+                You must provide wall_box and wall_grid.
+            wall_box:
+                The overall bounding box of the brick set
+                Used to compute the index.
+            wall_grid:
+                The Grid on which these bricks are laid out.
+                Used to compute the index.
+        
+        Returns:
+            dask.dataframe.DataFrame
         """
         cols = []
 
@@ -358,14 +382,33 @@ class BrickWall:
             bounds = []
             if logical:
                 bounds += list(brick.logical_box.flat)
+            
             if physical:
                 bounds += list(brick.physical_box.flat)
-            return (*bounds, brick)
+
+            if set_index:
+                brick_index = cls.compute_brick_index(brick)
+                return (brick_index, *bounds, brick)
+            else:
+                return (*bounds, brick)
         
-        dtypes = {col: np.int32 for col in cols}
+        brick_table = bricks.map(boxes_and_brick)
+        dtypes = {}
+        if set_index:
+            brick_table = brick_table.persist()
+            # Figure out if the index is already sorted.
+            brick_indexes = brick_table.pluck(0).compute()
+            is_sorted = (brick_indexes == sorted(brick_indexes))
+            dtypes['brick_index'] = np.int32
+        
+        dtypes.update({col: np.int32 for col in cols})
         dtypes['brick'] = object
-        bricks_df = bricks.map(boxes_and_brick).to_dataframe(dtypes)
-        return bricks_df
+        bricks_ddf = brick_table.to_dataframe(dtypes)
+
+        if set_index:
+            bricks_ddf = bricks_ddf.set_index('brick_index', sorted=is_sorted)
+
+        return bricks_ddf
 
 
     @classmethod

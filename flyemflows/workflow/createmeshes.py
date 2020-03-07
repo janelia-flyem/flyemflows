@@ -873,6 +873,8 @@ class CreateMeshes(Workflow):
 
 
     def _distribute_counts(self, batch_index, bricks_ddf, brick_counts_df):
+        # FIXME: If we set an index when calling bricks_as_ddf,
+        #        then this merge could be on the index (faster).
         with Timer(f"Batch {batch_index:02}: Distributing counts", logger):
             brick_counts_grouped_df = (brick_counts_df
                                         .groupby(['lz0', 'ly0', 'lx0'])[['sv', 'sv_size', 'body', 'body_size']]
