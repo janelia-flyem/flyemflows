@@ -104,6 +104,70 @@ class ConnectedComponents(Workflow):
         return ConnectedComponents.Schema
 
     def execute(self):
+        """
+        Computes connected components across an entire volume,
+        possibly considering only a subset of all labels,
+        and writes the result to another volume.
+        
+        (Even if only some labels were analyzed for CC, all labels are written to the output.)
+        
+        Objects that were not "disconnected" in the first place are not modified.
+        Their voxels retain their original values and they are simply copied to
+        the output.  Only objects which consist of multiple disconnected pieces
+        are given new label values.
+        
+        Procedure Overview:
+
+        1. Accepts any segmentation volume as input, divided into
+           'bricks' as usual, but with a halo of at least 1 voxel.
+        
+        2. Computes connected components (CC) on each brick independently.
+           Note: Before computing the CC, the "subset-labels" setting is used to
+           mask out everything except the desired objects.
+           Note that the resulting CC labels for each brick are not unique -- each
+           brick has values of 1..cc_max.
+           Also, the original label from which each CC label was created is stored in
+           the "overlap mapping" (dataframe for each brick with columns: ['cc', 'orig']).
+           The CC volume, overlap mapping, cc_max, and raw data max
+           for each brick are cached (persisted).
+        
+        3. The CC values are made unique across all bricks by adding an offset to each brick.
+           The offset is determined by multiplying the brick's ID number (scan-order index)
+           with the maximum CC value found in all the brick CC volumes.
+           Note: This means that the CC values will be unique, but not consecutive across all bricks.
+           The overlap mapping (cc->orig) is also updated accordingly.
+        
+        4. Next, we need to unify objects which span across brick boundaries.
+           First, the halos from each brick are extracted
+           and matched with the halos from their neighboring bricks.
+           This is achieved via a dask DataFrame merge.
+           Then these halo pairs are aligned so that the CC label in the "left" halo can
+           be matched with the CC label in the "right" halo.
+           These pairings "link" the CC objects in one brick to another brick,
+           and are referred to as "pairwise links".
+        
+        5. These links form the edges of a graph, and the connected components *on the graph*
+           determine which CC labels should be unified in the output.
+           Note that here, we are referring to a graph-CC, not to be confused with the
+           connected components operation we ran in the volume data, earlier.
+           This graph-CC operation yields a "final mapping" from brick-CC labels to unified
+           label values.
+           Note: Since we are not interested in relabeling objects that weren't
+           discontiguous in the original volume, we drop rows of the mapping for objects whose
+           'orig' value only appears once in the final mapping.  This reduces the size of the
+           mapping, which must be sent to the workers.  In fact, before we even run the graph-CC
+           operation, we drop CC values if their original label doesn't appear more than once in
+           the overlap mapping from above. This reduces the size of the graph-CC problem.
+        
+        6. The final mapping is distrbuted to all workers in pieces, via pandas DataFrame merge.
+        
+        7. The final mapping is applied to the CC bricks, and written to the output.
+           If the "subset-labels" option was used, the CC brick may consist of zeros for those
+           voxels that did not contain a label of interest (see step 1, above).  But the output
+           is guaranteed to contain all of the original objects, so the original volume is
+           used to supply the remaining data before it is written to the output.
+           
+        """
         # TODO:
         #
         #  - Refactor this super-long function.
