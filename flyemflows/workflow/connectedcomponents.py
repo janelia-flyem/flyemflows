@@ -440,16 +440,20 @@ class ConnectedComponents(Workflow):
             dtypes = {'brick_index': np.int32, 'orig_brick': object, 'cc_brick': object}
             bricks_ddf = (bag_zip(input_wall.bricks, cc_bricks)
                             .starmap(coords_and_bricks)
-                            .to_dataframe(dtypes)
-                            .persist())
+                            .to_dataframe(dtypes))
     
-            bi = bricks_ddf['brick_index'].compute().tolist()
-            assert bi == sorted(bi)
+            #bricks_ddf = bricks_ddf.persist()
+            #bi = ['brick_index'].compute().tolist()
+            #assert bi == sorted(bi)
     
             bricks_ddf = bricks_ddf.set_index('brick_index', sorted=True)
     
             # This merge associates each brick's part of the mapping with the correct row of bricks_ddf 
             bricks_ddf = bricks_ddf.merge(grouped_mapping_ddf, 'left', left_index=True, right_index=True)
+            
+            # We're done with these.
+            del cc_bricks
+            del input_wall
 
         def remap_cc_to_final(orig_brick, cc_brick, wrapped_brick_mapping_df):
             """
@@ -513,6 +517,7 @@ class ConnectedComponents(Workflow):
 
         with Timer("Relabeling bricks and writing to output", logger):
             final_bricks = bricks_ddf.to_bag().starmap(remap_cc_to_final)
+            del bricks_ddf
             all_stats = final_bricks.map(write_brick).compute()
 
         if collect_stats:
