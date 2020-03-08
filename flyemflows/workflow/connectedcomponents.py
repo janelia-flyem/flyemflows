@@ -149,29 +149,38 @@ class ConnectedComponents(Workflow):
         
         def brick_cc(brick):
             orig_vol = brick.volume
-            orig_max = orig_vol.max()
             brick.compress()
+
+            # Track the original max so we know what the first
+            # available label is when we write the final results.
+            orig_max = orig_vol.max()
             
             if subset_labels:
                 orig_vol = apply_mask_for_labels(orig_vol, subset_labels)
             
-            cc_vol = skm.label(orig_vol, background=0, connectivity=1)
-            assert cc_vol.dtype == np.int64
-            cc_vol = cc_vol.view(np.uint64)
-            
-            # Leave 0-pixels alone.
-            cc_vol[orig_vol == 0] = np.uint64(0)
-            
-            # Keep track of which original values each cc corresponds to.
-            cc_overlaps = pd.DataFrame({'orig': orig_vol.reshape(-1), 'cc': cc_vol.reshape(-1)})
-            cc_overlaps.query('orig != 0 and cc != 0', inplace=True)
-            cc_overlaps = cc_overlaps.drop_duplicates()
-            assert (cc_overlaps.dtypes == np.uint64).all()
-
-            if len(cc_overlaps) > 0:
-                cc_max = cc_overlaps['cc'].max()
-            else:
+            # Fast path for all-zero bricks
+            if not orig_vol.any():
+                cc_vol = orig_vol
+                cc_overlaps = pd.DataFrame({'orig': [], 'cc': []}, dtype=np.uint64)
                 cc_max = np.uint64(0)
+            else:
+                cc_vol = skm.label(orig_vol, background=0, connectivity=1)
+                assert cc_vol.dtype == np.int64
+                cc_vol = cc_vol.view(np.uint64)
+                
+                # Leave 0-pixels alone.
+                cc_vol[orig_vol == 0] = np.uint64(0)
+                
+                # Keep track of which original values each cc corresponds to.
+                cc_overlaps = pd.DataFrame({'orig': orig_vol.reshape(-1), 'cc': cc_vol.reshape(-1)})
+                cc_overlaps.query('orig != 0 and cc != 0', inplace=True)
+                cc_overlaps = cc_overlaps.drop_duplicates()
+                assert (cc_overlaps.dtypes == np.uint64).all()
+    
+                if len(cc_overlaps) > 0:
+                    cc_max = cc_overlaps['cc'].max()
+                else:
+                    cc_max = np.uint64(0)
             
             cc_brick = Brick( brick.logical_box,
                               brick.physical_box,
