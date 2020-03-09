@@ -1,5 +1,6 @@
 from .base.workflow import Workflow
 from .connectedcomponents import ConnectedComponents
+from .contingencytable import ContingencyTable
 from .copygrayscale import CopyGrayscale
 from .createmeshes import CreateMeshes
 from .copysegmentation import CopySegmentation
@@ -17,6 +18,7 @@ from .stitchedmeshes import StitchedMeshes
 BUILTIN_WORKFLOWS = [
     Workflow, # Base class, used for unit testing only
     ConnectedComponents,
+    ContingencyTable,
     CopyGrayscale,
     CopySegmentation,
     DecimateMeshes,
