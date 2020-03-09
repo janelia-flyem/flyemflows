@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import logging
 from functools import partial
@@ -98,6 +99,10 @@ class Brick:
         if (self.logical_box == self.physical_box).all():
             return f"logical & physical: {self.logical_box.tolist()}"
         return f"logical: {self.logical_box.tolist()}, physical: {self.physical_box.tolist()}"
+
+
+    def __sizeof__(self):
+        return super().__sizeof__() + sum(sys.getsizeof(v) for v in vars(self))
 
 
     @property

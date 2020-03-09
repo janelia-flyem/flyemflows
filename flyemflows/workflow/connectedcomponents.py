@@ -1,4 +1,5 @@
 import os
+import sys
 import copy
 import pickle
 import logging
@@ -504,6 +505,9 @@ class ConnectedComponents(Workflow):
                 result."""
                 def __init__(self, df):
                     self.df = df.copy()
+
+                def __sizeof__(self):
+                    return super().__sizeof__() + sys.getsizeof(self.df)
             
             with Timer("Grouping final CC mapping by brick", logger):
                 grouped_mapping_df = (node_df[['lz0', 'ly0', 'lx0', 'cc', 'final_cc']]

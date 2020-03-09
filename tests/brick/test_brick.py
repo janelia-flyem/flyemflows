@@ -1,3 +1,4 @@
+import sys
 import pickle
 from itertools import chain
 from functools import partial
@@ -49,6 +50,9 @@ def test_generate_bricks():
         
         # Volume data must match
         assert (brick.volume == extract_subvol( volume, brick.physical_box )).all()
+
+        # __sizeof__ must include the volume
+        assert sys.getsizeof(brick) > sys.getsizeof(brick.volume)
 
 
 def test_split_brick():
