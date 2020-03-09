@@ -137,10 +137,9 @@ class ConnectedComponents(Workflow):
            Note: This means that the CC values will be unique, but not consecutive across all bricks.
            The overlap mapping (cc->orig) is also updated accordingly.
         
-        4. Next, we need to unify objects which span across brick boundaries.
-           First, the halos from each brick are extracted
-           and matched with the halos from their neighboring bricks.
-           This is achieved via a dask DataFrame merge.
+        4. Next, we need to determine how to unify objects which span across brick boundaries.
+           First, the halos from each brick are extracted and matched with the halos from 
+           their neighboring bricks. This is achieved via a dask DataFrame merge.
            Then these halo pairs are aligned so that the CC label in the "left" halo can
            be matched with the CC label in the "right" halo.
            These pairings "link" the CC objects in one brick to another brick,
@@ -149,7 +148,7 @@ class ConnectedComponents(Workflow):
         5. These links form the edges of a graph, and the connected components *on the graph*
            determine which CC labels should be unified in the output.
            Note that here, we are referring to a graph-CC, not to be confused with the
-           connected components operation we ran in the volume data, earlier.
+           connected components operations we ran earlier, on each brick's volume data.
            This graph-CC operation yields a "final mapping" from brick-CC labels to unified
            label values.
            Note: Since we are not interested in relabeling objects that weren't
@@ -164,8 +163,8 @@ class ConnectedComponents(Workflow):
         7. The final mapping is applied to the CC bricks, and written to the output.
            If the "subset-labels" option was used, the CC brick may consist of zeros for those
            voxels that did not contain a label of interest (see step 1, above).  But the output
-           is guaranteed to contain all of the original objects, so the original volume is
-           used to supply the remaining data before it is written to the output.
+           is guaranteed to contain all of the unsplit original objects, so we use the original
+           volume to supply the remaining data before it is written to the output.
            
         """
         # TODO:
@@ -472,38 +471,12 @@ class ConnectedComponents(Workflow):
                 csv_df = node_df[['final_cc', 'orig']].rename(columns=columns, copy=False).drop_duplicates()
                 csv_df.to_csv('relabeled-objects.csv', index=False, header=True)
        
-        # The final mapping (node_df) might be too large to broadcast to all workers entirely.
-        # We need to send only the relevant portion to each brick.
-        
-        class WrappedDf:
-            """
-            Trivial wrapper to allow us to store an entire
-            DataFrame in every row of the following groupby()
-            result."""
-            def __init__(self, df):
-                self.df = df.copy()
-        
-        with Timer("Grouping final CC mapping by brick", logger):
-            grouped_mapping_df = (node_df[['lz0', 'ly0', 'lx0', 'cc', 'final_cc']]
-                                    .groupby(['lz0', 'ly0', 'lx0'])
-                                    .apply(WrappedDf)
-                                    .rename('wrapped_brick_mapping_df')
-                                    .reset_index())
-
-        wall_box = input_wall.bounding_box
-        wall_grid = input_wall.grid
-
-        # We will need to merge according to brick location.
-        # We could do that on [lz0,ly0,lx0], but a single-column merge will be faster,
-        # so compute the brick_indexes and use that.
-        brick_corners = grouped_mapping_df[['lz0', 'ly0', 'lx0']].values
-        grouped_mapping_df['brick_index'] = BrickWall.compute_brick_indexes(brick_corners, wall_box, wall_grid)
-        grouped_mapping_df = grouped_mapping_df.set_index('brick_index')[['wrapped_brick_mapping_df']]
-        grouped_mapping_ddf = ddf.from_pandas(grouped_mapping_df, name='grouped_mapping', npartitions=input_wall.bricks.npartitions)
-
         #
         # Construct a Dask Dataframe holding the bricks we need to write.
         #
+        wall_box = input_wall.bounding_box
+        wall_grid = input_wall.grid
+
         with Timer("Preparing brick DataFrame", logging):
             def coords_and_bricks(orig_brick, cc_brick):
                 assert (orig_brick.logical_box == cc_brick.logical_box).all()
@@ -520,7 +493,36 @@ class ConnectedComponents(Workflow):
             #assert bi == sorted(bi)
     
             bricks_ddf = bricks_ddf.set_index('brick_index', sorted=True)
+
+        # The final mapping (node_df) might be too large to broadcast to all workers entirely.
+        # We need to send only the relevant portion to each brick.
+        with Timer("Preparing final mapping DataFrame", logger):
+            class WrappedDf:
+                """
+                Trivial wrapper to allow us to store an entire
+                DataFrame in every row of the following groupby()
+                result."""
+                def __init__(self, df):
+                    self.df = df.copy()
+            
+            with Timer("Grouping final CC mapping by brick", logger):
+                grouped_mapping_df = (node_df[['lz0', 'ly0', 'lx0', 'cc', 'final_cc']]
+                                        .groupby(['lz0', 'ly0', 'lx0'])
+                                        .apply(WrappedDf)
+                                        .rename('wrapped_brick_mapping_df')
+                                        .reset_index())
     
+            # We will need to merge according to brick location.
+            # We could do that on [lz0,ly0,lx0], but a single-column merge will be faster,
+            # so compute the brick_indexes and use that.
+            brick_corners = grouped_mapping_df[['lz0', 'ly0', 'lx0']].values
+            grouped_mapping_df['brick_index'] = BrickWall.compute_brick_indexes(brick_corners, wall_box, wall_grid)
+            grouped_mapping_df = grouped_mapping_df.set_index('brick_index')[['wrapped_brick_mapping_df']]
+            grouped_mapping_ddf = ddf.from_pandas(grouped_mapping_df, name='grouped_mapping', npartitions=input_wall.bricks.npartitions)
+            grouped_mapping_ddf = grouped_mapping_ddf.repartition(bricks_ddf.divisions)
+            assert None not in grouped_mapping_ddf.divisions
+
+        with Timer("Joining mapping and bricks", logger):
             # This merge associates each brick's part of the mapping with the correct row of bricks_ddf 
             bricks_ddf = bricks_ddf.merge(grouped_mapping_ddf, 'left', left_index=True, right_index=True)
             
