@@ -56,7 +56,7 @@ def replace_default_entries(array, default_array, marker=-1):
     else:
         raise RuntimeError("This function supports arrays and lists, nothing else.")
 
-DOWNSAMPLE_METHODS = ('subsample', 'zoom', 'grayscale', 'block-mean', 'mode', 'labels', 'label', 'labels-numba')
+DOWNSAMPLE_METHODS = ['subsample', 'zoom', 'grayscale', 'block-mean', 'mode', 'labels', 'label', 'labels-numba']
 def downsample(volume, factor, method):
     assert method in DOWNSAMPLE_METHODS
     assert (np.array(volume.shape) % factor == 0).all(), \

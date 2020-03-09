@@ -16,7 +16,7 @@ from neuclease.dvid.rle import runlength_encode_to_ranges
 
 from dvid_resource_manager.client import ResourceManagerClient
 
-from ..util import replace_default_entries, COMPRESSION_METHODS
+from ..util import replace_default_entries, COMPRESSION_METHODS, DOWNSAMPLE_METHODS
 from ..brick import BrickWall
 from ..volumes import ( VolumeService, VolumeServiceWriter, SegmentationVolumeSchema,
                                  DvidSegmentationVolumeSchema, TransposedVolumeService, ScaledVolumeService,
@@ -102,6 +102,15 @@ class CopySegmentation(Workflow):
                                "Will not work unless you add the 'available-scales' setting to the input service's geometry config.",
                 "type": "boolean",
                 "default": False
+            },
+            "downsample-method": {
+                "description": "Which downsampling method to use for label volume downsampling.\n",
+                "type": "string",
+                "enum": DOWNSAMPLE_METHODS,
+                # FIXME: This not the fastest method, but the fastest method was
+                #        observed to segfault in one conda environment.
+                #        Need to investigate!
+                "default": "labels-numba"
             },
             "brick-compression": {
                 "description": "Internally, downloaded bricks will be stored in a compressed format.\n"
@@ -598,11 +607,7 @@ class CopySegmentation(Workflow):
                 downsampled_wall.persist_and_execute(f"Slab {slab_index}: Scale {new_scale}: Downloading pre-downsampled bricks", logger)
             else:
                 # Compute downsampled (results in smaller bricks)
-
-                ## FIXME: Our C++ method for downsampling ('labels')
-                ##        seems to have a bad build at the moment (it segfaults and/or produces zeros)
-                ##        For now, we use the 'labels-numba' method
-                downsampled_wall = padded_wall.downsample( (2,2,2), method='labels-numba' )
+                downsampled_wall = padded_wall.downsample( (2,2,2), method=options["downsample-method"] )
                 downsampled_wall.persist_and_execute(f"Slab {slab_index}: Scale {new_scale}: Downsampling", logger)
                 del padded_wall
 
