@@ -171,6 +171,6 @@ class ContingencyTable(Workflow):
             # Aim for 0.5 GB RDD partitions when loading segmentation
             GB = 2**30
             target_partition_size_voxels = int(0.5 * GB / np.uint64().nbytes)
-            brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.client, target_partition_size_voxels, 0, sbm, compression=None)
+            brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.client, target_partition_size_voxels, 0, sbm, lazy=True, compression=None)
 
         return brickwall, sbm
