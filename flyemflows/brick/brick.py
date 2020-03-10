@@ -291,20 +291,19 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
     boxes_bag.compute()
 
     total_volume = sum(map(brick_size, logical_and_physical_boxes))
-    logger.info(f"Initializing RDD of {num_bricks} Bricks "
+    logger.info(f"Initializing bag of {num_bricks} Bricks "
                 f"(over {boxes_bag.npartitions} partitions) with total volume {total_volume/1e9:.1f} Gvox ")
                 #f"(scatter took {scatter_timer.timedelta})")
 
-    if not isinstance(client, DebugClient):
+    if not isinstance(client, DebugClient) and os.environ.get("DEBUG_FLOW", "0") != "0":
         def worker_address(part):
             from distributed import get_worker
             return [(get_worker().address, len(part))]
-    
+
         workers_and_lens = boxes_bag.map_partitions(worker_address).compute()
-        if os.environ.get("DEBUG_FLOW", "0") != "0":
-                logger.info("Workers and assigned partition lengths:")
-                for worker, length in sorted(workers_and_lens):
-                    logger.info(f"{worker}: {length}")
+        logger.info("Workers and assigned partition lengths:")
+        for worker, length in sorted(workers_and_lens):
+            logger.info(f"{worker}: {length}")
 
     def make_brick( logical_and_physical_box ):
         logical_box, physical_box = logical_and_physical_box
