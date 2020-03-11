@@ -98,11 +98,18 @@ class ContingencyTable(Workflow):
             return table.reset_index()
 
         batch_tables = []
-        for batch_index, batch_boxes in enumerate(iter_batches(boxes, options["batch-size"])):
+        batches = iter_batches(boxes, options["batch-size"])
+        logger.info(f"Computing contingency tables for {len(boxes)} bricks in total.")
+        logger.info(f"Processing {len(batches)} batches of {options['batch-size']} bricks each.")
+
+        for batch_index, batch_boxes in enumerate(batches):
             with Timer(f"Batch {batch_index}: Computing tables", logger):
-                tables = db.from_sequence(batch_boxes).map(_contingency_table).compute()
+                # Aim for 4 partitions per worker
+                total_cores = sum( self.client.ncores().values() )
+                tables = (db.from_sequence(batch_boxes, npartitions=4*total_cores)
+                            .map(_contingency_table)
+                            .compute())
             
-            with Timer(f"Batch {batch_index}: Combining tables", logger):
                 table = pd.concat(tables, ignore_index=True).sort_values(['left', 'right']).reset_index(drop=True)
                 table = table.groupby(['left', 'right'], as_index=False, sort=False)['voxel_count'].sum()
 
