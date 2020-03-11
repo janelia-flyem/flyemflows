@@ -1,16 +1,14 @@
 import copy
-import pickle
 import logging
 
 import numpy as np
 import pandas as pd
-from dask.bag import zip as bag_zip
+import dask.bag as db
 
 from dvid_resource_manager.client import ResourceManagerClient
-from neuclease.util import Timer, contingency_table, round_box, SparseBlockMask
+from neuclease.util import Timer, contingency_table, round_box, SparseBlockMask, boxes_from_grid, iter_batches
 from neuclease.dvid import fetch_roi
 
-from ..brick import BrickWall
 from ..volumes import VolumeService, SegmentationVolumeSchema, DvidVolumeService, ScaledVolumeService
 from .util.config_helpers import BodyListSchema, load_body_list
 from . import Workflow
@@ -44,6 +42,12 @@ class ContingencyTable(Workflow):
                                "Just fetch the entire bounding-box.\n",
                 "type": "boolean",
                 "default": False
+            },
+            "batch-size": {
+                "description": "Brick-wise contingency tables will be computed in batches.\n"
+                               "This setting specifies the number of bricks in each batch.\n",
+                "type": "integer",
+                "default": "1000"
             }
         }
     }
@@ -77,29 +81,39 @@ class ContingencyTable(Workflow):
         if isinstance(left_service.base_service, DvidVolumeService):
             left_is_supervoxels = left_service.base_service.supervoxels
 
+        left_roi = options["left-roi"]
         left_subset_labels = load_body_list(options["left-subset-labels"], left_is_supervoxels)
         left_subset_labels = set(left_subset_labels)
-        
         sparse_fetch = not options["skip-sparse-fetch"]
-        left_roi = options["left-roi"]
-        left_wall, sbm = self.init_brickwall(left_service, sparse_fetch and left_subset_labels, left_roi, None)
-        right_wall, _sbm = self.init_brickwall(right_service, None, None, sbm)
+        
+        # Boxes are determined by the left volume/labels/roi
+        boxes = self.init_boxes( left_service,
+                                 sparse_fetch and left_subset_labels,
+                                 left_roi )
 
-        def _contingency_table(left_brick, right_brick):
-            table = contingency_table(left_brick.volume, right_brick.volume)
-            left_brick.destroy()
-            right_brick.destroy()
+        def _contingency_table(box):
+            left_vol = left_service.get_subvolume(box)
+            right_vol = right_service.get_subvolume(box)
+            table = contingency_table(left_vol, right_vol)
             return table.reset_index()
 
-        with Timer("Computing brick contingency tables", logger):
-            tables = bag_zip(left_wall.bricks, right_wall.bricks).starmap(_contingency_table).compute()
+        batch_tables = []
+        for batch_index, batch_boxes in enumerate(iter_batches(boxes, options["batch-size"])):
+            with Timer(f"Batch {batch_index}: Computing tables", logger):
+                tables = db.from_sequence(batch_boxes).map(_contingency_table).compute()
+            
+            with Timer(f"Batch {batch_index}: Combining tables", logger):
+                table = pd.concat(tables, ignore_index=True).sort_values(['left', 'right']).reset_index(drop=True)
+                table = table.groupby(['left', 'right'], as_index=False, sort=False)['voxel_count'].sum()
 
-        with Timer("Combining brick contingency tables", logger):
-            table = pd.concat(tables, ignore_index=True).sort_values(['left', 'right']).reset_index(drop=True)
-            table = table.groupby(['left', 'right'], as_index=False, sort=False)['voxel_count'].sum()
+            batch_tables.append(table)
 
-        with Timer("Writing contingency_table.pkl", logger):
-            pickle.dump(table, open('contingency_table.pkl', 'wb'))
+        with Timer("Constructing final table", logger):
+            final_table = pd.concat(batch_tables, ignore_index=True).sort_values(['left', 'right']).reset_index(drop=True)
+            final_table = final_table.groupby(['left', 'right'], as_index=False, sort=False)['voxel_count'].sum()
+
+        with Timer("Writing contingency_table.npy", logger):
+            np.save('contingency_table.npy', final_table.to_records(index=False))
         
 
     def init_services(self):
@@ -124,10 +138,9 @@ class ContingencyTable(Workflow):
             raise RuntimeError("Your left and right input volumes must use the same message-block-shape.")
 
 
-    def init_brickwall(self, volume_service, subset_labels, roi, sbm):
-        if sbm:
-            pass
-        elif roi:
+    def init_boxes(self, volume_service, subset_labels, roi):
+        sbm = None
+        if roi:
             base_service = volume_service.base_service
             assert isinstance(base_service, DvidVolumeService), \
                 "Can't specify an ROI unless you're using a dvid input"
@@ -156,7 +169,6 @@ class ContingencyTable(Workflow):
 
             # SBM 'full-res' corresponds to the input service voxels, not necessarily scale-0.
             sbm = SparseBlockMask.create_from_highres_mask(roi_mask_s5, 2**(5-scale), seg_box, brick_shape)
-
         elif subset_labels:
             try:
                 sbm = volume_service.sparse_block_mask_for_labels([*subset_labels])
@@ -164,13 +176,11 @@ class ContingencyTable(Workflow):
                     raise RuntimeError("Could not find sparse masks for any of the subset-labels")
             except NotImplementedError:
                 sbm = None
+
+        if sbm is None:
+            boxes = boxes_from_grid(volume_service.bounding_box_zyx,
+                                    volume_service.preferred_message_shape,
+                                    clipped=True)
+            return np.array([*boxes])
         else:
-            sbm = None
-
-        with Timer("Initializing BrickWall", logger):
-            # Aim for 0.5 GB RDD partitions when loading segmentation
-            GB = 2**30
-            target_partition_size_voxels = int(0.5 * GB / np.uint64().nbytes)
-            brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.client, target_partition_size_voxels, 0, sbm, lazy=True, compression=None)
-
-        return brickwall, sbm
+            return sbm.sparse_boxes(brick_shape)

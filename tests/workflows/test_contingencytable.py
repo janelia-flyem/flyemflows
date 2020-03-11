@@ -9,6 +9,7 @@ from ruamel.yaml import YAML
 
 import h5py
 import numpy as np
+import pandas as pd
 
 from neuclease.util import  contingency_table
 
@@ -53,6 +54,9 @@ def setup_hdf5_inputs():
           
           geometry:
             message-block-shape: [256,64,64]
+        
+        contingencytable:
+          batch-size: 4
     """)
 
     with open(f"{template_dir}/workflow.yaml", 'w') as f:
@@ -67,14 +71,11 @@ def setup_hdf5_inputs():
 
 def test_contingencytable(setup_hdf5_inputs):
     template_dir, _config, left_vol, right_vol = setup_hdf5_inputs
-    
     expected_table = contingency_table(left_vol, right_vol).reset_index()
 
     execution_dir, _workflow = launch_flow(template_dir, 1)
     
-    with open(f"{execution_dir}/contingency_table.pkl", 'rb') as f:
-        output_table = pickle.load(f)
-
+    output_table = pd.DataFrame(np.load(f"{execution_dir}/contingency_table.npy"))
     assert (output_table == expected_table).all().all()
 
 
