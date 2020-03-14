@@ -1,0 +1,258 @@
+import os
+import pickle
+import tempfile
+import textwrap
+from io import StringIO
+
+import pytest
+from ruamel.yaml import YAML
+
+import numpy as np
+import pandas as pd
+from scipy.ndimage import distance_transform_edt
+
+from neuclease.util import box_union, box_to_slicing
+from neuclease.dvid import create_labelmap_instance, create_tarsupervoxel_instance, post_labelmap_voxels, post_load, post_merge
+
+from vol2mesh import Mesh
+
+from flyemflows.bin.launchflow import launch_flow
+
+yaml = YAML()
+yaml.default_flow_style = False
+
+# Overridden below when running from __main__
+CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'local-cluster')
+
+
+def create_test_object(height=128, radius=10):
+    """
+    Create a test object (shaped like an 'X')
+    with overall height (and width and depth) determined by 'height',
+    and whose "arm" thickness is determined by the given radius.
+    """
+    center_line_img = np.zeros((height,height,height), dtype=np.uint32)
+    for i in range(height):
+        center_line_img[i, i, i] = 1
+        center_line_img[height-1-i, i, i] = 1
+    
+    # Scipy distance_transform_edt conventions are opposite of vigra:
+    # it calculates distances of non-zero pixels to the zero pixels.
+    center_line_img = 1 - center_line_img
+    distance_to_line = distance_transform_edt(center_line_img)
+    binary_vol = (distance_to_line <= radius).astype(np.uint8)
+    return binary_vol
+
+
+def create_test_segmentation():
+    if os.environ.get('TRAVIS', '') == 'true':
+        # On Travis-CI, store this test data in a place that gets cached.
+        d = '/home/travis/miniconda/test-data'
+    else:
+        d = '/tmp'
+
+    vol_path = f'{d}/test-decimatemeshes-segmentation.npy'
+    boxes_path = f'{d}/test-decimatemeshes-boxes.pkl'
+    sizes_path = f'{d}/test-decimatemeshes-sizes.pkl'
+    if os.path.exists(vol_path):
+        test_volume = np.load(vol_path)
+        object_boxes = pickle.load(open(boxes_path, 'rb'))
+        object_sizes = pickle.load(open(sizes_path, 'rb'))
+        return test_volume, object_boxes, object_sizes
+
+    test_volume = np.zeros((256, 256, 256), np.uint64)
+
+    def place_test_object(label, corner, height):
+        corner = np.array(corner)
+        object_vol = create_test_object(height).astype(np.uint64)
+        object_vol *= label
+        object_box = np.array([corner, corner + object_vol.shape])
+        
+        testvol_view = test_volume[box_to_slicing(*object_box)]
+        testvol_view[:] = np.where(object_vol, object_vol, testvol_view)
+        return object_box, (object_vol != 0).sum()
+
+    # Place four text objects
+    object_boxes = {}
+    object_sizes = {}
+    labels = [100,200,300]
+    corners = [(10,10,10), (10, 60, 10), (10, 110, 10)]
+    heights = (200, 150, 50)
+    for label, corner, height in zip(labels, corners, heights):
+        box, num_voxels = place_test_object(label, corner, height)
+        object_boxes[label] = box
+        object_sizes[label] = int(num_voxels)
+
+    np.save(vol_path, test_volume) # Cache for next pytest run
+    pickle.dump(object_boxes, open(boxes_path, 'wb'))
+    pickle.dump(object_sizes, open(sizes_path, 'wb'))
+    return test_volume, object_boxes, object_sizes
+
+
+@pytest.fixture(scope='module')
+def setup_tsv_input(setup_dvid_repo):
+    dvid_address, repo_uuid = setup_dvid_repo
+
+    input_segmentation_name = 'segmentation-decimatemeshes-input'
+    test_volume, object_boxes, object_sizes = create_test_segmentation()
+
+    create_labelmap_instance(dvid_address, repo_uuid, input_segmentation_name, max_scale=3)
+    post_labelmap_voxels(dvid_address, repo_uuid, input_segmentation_name, (0,0,0), test_volume, downres=True, noindexing=False)
+
+    tsv_name = 'segmentation-decimatemeshes-tsv'
+    create_tarsupervoxel_instance(dvid_address, repo_uuid, tsv_name, input_segmentation_name, '.drc')
+ 
+    # Post supervoxel meshes
+    meshes = Mesh.from_label_volume(test_volume, progress=False)
+    meshes_data = {f"{label}.drc": mesh.serialize(fmt='drc') for label, mesh in meshes.items()}
+    post_load(dvid_address, repo_uuid, tsv_name, meshes_data)
+    
+    # Merge two of the objects (100 and 300)
+    post_merge(dvid_address, repo_uuid, input_segmentation_name, 100, [300])
+    object_boxes[100] = box_union(object_boxes[100], object_boxes[300])
+    del object_boxes[300]
+    
+    object_sizes[100] += object_sizes[300]
+    del object_sizes[300]
+    
+    meshes[100] = Mesh.concatenate_meshes((meshes[100], meshes[300]))
+    del meshes[300]
+    
+    return dvid_address, repo_uuid, tsv_name, object_boxes, object_sizes, meshes
+
+
+@pytest.fixture
+def setup_decimatemeshes_config(setup_tsv_input, disable_auto_retry):
+    dvid_address, repo_uuid, tsv_name, object_boxes, object_sizes, _meshes = setup_tsv_input
+    template_dir = tempfile.mkdtemp(suffix="decimatemeshes-template")
+
+    config_text = textwrap.dedent(f"""\
+        workflow-name: decimatemeshes
+        cluster-type: {CLUSTER_TYPE}
+
+        input:
+          dvid:
+            server: {dvid_address}
+            uuid: {repo_uuid}
+            tarsupervoxels-instance: {tsv_name}
+ 
+        decimatemeshes:
+          bodies: [100,200]
+          skip-existing: false
+          format: ngmesh
+          decimation: 0.1
+          output-directory: meshes
+    """)
+ 
+    with open(f"{template_dir}/workflow.yaml", 'w') as f:
+        f.write(config_text)
+ 
+    yaml = YAML()
+    with StringIO(config_text) as f:
+        config = yaml.load(f)
+ 
+    return template_dir, config, dvid_address, repo_uuid, object_boxes, object_sizes
+
+
+def check_outputs(execution_dir, object_boxes, subset_labels=None, skipped_labels=[], stats_dir=None, max_vertices=None):
+    """
+    Basic checks to make sure the meshes for the given labels were
+    generated and not terribly wrong.
+    """
+    stats_dir = stats_dir or execution_dir
+    
+    # Check all test objects by default.
+    if subset_labels is None:
+        subset_labels = sorted(object_boxes.keys())
+
+    df = pd.DataFrame( np.load(f'{stats_dir}/mesh-stats.npy', allow_pickle=True) )
+    
+    assert len(df) == (len(subset_labels) + len(skipped_labels))
+    df.set_index('body', inplace=True)
+
+    for label in subset_labels:
+        assert df.loc[label, 'result'] == 'success'
+
+        # Here's where our test meshes ended up:
+        #print(f"{execution_dir}/meshes/{label}.obj")
+        assert os.path.exists(f"{execution_dir}/meshes/{label}.ngmesh")
+
+        # Make sure the mesh vertices appeared in the right place.
+        # (If they weren't rescaled, this won't work.)
+        mesh = Mesh.from_file(f"{execution_dir}/meshes/{label}.ngmesh")
+        assert np.allclose(mesh.vertices_zyx.min(axis=0), object_boxes[label][0], 1)
+        assert np.allclose(mesh.vertices_zyx.max(axis=0), object_boxes[label][1], 1)
+
+        if max_vertices is not None:
+            assert len(mesh.vertices_zyx) <= 1.1*max_vertices
+
+
+def test_decimatemeshes_basic(setup_decimatemeshes_config, disable_auto_retry):
+    template_dir, _config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_decimatemeshes_config
+     
+    execution_dir, _workflow = launch_flow(template_dir, 1)
+    print(execution_dir)
+    check_outputs(execution_dir, object_boxes)
+
+
+def test_decimatemeshes_max_vertices(setup_decimatemeshes_config, disable_auto_retry):
+    template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_decimatemeshes_config
+    max_vertices = 1000
+    config['decimatemeshes']['max-vertices'] = max_vertices
+    YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
+
+    execution_dir, _workflow = launch_flow(template_dir, 1)
+    #print(execution_dir)
+    check_outputs(execution_dir, object_boxes, max_vertices=max_vertices)
+
+
+# def test_decimatemeshes_to_keyvalue(setup_decimatemeshes_config, disable_auto_retry):
+#     template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_decimatemeshes_config
+#      
+#     kv_instance = 'test_decimatemeshes_to_keyvalue'
+#     config['output'] = {'keyvalue':
+#                             {'instance': kv_instance,
+#                              'create-if-necessary': True}}
+#     YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
+# 
+#     _execution_dir, _workflow = launch_flow(template_dir, 1)
+#     
+#     server = config['input']['dvid']['server']
+#     uuid = config['input']['dvid']['uuid']
+#     for sv in [100,200,300]:
+#         mesh_bytes = fetch_key(server, uuid, kv_instance, f'{sv}.obj')
+#         mesh = Mesh.from_buffer(mesh_bytes, fmt='obj')
+#         assert np.allclose(mesh.vertices_zyx.min(axis=0), object_boxes[sv][0], 1)
+#         assert np.allclose(mesh.vertices_zyx.max(axis=0), object_boxes[sv][1], 1)
+
+
+def test_decimatemeshes_skip_existing(setup_decimatemeshes_config, disable_auto_retry):
+    template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_decimatemeshes_config
+    config['decimatemeshes']['skip-existing'] = True
+    YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
+
+    # Create an empty file for mesh 200
+    os.makedirs(f"{template_dir}/meshes")
+    open(f"{template_dir}/meshes/200.ngmesh", 'wb').close()
+    execution_dir, _workflow = launch_flow(template_dir, 1)
+ 
+    # The file should have been left alone (still empty).
+    assert open(f"{execution_dir}/meshes/200.ngmesh", 'rb').read() == b''
+
+    # But other meshes were generated.
+    check_outputs(execution_dir, object_boxes, subset_labels=[100], skipped_labels=[200])
+
+
+if __name__ == "__main__":
+    if 'CLUSTER_TYPE' in os.environ:
+        import warnings
+        warnings.warn("Disregarding CLUSTER_TYPE when running via __main__")
+
+    import flyemflows
+    os.chdir(os.path.dirname(flyemflows.__file__))
+    CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
+    args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_decimatemeshes']
+    args += ['-x']
+    #args += ['-Werror']
+    #args += ['-k', 'decimatemeshes_skip_existing']
+    pytest.main(args)

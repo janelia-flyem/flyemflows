@@ -10,10 +10,11 @@ from requests import HTTPError
 
 from dvid_resource_manager.client import ResourceManagerClient
 
-from neuclease.util import Timer, read_csv_col, read_csv_header
-from neuclease.dvid.tarsupervoxels import fetch_tarfile
+from neuclease.util import Timer
+from neuclease.dvid import resolve_ref, fetch_instance_info, fetch_tarfile, fetch_mutation_id
 from neuclease.bin.decimate_existing_mesh import decimate_existing_mesh
 
+from .util import BodyListSchema, load_body_list
 from . import Workflow
 
 logger = logging.getLogger(__name__)
@@ -30,21 +31,30 @@ class DecimateMeshes(Workflow):
     {
         "description": "Parameters specify a DVID instance",
         "type": "object",
-        "required": ["server", "uuid", "tarsupervoxels-instance"],
     
         "default": {},
+        "required": ["dvid"],
+        "additionalProperties": False,
         "properties": {
-            "server": {
-                "description": "location of DVID server to READ.",
-                "type": "string",
-            },
-            "uuid": {
-                "description": "version node for READING segmentation",
-                "type": "string"
-            },
-            "tarsupervoxels-instance": {
-                "description": "Name of a tarsupervoxels instance",
-                "type": "string"
+            "dvid": {
+                "default": {},
+                "type": "object",
+                "required": ["server", "uuid", "tarsupervoxels-instance"],
+                "additionalProperties": False,
+                "properties": {
+                    "server": {
+                        "description": "location of DVID server to READ.",
+                        "type": "string",
+                    },
+                    "uuid": {
+                        "description": "version node for READING segmentation",
+                        "type": "string"
+                    },
+                    "tarsupervoxels-instance": {
+                        "description": "Name of a tarsupervoxels instance",
+                        "type": "string"
+                    }
+                }
             }
         }
     }
@@ -56,20 +66,7 @@ class DecimateMeshes(Workflow):
         "default": {},
         "additionalProperties": False,
         "properties": {
-            "bodies": {
-                "oneOf": [
-                    {
-                        "description": "A list of body IDs to generate meshes for.",
-                        "type": "array",
-                        "default": []
-                    },
-                    {
-                        "description": "A CSV file containing a single column of body IDs to generate meshes for.",
-                        "type": "string",
-                        "default": ""
-                    }
-                ]
-            },
+            "bodies": BodyListSchema,
             "skip-existing": {
                 "description": "If true, skip any meshes that are already present in the output directory.",
                 "type": "boolean",
@@ -83,7 +80,7 @@ class DecimateMeshes(Workflow):
                          "ngmesh"], # "neuroglancer mesh" format -- a custom binary format.  Note: Data is presumed to be 8nm resolution
                 "default": "obj"
             },
-            "decimation-fraction": {
+            "decimation": {
                 "description": "Mesh decimation aims to reduce the number of \n"
                                "mesh vertices in the mesh to a fraction of the original mesh. \n"
                                "To disable decimation, use 1.0.\n",
@@ -91,6 +88,12 @@ class DecimateMeshes(Workflow):
                 "minimum": 0.0000001,
                 "maximum": 1.0, # 1.0 == disable
                 "default": 0.1                
+            },
+            "max-vertices": {
+                "description": "Ensure that meshes have no more vertices than specified by this setting.\n"
+                               "That is, decrease the decimation fraction if necessary bring the mesh vertex count below this number.\n",
+                "type": "number",
+                "default": 1e9 # very large
             },
             "output-directory": {
                 "description": "Location to write decimated meshes to",
@@ -117,6 +120,10 @@ class DecimateMeshes(Workflow):
         - Check for config mistakes
         - Simple sanity checks
         """
+        # Resolve uuid if necessary (e.g. 'master' -> abc123)        
+        dvid_cfg = self.config["input"]["dvid"]
+        dvid_cfg["uuid"] = resolve_ref(dvid_cfg["server"], dvid_cfg["uuid"])
+        
         # Convert input/output CSV to absolute paths
         options = self.config["decimatemeshes"]
         assert options["bodies"], \
@@ -130,7 +137,7 @@ class DecimateMeshes(Workflow):
     def execute(self):
         self._sanitize_config()
 
-        input_config = self.config["input"]
+        input_config = self.config["input"]["dvid"]
         options = self.config["decimatemeshes"]
         resource_config = self.config["resource-manager"]
         
@@ -139,56 +146,60 @@ class DecimateMeshes(Workflow):
 
         resource_mgr_client = ResourceManagerClient(resource_config["server"], resource_config["port"])
 
-        if isinstance(options["bodies"], str):
-            if 'body' in read_csv_header(options["bodies"]):
-                bodies = pd.read_csv(options["bodies"])['body'].drop_duplicates()
-            else:
-                # Just read the first column, no matter what it's named
-                bodies = read_csv_col(options["bodies"], 0, np.uint64).drop_duplicates()
-        else:
-            assert isinstance(options["bodies"], list), \
-                "input bodies must be a list or a path to a CSV file"
-            bodies = options["bodies"]
-        
+        bodies = load_body_list(options["bodies"], False)
+
         # Choose more partitions than cores, so that early finishers have the opportunity to steal work.
         bodies_bag = dask.bag.from_sequence(bodies, npartitions=self.total_cores() * 4)
         
+        server = input_config["server"]
+        uuid = input_config["uuid"]
+        tsv_instance = input_config["tarsupervoxels-instance"]
+
+        # Determine segmentation instance
+        info = fetch_instance_info(server, uuid, tsv_instance)
+        
+        seg_instance = info["Base"]["Syncs"][0]
+        
         skip_existing = options['skip-existing']
+        
         def process_body(body_id):
             output_path = f'{output_dir}/{body_id}.{options["format"]}'
             if skip_existing and os.path.exists(output_path):
-                return (body_id, 0, 'skipped')
+                return (body_id, 0, 0.0, 0, 'skipped', 0)
             
             with resource_mgr_client.access_context( input_config["server"], True, 1, 0 ):
                 try:
-                    tar_bytes = fetch_tarfile( input_config["server"],
-                                               input_config["uuid"],
-                                               input_config["tarsupervoxels-instance"],
-                                               body_id )
+                    mutid = fetch_mutation_id(server, uuid, seg_instance, body_id)
                 except HTTPError:
                     # FIXME: Better to log the exception strings to a file
-                    return (body_id, 0, 'error-fetch')
+                    return (body_id, 0, 0.0, 0, 'error-mutid', 0)
+
+                try:
+                    tar_bytes = fetch_tarfile(server, uuid, tsv_instance, body_id)
+                except HTTPError:
+                    # FIXME: Better to log the exception strings to a file
+                    return (body_id, 0, 0.0, 0, 'error-fetch', mutid)
 
             try:
-                vertex_count = decimate_existing_mesh( input_config["server"],
-                                                       input_config["uuid"],
-                                                       input_config["tarsupervoxels-instance"],
-                                                       body_id,
-                                                       options["decimation-fraction"],
-                                                       options["format"],
-                                                       output_path,
-                                                       tar_bytes=tar_bytes )
+                vertex_count, fraction, orig_vertices = \
+                    decimate_existing_mesh( server, uuid, tsv_instance, body_id,
+                                            options["decimation"], options["max-vertices"], options["format"],
+                                            output_path,
+                                            tar_bytes=tar_bytes )
             except:
-                return (body_id, 0, 'error-generate')
+                return (body_id, 0, 0.0, 0, 'error-generate', mutid)
 
-            return (body_id, vertex_count, 'success')
+            return (body_id, vertex_count, fraction, orig_vertices, 'success', mutid)
 
         with Timer(f"Decimating {len(bodies)} meshes", logger):
             stats = bodies_bag.map(process_body).compute()
         
         
-        stats_df = pd.DataFrame(stats, columns=['body', 'vertices', 'result'])
+        stats_df = pd.DataFrame(stats, columns=['body', 'vertices', 'decimation', 'orig_vertices', 'result', 'mutid'])
+        stats_df['uuid'] = uuid
+
         stats_df.to_csv('mesh-stats.csv', index=False, header=True)
+        np.save('mesh-stats.npy', stats_df.to_records(index=False))
 
         failed_df = stats_df.query('result != "success"')
         if len(failed_df) > 0:
