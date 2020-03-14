@@ -149,7 +149,7 @@ class DecimateMeshes(Workflow):
         bodies = load_body_list(options["bodies"], False)
 
         # Choose more partitions than cores, so that early finishers have the opportunity to steal work.
-        bodies_bag = dask.bag.from_sequence(bodies, npartitions=self.total_cores() * 4)
+        bodies_bag = dask.bag.from_sequence(bodies, npartitions=self.total_cores() * 10)
         
         server = input_config["server"]
         uuid = input_config["uuid"]
