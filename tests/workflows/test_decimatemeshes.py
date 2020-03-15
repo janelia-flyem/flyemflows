@@ -140,6 +140,7 @@ def setup_decimatemeshes_config(setup_tsv_input, disable_auto_retry):
           bodies: [100,200]
           skip-existing: false
           format: ngmesh
+          rescale: [8.0, 8.0, 8.0]
           decimation: 0.1
           output-directory: meshes
     """)
@@ -150,6 +151,10 @@ def setup_decimatemeshes_config(setup_tsv_input, disable_auto_retry):
     yaml = YAML()
     with StringIO(config_text) as f:
         config = yaml.load(f)
+ 
+    # Rescale the boxes, since we used 'rescale' setting above.
+    for _label, box in object_boxes.items():
+        box[:] *= 8
  
     return template_dir, config, dvid_address, repo_uuid, object_boxes, object_sizes
 

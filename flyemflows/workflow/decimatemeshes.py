@@ -8,6 +8,7 @@ import pandas as pd
 
 from requests import HTTPError
 
+from confiddler import flow_style
 from dvid_resource_manager.client import ResourceManagerClient
 
 from neuclease.util import Timer
@@ -95,6 +96,16 @@ class DecimateMeshes(Workflow):
                 "type": "number",
                 "default": 1e9 # very large
             },
+            "rescale": {
+                "description": "How to multiply the mesh vertex coordinates before saving the mesh.\n"
+                               "Typically very important when converting to ngmesh format from some other format.\n",
+                "type": "array",
+                "items": {"type": "number"},
+                "minItems": 3,
+                "maxItems": 3,
+                "default": flow_style([1.0, 1.0, 1.0])
+                
+            },
             "output-directory": {
                 "description": "Location to write decimated meshes to",
                 "type": "string",
@@ -157,11 +168,14 @@ class DecimateMeshes(Workflow):
 
         # Determine segmentation instance
         info = fetch_instance_info(server, uuid, tsv_instance)
-        
         seg_instance = info["Base"]["Syncs"][0]
+        input_format = info["Extended"]["Extension"]
         
         skip_existing = options['skip-existing']
         
+        if np.array(options["rescale"] == 1.0).all() and options["format"] == "ngmesh" and input_format != "ngmesh":
+            logger.warning("*** You are converting to ngmesh format, but you have not specified a rescale parameter! ***")
+
         def process_body(body_id):
             output_path = f'{output_dir}/{body_id}.{options["format"]}'
             if skip_existing and os.path.exists(output_path):
@@ -183,7 +197,7 @@ class DecimateMeshes(Workflow):
             try:
                 vertex_count, fraction, orig_vertices = \
                     decimate_existing_mesh( server, uuid, tsv_instance, body_id,
-                                            options["decimation"], options["max-vertices"], options["format"],
+                                            options["decimation"], options["max-vertices"], options["rescale"], options["format"],
                                             output_path,
                                             tar_bytes=tar_bytes )
             except:
