@@ -527,7 +527,9 @@ class ConnectedComponents(Workflow):
             assert bi == sorted(bi)
             
             grouped_mapping_df = grouped_mapping_df.set_index('brick_index')[['wrapped_brick_mapping_df']]
-            grouped_mapping_ddf = ddf.from_pandas(grouped_mapping_df, name='grouped_mapping', npartitions=input_wall.bricks.npartitions)
+            grouped_mapping_ddf = ddf.from_pandas(grouped_mapping_df,
+                                                  name='grouped_mapping',
+                                                  npartitions=max(1, bricks_ddf.npartitions // 100))
             grouped_mapping_ddf = grouped_mapping_ddf.repartition(npartitions=bricks_ddf.npartitions)
             assert None not in grouped_mapping_ddf.divisions
 
