@@ -489,11 +489,12 @@ class ConnectedComponents(Workflow):
                             .starmap(coords_and_bricks)
                             .to_dataframe(dtypes))
     
-            #bricks_ddf = bricks_ddf.persist()
-            #bi = ['brick_index'].compute().tolist()
-            #assert bi == sorted(bi)
+            with Timer("Setting brick_index", logger):
+                bricks_ddf = bricks_ddf.persist()
+                bi = bricks_ddf['brick_index'].compute().tolist()
+                assert bi == sorted(bi)
     
-            bricks_ddf = bricks_ddf.set_index('brick_index', sorted=True)
+                bricks_ddf = bricks_ddf.set_index('brick_index', sorted=True)
 
         # The final mapping (node_df) might be too large to broadcast to all workers entirely.
         # We need to send only the relevant portion to each brick.
@@ -521,9 +522,13 @@ class ConnectedComponents(Workflow):
             # so compute the brick_indexes and use that.
             brick_corners = grouped_mapping_df[['lz0', 'ly0', 'lx0']].values
             grouped_mapping_df['brick_index'] = BrickWall.compute_brick_indexes(brick_corners, wall_box, wall_grid)
+            
+            bi = grouped_mapping_df['brick_index'].tolist()
+            assert bi == sorted(bi)
+            
             grouped_mapping_df = grouped_mapping_df.set_index('brick_index')[['wrapped_brick_mapping_df']]
             grouped_mapping_ddf = ddf.from_pandas(grouped_mapping_df, name='grouped_mapping', npartitions=input_wall.bricks.npartitions)
-            grouped_mapping_ddf = grouped_mapping_ddf.repartition(bricks_ddf.divisions)
+            grouped_mapping_ddf = grouped_mapping_ddf.repartition(npartitions=bricks_ddf.npartitions)
             assert None not in grouped_mapping_ddf.divisions
 
         with Timer("Joining mapping and bricks", logger):
