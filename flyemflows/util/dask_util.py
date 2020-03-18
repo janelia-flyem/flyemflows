@@ -181,13 +181,13 @@ def run_on_each_worker(func, client=None, once_per_machine=False, return_hostnam
     return final_results
 
 
-def persist_and_execute(bag, description, logger=None, optimize_graph=True):
+def persist_and_execute(bag, description=None, logger=None, optimize_graph=True):
     """
     Persist and execute the given dask.Bag.
     The persisted Bag is returned.
     """
     assert isinstance(bag, Bag)
-    if logger:
+    if logger and description:
         logger.info(f"{description}...")
 
     with Timer() as timer:
@@ -200,7 +200,7 @@ def persist_and_execute(bag, description, logger=None, optimize_graph=True):
             histogram[c] += 1
         histogram = dict(histogram)
 
-    if logger:
+    if logger and description:
         logger.info(f"{description} (N={count}, P={parts}, P_hist={histogram}) took {timer.timedelta}")
     
     return bag

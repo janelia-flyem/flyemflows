@@ -644,10 +644,11 @@ class CopySegmentation(Workflow):
         output_padding_grid = Grid( (storage_block_width, storage_block_width, storage_block_width), output_writing_grid.offset )
         output_accessor_func = partial(output_service.get_subvolume, scale=scale)
 
-        # Consolidate bricks to full-size, aligned blocks (shuffles data)
-        realigned_wall = input_wall.realign_to_new_grid(output_writing_grid,  output_accessor_func)
-        del input_wall
-        realigned_wall.persist_and_execute(f"Slab {slab_index}: Scale {scale}: Shuffling bricks into alignment", logger)
+        with Timer(f"Slab {slab_index}: Scale {scale}: Shuffling bricks into alignment", logger):
+            # Consolidate bricks to full-size, aligned blocks (shuffles data)
+            realigned_wall = input_wall.realign_to_new_grid(output_writing_grid,  output_accessor_func)
+            del input_wall
+            realigned_wall.persist_and_execute()
 
         input_mask_labels = self.input_mask_labels
         output_mask_labels = self.output_mask_labels
