@@ -1,6 +1,19 @@
 #!/usr/bin/env python3
 """
 Parse a neuroglancer link (from stdin) into JSON text and print it to the console.
+
+Note:
+    On macOS, there's a limit to how many characters can be pasted directly into
+    the terminal when feeding into a program stdin.  That limit is low: 1024 characters.
+    Many neuroglancer links are longer than that, so you'll have to use a workaround.
+    For example, first paste the link into a file:
+
+        $ emacs /tmp/link.txt
+        $ nglink-pretty.py < /tmp/link.txt
+
+    OR you can use pbpaste to feed it straight from the clipboard (bypassing the terminal):
+
+        $ pbpaste | nglink-pretty.py
 """
 import sys
 import json
@@ -20,7 +33,7 @@ def replace_commas(d):
         new_val = v
         if isinstance(v, str):
             new_val = v.replace(',', '_')
-        
+
         result[new_key] = new_val
     return result
 
@@ -29,10 +42,10 @@ def pseudo_json_to_data(pseudo_json):
     pseudo_json = urllib.parse.unquote(pseudo_json)
 
     # Make the text valid json by replacing single-quotes
-    # with double-quotes and underscores with commas.    
+    # with double-quotes and underscores with commas.
     pseudo_json = pseudo_json.replace("'", '"')
     pseudo_json = pseudo_json.replace("_", ',')
-    
+
     # But underscores within strings should not have been replaced,
     # so change those ones back as we load the json data.
     try:
