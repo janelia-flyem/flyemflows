@@ -281,6 +281,18 @@ class CreateMeshes(Workflow):
                                "to be causing issues.\n",
                 "type": "boolean",
                 "default": False
+            },
+            "shuffle-label-order": {
+                "description": "When two (or more) bodies occupy the same brick, they won't be processed\n"
+                               "in parallel (parallelism is implemented across bricks, not within bricks).\n"
+                               "That means that it's better to process them in separate batches, if possible,\n"
+                               "to avoid delaying the completion of any one batch due to a brick that is slower\n"
+                               "than the rest, due to having lots of labels internally.\n"
+                               "We don't currently optimize the assignment of labels to batches, but since \n"
+                               "consecutive labels are often spatially correlated (especially for small supervoxels),\n"
+                               "shuffling the order of the labels before assigning them to batches helps.\n",
+                "type": "boolean",
+                "default": True # Usually disabled for testing only
             }
         }
     }
@@ -484,14 +496,15 @@ class CreateMeshes(Workflow):
         #   This could be made configurable.
         bricks_ddf, subset_supervoxels = self.init_bricks_ddf(self.input_service, subset_supervoxels)
         bricks_ddf = bricks_ddf.persist()
-        
-        # Randomize the supervoxel order, to reduce incidence of shared bricks within a batch.
-        # (Computation is not parallelized within a brick (or even a partition),
-        # unless 'parallelize-within-bricks' is working.)
-        np.random.seed(0)
+
         subset_supervoxels = np.asarray(subset_supervoxels)
-        np.random.shuffle(subset_supervoxels)
-        
+        if self.config["createmeshes"]["shuffle-label-order"]:
+            # Randomize the supervoxel order, to reduce incidence of shared bricks within a batch.
+            # (Computation is not parallelized within a brick (or even a partition),
+            # unless 'parallelize-within-bricks' is working.)
+            np.random.seed(0)
+            np.random.shuffle(subset_supervoxels)
+
         if batch_size == 0:
             self.execute_batch(0, bricks_ddf, subset_supervoxels, existing_svs)
         else:

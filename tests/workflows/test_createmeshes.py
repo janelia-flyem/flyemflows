@@ -34,7 +34,7 @@ def create_test_object(height=128, radius=10):
     for i in range(height):
         center_line_img[i, i, i] = 1
         center_line_img[height-1-i, i, i] = 1
-    
+
     # Scipy distance_transform_edt conventions are opposite of vigra:
     # it calculates distances of non-zero pixels to the zero pixels.
     center_line_img = 1 - center_line_img
@@ -66,7 +66,7 @@ def create_test_segmentation():
         object_vol = create_test_object(height).astype(np.uint64)
         object_vol *= label
         object_box = np.array([corner, corner + object_vol.shape])
-        
+
         testvol_view = test_volume[box_to_slicing(*object_box)]
         testvol_view[:] = np.where(object_vol, object_vol, testvol_view)
         return object_box, (object_vol != 0).sum()
@@ -93,7 +93,7 @@ def setup_segmentation_input(setup_dvid_repo):
     dvid_address, repo_uuid = setup_dvid_repo
     input_segmentation_name = 'segmentation-createmeshes-input'
     test_volume, object_boxes, object_sizes = create_test_segmentation()
- 
+
     create_labelmap_instance(dvid_address, repo_uuid, input_segmentation_name, max_scale=3)
     post_labelmap_voxels(dvid_address, repo_uuid, input_segmentation_name, (0,0,0), test_volume, downres=True, noindexing=False)
     return dvid_address, repo_uuid, input_segmentation_name, object_boxes, object_sizes
@@ -114,18 +114,18 @@ def setup_createmeshes_config(setup_segmentation_input, disable_auto_retry):
             uuid: {repo_uuid}
             segmentation-name: {input_segmentation_name}
             supervoxels: true
-           
+
           geometry:
             block-width: 64
             available-scales: [0,1,2,3]
- 
+
         output:
           directory: meshes
 
         createmeshes:
           subset-supervoxels: []
           halo: 0
-          
+
           pre-stitch-parameters:
             smoothing: 0
             decimation: 1.0
@@ -135,7 +135,7 @@ def setup_createmeshes_config(setup_segmentation_input, disable_auto_retry):
             smoothing: 0
             decimation: 1.0
             compute-normals: false
-        
+
           size-filters:
             minimum-supervoxel-size: 0
             maximum-supervoxel-size: 1e9
@@ -147,15 +147,17 @@ def setup_createmeshes_config(setup_segmentation_input, disable_auto_retry):
           format: obj
           include-empty: false
           skip-existing: false
+
+          shuffle-label-order: false # for simpler test results
     """)
- 
+
     with open(f"{template_dir}/workflow.yaml", 'w') as f:
         f.write(config_text)
- 
+
     yaml = YAML()
     with StringIO(config_text) as f:
         config = yaml.load(f)
- 
+
     return template_dir, config, dvid_address, repo_uuid, object_boxes, object_sizes
 
 
@@ -165,7 +167,7 @@ def check_outputs(execution_dir, object_boxes, subset_labels=None, stats_dir=Non
     generated and not terribly wrong.
     """
     stats_dir = stats_dir or execution_dir
-    
+
     # Check all test objects by default.
     if subset_labels is None:
         subset_labels = sorted(object_boxes.keys())
@@ -193,7 +195,7 @@ def check_outputs(execution_dir, object_boxes, subset_labels=None, stats_dir=Non
 
 def test_createmeshes_basic(setup_createmeshes_config, disable_auto_retry):
     template_dir, _config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
-     
+
     execution_dir, _workflow = launch_flow(template_dir, 1)
     #print(execution_dir)
     check_outputs(execution_dir, object_boxes)
@@ -211,7 +213,7 @@ def test_createmeshes_max_vertices(setup_createmeshes_config, disable_auto_retry
 
 def test_createmeshes_to_tarsupervoxels(setup_createmeshes_config, disable_auto_retry):
     template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
-     
+
     tsv_instance = 'test_createmeshes_to_tarsupervoxels'
     config['output'] = {'tarsupervoxels':
                             {'instance': tsv_instance,
@@ -219,7 +221,7 @@ def test_createmeshes_to_tarsupervoxels(setup_createmeshes_config, disable_auto_
     YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
 
     _execution_dir, _workflow = launch_flow(template_dir, 1)
-    
+
     server = config['input']['dvid']['server']
     uuid = config['input']['dvid']['uuid']
     for sv in [100,200,300]:
@@ -231,7 +233,7 @@ def test_createmeshes_to_tarsupervoxels(setup_createmeshes_config, disable_auto_
 
 def test_createmeshes_to_keyvalue(setup_createmeshes_config, disable_auto_retry):
     template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
-     
+
     kv_instance = 'test_createmeshes_to_keyvalue'
     config['output'] = {'keyvalue':
                             {'instance': kv_instance,
@@ -239,7 +241,7 @@ def test_createmeshes_to_keyvalue(setup_createmeshes_config, disable_auto_retry)
     YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
 
     _execution_dir, _workflow = launch_flow(template_dir, 1)
-    
+
     server = config['input']['dvid']['server']
     uuid = config['input']['dvid']['uuid']
     for sv in [100,200,300]:
@@ -253,12 +255,12 @@ def test_createmeshes_subset_svs(setup_createmeshes_config, disable_auto_retry):
     template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
     config['createmeshes']['subset-supervoxels'] = [100,300]
     YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
-     
+
     execution_dir, _workflow = launch_flow(template_dir, 1)
- 
+
     df = pd.DataFrame( np.load(f'{execution_dir}/final-mesh-stats.npy') )
     assert 200 not in df['sv'].values
- 
+
     check_outputs(execution_dir, object_boxes, subset_labels=[100,300])
 
 
@@ -272,7 +274,7 @@ def test_createmeshes_bad_subset_svs(setup_createmeshes_config, disable_auto_ret
     template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
     config['createmeshes']['subset-supervoxels'] = [100,999]
     YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
-    
+
     execution_dir, _workflow = launch_flow(template_dir, 1)
 
     # List of bad svs is reported in this CSV file.
@@ -292,7 +294,7 @@ def test_createmeshes_subset_bodies(setup_createmeshes_config, disable_auto_retr
     template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
     config['createmeshes']['subset-bodies'] = [100,300]
     YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
-    
+
     execution_dir, _workflow = launch_flow(template_dir, 1)
 
     df = pd.DataFrame( np.load(f'{execution_dir}/final-mesh-stats.npy') )
@@ -310,7 +312,7 @@ def test_createmeshes_bad_subset_bodies(setup_createmeshes_config, disable_auto_
     template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
     config['createmeshes']['subset-bodies'] = [100,999] # 999 doesn't exist
     YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
-    
+
     execution_dir, _workflow = launch_flow(template_dir, 1)
 
     assert pd.read_csv(f'{execution_dir}/missing-bodies.csv')['body'].tolist() == [999]
@@ -329,9 +331,10 @@ def test_createmeshes_subset_bodies_in_batches(setup_createmeshes_config, disabl
     config['createmeshes']['subset-bodies'] = [100,200,300]
     config['createmeshes']['subset-batch-size'] = 2
     YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
-    
+
     execution_dir, _workflow = launch_flow(template_dir, 1)
 
+    #print(execution_dir)
     check_outputs(execution_dir, object_boxes, subset_labels=[100,200], stats_dir=f'{execution_dir}/batch-00')
     check_outputs(execution_dir, object_boxes, subset_labels=[300], stats_dir=f'{execution_dir}/batch-01')
 
@@ -345,7 +348,7 @@ def test_createmeshes_filter_supervoxels(setup_createmeshes_config, disable_auto
     config['createmeshes']['size-filters']['minimum-supervoxel-size'] = object_sizes[300]+1
     config['createmeshes']['size-filters']['maximum-supervoxel-size'] = object_sizes[100]-1
     YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
-    
+
     execution_dir, _workflow = launch_flow(template_dir, 1)
 
     df = pd.DataFrame( np.load(f'{execution_dir}/final-mesh-stats.npy') )
@@ -359,7 +362,7 @@ def test_createmeshes_rescale_isotropic(setup_createmeshes_config, disable_auto_
     template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
     config['createmeshes']['rescale-before-write'] = 2
     YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
-     
+
     execution_dir, _workflow = launch_flow(template_dir, 1)
 
     scaled_boxes = { label: box * 2 for label, box in object_boxes.items() }
@@ -370,7 +373,7 @@ def test_createmeshes_rescale_anisotropic(setup_createmeshes_config, disable_aut
     template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
     config['createmeshes']['rescale-before-write'] = [2,3,4]
     YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
-     
+
     execution_dir, _workflow = launch_flow(template_dir, 1)
 
     # Note xyz vs zyx
@@ -387,7 +390,7 @@ def test_createmeshes_skip_existing(setup_createmeshes_config, disable_auto_retr
     os.makedirs(f"{template_dir}/meshes")
     open(f"{template_dir}/meshes/200.obj", 'wb').close()
     execution_dir, _workflow = launch_flow(template_dir, 1)
- 
+
     # The file should have been left alone (still empty).
     assert open(f"{execution_dir}/meshes/200.obj", 'rb').read() == b''
 
@@ -408,7 +411,7 @@ def test_createmeshes_from_body_source(setup_createmeshes_config, disable_auto_r
 
 def test_createmeshes_from_body_source_subset_bodies(setup_createmeshes_config, disable_auto_retry):
     template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
-    
+
     config["input"]["dvid"].update({
         "supervoxels": False
     })
@@ -446,5 +449,5 @@ if __name__ == "__main__":
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_createmeshes']
     args += ['-x']
     #args += ['-Werror']
-    #args += ['-k', 'createmeshes_max_vertices']
+    #args += ['-k', 'createmeshes_subset_bodies_in_batches']
     pytest.main(args)
