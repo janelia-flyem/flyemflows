@@ -12,11 +12,12 @@ from dvid_resource_manager.client import ResourceManagerClient
 
 from dvidutils import LabelMapper
 
-from neuclease.util import Timer, choose_pyramid_depth, round_box
+from neuclease.util import Timer, choose_pyramid_depth, round_box, parse_timestamp
 from neuclease.dvid import ( fetch_repo_instances, resolve_ref, fetch_instance_info, fetch_volume_box,
                              fetch_raw, post_raw, fetch_labelarray_voxels, encode_labelarray_volume, post_labelmap_blocks,
                              update_extents, extend_list_value, create_voxel_instance, create_labelmap_instance,
-                             fetch_mapping, fetch_mappings, fetch_labelindex, convert_labelindex_to_pandas )
+                             fetch_mapping, fetch_mappings, fetch_labelindex, convert_labelindex_to_pandas,
+                             read_kafka_messages, filter_kafka_msgs_by_timerange, compute_affected_bodies )
 
 from ..util import auto_retry, replace_default_entries
 from . import GeometrySchema, VolumeServiceReader, VolumeServiceWriter, GrayscaleAdapters, SegmentationAdapters
@@ -79,7 +80,7 @@ DvidInstanceCreationSettingsSchema = \
         "voxel-size": {
             "description": "Voxel dimensions, stored in DVID's metadata for the instance.",
             "oneOf": [{ "type": "number" },
-                      { "type": "array", "items:": { "type": "number" }}], 
+                      { "type": "array", "items:": { "type": "number" }}],
             "default": 8.0
         },
         "voxel-units": {
@@ -242,7 +243,7 @@ class DvidVolumeService(VolumeServiceWriter):
 
     def __init__(self, volume_config, resource_manager_client=None):
         validate(volume_config, DvidGenericVolumeSchema, inject_defaults=True)
-        
+
         assert 'apply-labelmap' not in volume_config["dvid"].keys(), \
             ("The apply-labelmap section should be in the 'adapters' section, (parallel to 'dvid' and 'geometry'), "
              "not nested within the 'dvid' section!")
@@ -278,7 +279,7 @@ class DvidVolumeService(VolumeServiceWriter):
         elif "grayscale-name" in volume_config["dvid"]:
             self._instance_name = volume_config["dvid"]["grayscale-name"]
             self._dtype = np.uint8
-            
+
         self._dtype_nbytes = np.dtype(self._dtype).type().nbytes
 
         try:
@@ -301,7 +302,7 @@ class DvidVolumeService(VolumeServiceWriter):
             else:
                 self._instance_type = 'uint8blk'
                 self._is_labels = False
-            
+
             block_width = config_block_width
         else:
             self._instance_type = instance_info["Base"]["TypeName"]
@@ -412,7 +413,7 @@ class DvidVolumeService(VolumeServiceWriter):
     @property
     def uuid(self):
         return self._uuid
-    
+
     @property
     def instance_name(self):
         return self._instance_name
@@ -424,7 +425,7 @@ class DvidVolumeService(VolumeServiceWriter):
     @property
     def dtype(self):
         return self._dtype
-    
+
     @property
     def throttle(self):
         return self._throttle
@@ -436,7 +437,7 @@ class DvidVolumeService(VolumeServiceWriter):
     @property
     def block_width(self):
         return self._block_width
-    
+
     @property
     def bounding_box_zyx(self):
         return self._bounding_box_zyx
@@ -454,8 +455,8 @@ class DvidVolumeService(VolumeServiceWriter):
         if 'segmentation-name' in volume_config["dvid"]:
             self._create_segmentation_instance(volume_config)
         if 'grayscale-name' in volume_config["dvid"]:
-            self._create_grayscale_instances(volume_config) 
-            
+            self._create_grayscale_instances(volume_config)
+
 
     def _create_segmentation_instance(self, volume_config):
         """
@@ -504,7 +505,7 @@ class DvidVolumeService(VolumeServiceWriter):
 
         Instead, multi-scale volumes are represented by creating multiple instances,
         with the scale indicated by a suffix (except for scale 0).
-        
+
         For example:
             - grayscale # scale 0
             - grayscale_1
@@ -513,7 +514,7 @@ class DvidVolumeService(VolumeServiceWriter):
             - ...
         """
         settings = volume_config["dvid"]["creation-settings"]
-        
+
         block_width = volume_config["geometry"]["block-width"]
 
         pyramid_depth = settings["max-scale"]
@@ -524,15 +525,15 @@ class DvidVolumeService(VolumeServiceWriter):
 
         # Bottom level of pyramid is listed as neuroglancer-compatible
         extend_list_value(self.server, self.uuid, '.meta', 'neuroglancer', [self.instance_name])
-        
+
         for scale in range(pyramid_depth+1):
             scaled_output_box_zyx = round_box(self.bounding_box_zyx, 2**scale, 'out') // 2**scale
-    
+
             if scale == 0:
                 scaled_instance_name = self.instance_name
             else:
                 scaled_instance_name = f"{self.instance_name}_{scale}"
-    
+
             if scaled_instance_name in repo_instances:
                 logger.info(f"'{scaled_instance_name}' already exists, skipping creation")
             else:
@@ -547,11 +548,46 @@ class DvidVolumeService(VolumeServiceWriter):
                                        settings["voxel-size"],
                                        settings["voxel-units"],
                                        settings["background"] )
-    
+
             update_extents( self.server, self.uuid, scaled_instance_name, scaled_output_box_zyx )
 
             # Higher-levels of the pyramid should not appear in the DVID console.
             extend_list_value(self.server, self.uuid, '.meta', 'restrictions', [scaled_instance_name])
+
+    def determine_changed_labelmap_bodies(self, kafka_timestamp_string):
+        """
+        Read the entire labelmap kafka log, and determine
+        which bodies have changed since the given timestamp (a string).
+
+        Example timestamps:
+            - "2018-11-22"
+            - "2018-11-22 17:34:00"
+
+        Returns:
+            list of body IDs
+        """
+        logger.info(f"Determining which bodies have changed since {kafka_timestamp_string}")
+
+        try:
+            kafka_timestamp = parse_timestamp(kafka_timestamp_string)
+        except:
+            raise RuntimeError(f"Could not parse your subset-bodies config setting ({kafka_timestamp_string}) "
+                               "as either a body list or a kafka timestamp")
+
+        seg_instance = self.instance_triple
+
+        kafka_msgs = read_kafka_messages(*seg_instance)
+        filtered_kafka_msgs = filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp=kafka_timestamp)
+
+        new_bodies, changed_bodies, _removed_bodies, new_supervoxels = compute_affected_bodies(filtered_kafka_msgs)
+        sv_split_bodies = set(fetch_mapping(*seg_instance, new_supervoxels)) - set([0])
+
+        subset_bodies = set(chain(new_bodies, changed_bodies, sv_split_bodies))
+        subset_bodies = np.fromiter(subset_bodies, np.uint64)
+        subset_bodies = np.sort(subset_bodies).tolist()
+
+        logger.info(f"The kafka log shows that {len(subset_bodies)} bodies have changed since ({kafka_timestamp_string})")
+        return subset_bodies
 
 
     # Two-levels of auto-retry:
@@ -593,7 +629,7 @@ class DvidVolumeService(VolumeServiceWriter):
             # In cluster scenarios, a chained 'raise ... from ex' traceback
             # doesn't get fully transmitted to the driver,
             # so we simply append this extra info to the current exception
-            # rather than using exception chaining. 
+            # rather than using exception chaining.
             # Also log it now so it at least appears in the worker log.
             # See: https://github.com/dask/dask/issues/4384
             import traceback, io
@@ -603,10 +639,10 @@ class DvidVolumeService(VolumeServiceWriter):
 
             host = socket.gethostname()
             msg = f"Host {host}: Failed to fetch subvolume: box_zyx = {box_zyx.tolist()}"
-            
+
             ex.args += (msg,)
             raise
-        
+
     # Two-levels of auto-retry:
     # 1. Auto-retry up to three time for any reason.
     # 2. If that fails due to 504 or 503 (e.g. due to throttling or due to cloud VMs warming up),
@@ -621,7 +657,7 @@ class DvidVolumeService(VolumeServiceWriter):
         shape_zyx = np.asarray(subvolume.shape)
         box_zyx = np.array([offset_zyx,
                             offset_zyx + shape_zyx])
-        
+
         instance_name = self._instance_name
 
         if self._instance_type.endswith('blk') and scale > 0:
@@ -633,10 +669,10 @@ class DvidVolumeService(VolumeServiceWriter):
             assert self.supervoxels, "You cannot post data to a labelmap instance unless you specify 'supervoxels: true' in your config."
 
         is_block_aligned = (box_zyx % self.block_width == 0).all()
-        
+
         assert (not self.enable_downres) or (scale == 0), \
             "When using enable-downres, you can only write scale-0 data."
-        
+
         try:
             # Labelarray data can be posted very efficiently if the request is block-aligned
             if self._instance_type in ('labelarray', 'labelmap') and is_block_aligned:
@@ -660,7 +696,7 @@ class DvidVolumeService(VolumeServiceWriter):
             # In cluster scenarios, a chained 'raise ... from ex' traceback
             # doesn't get fully transmitted to the driver,
             # so we simply append this extra info to the current exception
-            # rather than using exception chaining. 
+            # rather than using exception chaining.
             # Also log it now so it at least appears in the worker log.
             # See: https://github.com/dask/dask/issues/4384
             import traceback, io
@@ -670,7 +706,7 @@ class DvidVolumeService(VolumeServiceWriter):
 
             host = socket.gethostname()
             msg = f"Host {host}: Failed to write subvolume: offset_zyx = {offset_zyx.tolist()}, shape = {subvolume.shape}"
-            
+
             ex.args += (msg,)
             raise
 
@@ -679,18 +715,18 @@ class DvidVolumeService(VolumeServiceWriter):
         """
         Return a DataFrame indicating the brick
         coordinates (starting corner) that encompass the given labels.
-        
+
         Args:
             labels:
                 A list of body IDs (if ``self.supervoxels`` is False),
                 or supervoxel IDs (if ``self.supervoxels`` is True).
-            
+
             clip:
                 If True, filter the results to exclude any coordinates
                 that fall outside this service's bounding-box.
                 Otherwise, all brick coordinates that encompass the given labels
                 will be returned, whether or not they fall within the bounding box.
-                
+
         Returns:
             DataFrame with columns [z,y,x,label],
             where z,y,x represents the starting corner (in full-res coordinates)
@@ -733,7 +769,7 @@ class DvidVolumeService(VolumeServiceWriter):
             # Group by body
             mapping = mapping[mapping != 0]
             grouped_svs = mapping.reset_index().groupby('body').agg({'sv': list})['sv']
-            
+
             # Sort by body, since that should be slightly nicer for dvid performance.
             bodies_and_svs = grouped_svs.sort_index().to_dict()
 
@@ -756,7 +792,7 @@ class DvidVolumeService(VolumeServiceWriter):
                 with mgr.access_context(server, True, 1, 1):
                     labelindex = fetch_labelindex(server, uuid, instance, body, 'protobuf')
                 coords_df = convert_labelindex_to_pandas(labelindex).blocks
-                    
+
             except HTTPError as ex:
                 if (ex.response is not None and ex.response.status_code == 404):
                     return (body, None)
@@ -768,7 +804,7 @@ class DvidVolumeService(VolumeServiceWriter):
 
             if len(coords_df) == 0:
                 return (body, None)
-                
+
             if is_supervoxels:
                 supervoxel_subset = set(supervoxel_subset)
                 coords_df = coords_df.query('sv in @supervoxel_subset').copy()
@@ -783,7 +819,7 @@ class DvidVolumeService(VolumeServiceWriter):
             To reduce the number of tiny DataFrames collected to the driver,
             it's best to concatenate the partitions first, on the workers,
             rather than a straightforward call to starmap(fetch_brick_coords).
-            
+
             Hence, this function that consolidates each partition.
             """
             bad_bodies = []
@@ -795,7 +831,7 @@ class DvidVolumeService(VolumeServiceWriter):
                 else:
                     coord_dfs.append(coords_df)
                     del coords_df
-            
+
             if coord_dfs:
                 return [(pd.concat(coord_dfs, ignore_index=True), bad_bodies)]
             else:
@@ -845,6 +881,6 @@ class DvidVolumeService(VolumeServiceWriter):
             keep =  (coords_df[['z', 'y', 'x']] + brick_shape > self.bounding_box_zyx[0]).all(axis=1)
             keep &= (coords_df[['z', 'y', 'x']]               < self.bounding_box_zyx[1]).all(axis=1)
             coords_df = coords_df.loc[keep]
-        
+
         return coords_df[['z', 'y', 'x', 'label']]
 

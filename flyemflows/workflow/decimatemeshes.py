@@ -15,6 +15,7 @@ from neuclease.util import Timer
 from neuclease.dvid import resolve_ref, fetch_instance_info, fetch_tarfile, fetch_mutation_id
 from neuclease.bin.decimate_existing_mesh import decimate_existing_mesh
 
+from ..volumes import DvidVolumeService
 from .util import BodyListSchema, load_body_list
 from . import Workflow
 
@@ -23,16 +24,16 @@ logger = logging.getLogger(__name__)
 class DecimateMeshes(Workflow):
     """
     Download pre-existing meshes from a dvid tarsupervoxels instance, and decimate them.
-    
+
     Basically a clusterized wrapper around neuclease.bin.decimate_existing_mesh
-    
+
     TODO: Save mesh stats to a csv file.
     """
     DvidTarsupervoxelsInstanceSchema = \
     {
         "description": "Parameters specify a DVID instance",
         "type": "object",
-    
+
         "default": {},
         "required": ["dvid"],
         "additionalProperties": False,
@@ -59,7 +60,7 @@ class DecimateMeshes(Workflow):
             }
         }
     }
-    
+
     DecimateMeshesOptionsSchema = \
     {
         "type": "object",
@@ -88,7 +89,7 @@ class DecimateMeshes(Workflow):
                 "type": "number",
                 "minimum": 0.0000001,
                 "maximum": 1.0, # 1.0 == disable
-                "default": 0.1                
+                "default": 0.1
             },
             "max-vertices": {
                 "description": "Ensure that meshes have no more vertices than specified by this setting.\n"
@@ -104,7 +105,7 @@ class DecimateMeshes(Workflow):
                 "minItems": 3,
                 "maxItems": 3,
                 "default": flow_style([1.0, 1.0, 1.0])
-                
+
             },
             "output-directory": {
                 "description": "Location to write decimated meshes to",
@@ -131,16 +132,16 @@ class DecimateMeshes(Workflow):
         - Check for config mistakes
         - Simple sanity checks
         """
-        # Resolve uuid if necessary (e.g. 'master' -> abc123)        
+        # Resolve uuid if necessary (e.g. 'master' -> abc123)
         dvid_cfg = self.config["input"]["dvid"]
         dvid_cfg["uuid"] = resolve_ref(dvid_cfg["server"], dvid_cfg["uuid"])
-        
+
         # Convert input/output CSV to absolute paths
         options = self.config["decimatemeshes"]
         assert options["bodies"], \
             "No input body list provided"
-        
-        if isinstance(options["bodies"], str):
+
+        if isinstance(options["bodies"], str) and options["bodies"].endswith(".csv"):
             assert os.path.exists(options["bodies"]), \
                 f'Input file does not exist: {options["bodies"]}'
 
@@ -151,17 +152,13 @@ class DecimateMeshes(Workflow):
         input_config = self.config["input"]["dvid"]
         options = self.config["decimatemeshes"]
         resource_config = self.config["resource-manager"]
-        
+
+        skip_existing = options['skip-existing']
         output_dir = options["output-directory"]
         os.makedirs(output_dir, exist_ok=True)
 
         resource_mgr_client = ResourceManagerClient(resource_config["server"], resource_config["port"])
 
-        bodies = load_body_list(options["bodies"], False)
-
-        # Choose more partitions than cores, so that early finishers have the opportunity to steal work.
-        bodies_bag = dask.bag.from_sequence(bodies, npartitions=self.total_cores() * 10)
-        
         server = input_config["server"]
         uuid = input_config["uuid"]
         tsv_instance = input_config["tarsupervoxels-instance"]
@@ -170,9 +167,7 @@ class DecimateMeshes(Workflow):
         info = fetch_instance_info(server, uuid, tsv_instance)
         seg_instance = info["Base"]["Syncs"][0]
         input_format = info["Extended"]["Extension"]
-        
-        skip_existing = options['skip-existing']
-        
+
         if np.array(options["rescale"] == 1.0).all() and options["format"] == "ngmesh" and input_format != "ngmesh":
             logger.warning("*** You are converting to ngmesh format, but you have not specified a rescale parameter! ***")
 
@@ -180,7 +175,7 @@ class DecimateMeshes(Workflow):
             output_path = f'{output_dir}/{body_id}.{options["format"]}'
             if skip_existing and os.path.exists(output_path):
                 return (body_id, 0, 0.0, 0, 'skipped', 0)
-            
+
             with resource_mgr_client.access_context( input_config["server"], True, 1, 0 ):
                 try:
                     mutid = fetch_mutation_id(server, uuid, seg_instance, body_id)
@@ -205,10 +200,14 @@ class DecimateMeshes(Workflow):
 
             return (body_id, vertex_count, fraction, orig_vertices, 'success', mutid)
 
+        bodies = self._load_body_list(options["bodies"], server, uuid, seg_instance)
+
+        # Choose more partitions than cores, so that early finishers have the opportunity to steal work.
+        bodies_bag = dask.bag.from_sequence(bodies, npartitions=self.total_cores() * 10)
+
         with Timer(f"Decimating {len(bodies)} meshes", logger):
             stats = bodies_bag.map(process_body).compute()
-        
-        
+
         stats_df = pd.DataFrame(stats, columns=['body', 'vertices', 'decimation', 'orig_vertices', 'result', 'mutid'])
         stats_df['uuid'] = uuid
 
@@ -219,3 +218,44 @@ class DecimateMeshes(Workflow):
         if len(failed_df) > 0:
             logger.warning(f"{len(failed_df)} meshes could not be generated. See mesh-stats.csv")
             logger.warning(f"Results:\n{stats_df['result'].value_counts()}")
+
+
+    def _load_body_list(self, cfg_bodies, server, uuid, seg_instance):
+        options = self.config["decimatemeshes"]
+
+        if isinstance(cfg_bodies, str) and not cfg_bodies.endswith('.csv'):
+            kafka_timestamp_string = cfg_bodies
+            return self._determine_changed_labelmap_bodies(kafka_timestamp_string, server, uuid, seg_instance)
+        else:
+            return load_body_list(cfg_bodies, False)
+
+
+    def _determine_changed_labelmap_bodies(self, kafka_timestamp_string, server, uuid, seg_instance):
+        """
+        Read the entire labelmap kafka log, and determine
+        which bodies have changed since the given timestamp (a string).
+
+        Example timestamps:
+            - "2018-11-22"
+            - "2018-11-22 17:34:00"
+
+        Returns:
+            list of body IDs
+        """
+
+        svc_cfg = {
+            "dvid": {
+                "server": server,
+                "uuid": uuid,
+                "segmentation-name": seg_instance
+            }
+        }
+
+        svc = DvidVolumeService(svc_cfg)
+        subset_bodies = svc.determine_changed_labelmap_bodies(kafka_timestamp_string)
+
+        if not subset_bodies:
+            raise RuntimeError("Based on your current settings, no meshes will be generated at all.\n"
+                               f"No bodies have changed since your specified timestamp {kafka_timestamp_string}")
+
+        return subset_bodies

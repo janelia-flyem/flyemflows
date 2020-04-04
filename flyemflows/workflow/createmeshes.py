@@ -43,7 +43,7 @@ class CreateMeshes(Workflow):
                        "Omitted values will be copied from the input, or given default values.",
         "type": "object",
         "required": ["server", "uuid"],
-    
+
         #"default": {}, # Must not have default. (Appears below in a 'oneOf' context.)
         "additionalProperties": False,
         "properties": {
@@ -162,14 +162,14 @@ class CreateMeshes(Workflow):
         }
     }
 
-    SupervoxelListSchema = copy.copy(BodyListSchema)
-    SupervoxelListSchema["description"] = \
+    SubsetSupervoxelsSchema = copy.copy(BodyListSchema)
+    SubsetSupervoxelsSchema["description"] = \
         ("List of supervoxel IDs to process, or a path to a CSV file with the list.\n"
          "NOTE: If you're using a non-labelmap source (e.g. HDF5, etc.),\n"
          "      it is considered supervoxel data.\n")
 
-    BodyListSchema = copy.copy(BodyListSchema)
-    BodyListSchema["description"] = \
+    SubsetBodiesSchema = copy.copy(BodyListSchema)
+    SubsetBodiesSchema["description"] = \
         ("List of body IDs to process, a path to a CSV file with the list,\n"
          "or a timestamp (e.g. '2018-11-22 17:34:00') which will be used with \n"
          "the kafka log to determine bodies that have changed (since the given time).\n"
@@ -184,8 +184,8 @@ class CreateMeshes(Workflow):
         "default": {},
         "additionalProperties": False,
         "properties": {
-            "subset-supervoxels": SupervoxelListSchema,
-            "subset-bodies": BodyListSchema,
+            "subset-supervoxels": SubsetSupervoxelsSchema,
+            "subset-bodies": SubsetBodiesSchema,
 
             "halo": {
                 "description": "How much overlapping context between bricks in the grid (in voxels)\n",
@@ -212,11 +212,11 @@ class CreateMeshes(Workflow):
                                                # Will be ineffective unless you used a task-block-halo of at least 1, and no
                                                # pre-stitch smoothing or decimation.
                         ],
-                
+
                 "default": "simple-concatenate",
             },
             "size-filters": SizeFiltersSchema,
-            
+
             # TODO
             "max-body-vertices": {
                 "description": "NOT YET IMPLEMENTED.\n"
@@ -311,7 +311,7 @@ class CreateMeshes(Workflow):
         },
 
         "createmeshes": CreateMeshesOptionsSchema,
-        
+
     })
 
     @classmethod
@@ -331,7 +331,7 @@ class CreateMeshes(Workflow):
         if options['subset-batch-size'] > 0 and not (options['subset-supervoxels'] or options['subset-bodies']):
             raise RuntimeError("The batch feature is not supported unless you explicitly specify subset-supervoxels or subset-bodies.")
 
-    def _init_input_service(self): 
+    def _init_input_service(self):
         input_config = self.config["input"]
         resource_config = self.config["resource-manager"]
         self.resource_mgr_client = ResourceManagerClient(resource_config["server"], resource_config["port"])
@@ -406,7 +406,7 @@ class CreateMeshes(Workflow):
             raise RuntimeError(msg)
 
         assert instance_type in ('tarsupervoxels', 'keyvalue')
-        
+
         ## keyvalue output
         if instance_type == "keyvalue":
             create_instance(server, uuid, instance, "keyvalue", tags=["type=meshes"])
@@ -415,7 +415,7 @@ class CreateMeshes(Workflow):
         ## tarsupervoxels output
         sync_instance = output_cfg["tarsupervoxels"]["sync-to"]
 
-        
+
         if not sync_instance:
             # Auto-fill a default 'sync-to' instance using the input segmentation, if possible.
             base_input = self.input_service.base_service
@@ -456,13 +456,13 @@ class CreateMeshes(Workflow):
         from a labelmap input (with supervoxels: true).
         But it also supports other sources. In those cases, each object is
         treated as a 'supervoxel', and each 'body' has only one supervoxel.
-        
+
         NOTE:
             If your input is a labelmap, but you have configured it to read body labels (i.e. supervoxels: false),
             then it is treated like any other non-supervoxel-aware datasource, such as HDF5.
             That is, in the code below, 'supervoxels' and 'bodies' refer to the same thing.
             The real underlying supervoxel IDs in the labelmap instance are not used.
-        
+
         TODO:
             - max-body-vertices option
             - Rethink terminolgy (supervoxel vs label vs body)
@@ -479,7 +479,7 @@ class CreateMeshes(Workflow):
                    depending on the efficiency of that operation when the
                    merge col isn't the index.
               -- Process bodies in batches
-            - 
+            -
         """
         self._sanitize_config()
         self._init_input_service()
@@ -517,7 +517,7 @@ class CreateMeshes(Workflow):
                 batch_existing_svs = None
                 if existing_svs is not None:
                     batch_existing_svs = existing_svs & set(batch_subset_svs)
-                
+
                 with Timer(f"Batch {batch_index:02}: Running batch", logger):
                     with switch_cwd(f'batch-{batch_index:02d}', create=True):
                         self.execute_batch(batch_index, bricks_ddf, batch_subset_svs, batch_existing_svs)
@@ -531,9 +531,9 @@ class CreateMeshes(Workflow):
 
         bricks_ddf, num_bricks = self._distribute_counts(batch_index, bricks_ddf, brick_counts_df)
         del brick_counts_df
-        
+
         brick_meshes_ddf = self._compute_brickwise_meshes(batch_index, bricks_ddf, num_brick_meshes, num_bricks)
-        
+
         # TODO: max-body-vertices (before assembly...)
 
         sv_meshes_ddf = self._combine_brick_meshes(batch_index, brick_meshes_ddf)
@@ -555,11 +555,11 @@ class CreateMeshes(Workflow):
             msg = f"Initializing BrickWall for {len(subset_labels)} labels"
             try:
                 brick_coords_df = volume_service.sparse_brick_coords_for_labels(subset_labels)
-                
+
                 # If any labels couldn't be found, we don't want those included in downstream decisions (e.g. for overwriting).
                 subset_labels = np.sort(brick_coords_df['label'].unique())
                 np.save('brick-coords.npy', brick_coords_df.to_records(index=False))
-    
+
                 brick_shape = volume_service.preferred_message_shape
                 brick_indexes = brick_coords_df[['z', 'y', 'x']].values // brick_shape
                 sbm = SparseBlockMask.create_from_lowres_coords(brick_indexes, brick_shape)
@@ -571,7 +571,7 @@ class CreateMeshes(Workflow):
             # Aim for 2 GB RDD partitions when loading segmentation
             GB = 2**30
             target_partition_size_voxels = 2 * GB // np.uint64().nbytes
-            
+
             # Apply halo WHILE downloading the data.
             # TODO: Allow the user to configure whether or not the halo should
             #       be fetched from the outset, or added after the blocks are loaded.
@@ -588,26 +588,26 @@ class CreateMeshes(Workflow):
         """
         If the user's config specifies either subset-supervoxels,
         load them and return them.
-        
+
         If the user's config specifies subset-bodies (for a DVID source),
         return the set of all supervoxels contained by those bodies.
-        
+
         If neither subset-supervoxels nor subset-bodies is specified,
         an empty list is returned.
-        
+
         TODO:
             For DVID sources, it would also be possible to pre-filter the subset
             according to the user's size constraints, too, since fetching the
             full labelindex isn't much more expensive than fetching the supervoxel
             list for each body.
-        
+
         Returns:
             (subset_supervoxels, existing_svs)
             list of supervoxel IDs, and the list of pre-existing svs
 
             If subset-supervoxels (or subset-bodies) was specified and skip-existing is specified,
             then the returned supervoxel list is pre-filtered to omit pre-existing supervoxels.
-            
+
             If 'subset-supervoxels' was not specified or skip-existing was not specified,
             existing_svs will be None.
         """
@@ -621,10 +621,10 @@ class CreateMeshes(Workflow):
         if len(subset_bodies) and not self.input_is_labelmap():
             raise RuntimeError("Can't use 'subset-bodies' unless your input is a DVID labelmap. Try subset-supervoxels.")
 
-        # Load subset_bodies from a list, CSV, JSON, or from the kafka log
+        # Load subset_bodies from a list, CSV, or from the kafka log
         assert isinstance(subset_bodies, (list, str))
-        
-        if isinstance(subset_bodies, list) or subset_bodies.endswith(".json") or subset_bodies.endswith(".csv"):
+
+        if isinstance(subset_bodies, list) or subset_bodies.endswith(".csv"):
             subset_bodies = load_body_list(options["subset-bodies"], False)
         else:
             # subset-bodies must be a timestamp
@@ -681,7 +681,7 @@ class CreateMeshes(Workflow):
             if not subset_supervoxels:
                 raise RuntimeError("Based on your current settings, no meshes will be generated at all.\n"
                                    "See subset-supervoxels and skip-existing")
-                
+
         return subset_supervoxels, existing_svs
 
 
@@ -689,43 +689,22 @@ class CreateMeshes(Workflow):
         """
         Read the entire labelmap kafka log, and determine
         which bodies have changed since the given timestamp (a string).
-        
+
         Example timestamps:
             - "2018-11-22"
             - "2018-11-22 17:34:00"
-            
+
         Returns:
             list of body IDs
         """
-        logger.info(f"Determining which bodies have changed since {kafka_timestamp_string}")
-        
-        try:
-            kafka_timestamp = parse_timestamp(kafka_timestamp_string)
-        except:
-            raise RuntimeError(f"Could not parse your subset-bodies config setting ({kafka_timestamp_string}) "
-                               "as either a body list or a kafka timestamp")
-
         if not self.input_is_labelmap():
             raise RuntimeError("Can't specify subset-bodies as a kafka timestamp for sources other than DVID labelmap")
 
-        seg_instance = self.input_service.base_service.instance_triple
-
-        kafka_msgs = read_kafka_messages(*seg_instance)
-        filtered_kafka_msgs = filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp=kafka_timestamp)
-        
-        new_bodies, changed_bodies, _removed_bodies, new_supervoxels = compute_affected_bodies(filtered_kafka_msgs)
-        sv_split_bodies = set(fetch_mapping(*seg_instance, new_supervoxels)) - set([0])
-        
-        subset_bodies = set(chain(new_bodies, changed_bodies, sv_split_bodies))
-        subset_bodies = np.fromiter(subset_bodies, np.uint64)
-        subset_bodies = np.sort(subset_bodies).tolist()
+        subset_bodies = self.input_service.base_service.determine_changed_labelmap_bodies(kafka_timestamp_string)
 
         if not subset_bodies:
             raise RuntimeError("Based on your current settings, no meshes will be generated at all.\n"
                                f"No bodies have changed since your specified timestamp {kafka_timestamp_string}")
-
-
-        logger.info(f"The kafka log shows that {len(subset_bodies)} bodies have changed since ({kafka_timestamp_string})")
         return subset_bodies
 
 
@@ -763,7 +742,7 @@ class CreateMeshes(Workflow):
 
     def _compute_brick_labelcounts(self, batch_index, bricks_ddf, subset_supervoxels):
         """
-        Compute the brickwise labelcounts for 
+        Compute the brickwise labelcounts for
         """
         export_labelcounts = self.config["createmeshes"]["export-labelcounts"]
         if export_labelcounts:
@@ -796,9 +775,9 @@ class CreateMeshes(Workflow):
         with Timer(f"Batch {batch_index:02}: Aggregating brick stats into body stats", logger):
             if self.input_is_labelmap_supervoxels():
                 seg_instance = self.input_service.base_service.instance_triple
-    
+
                 brick_counts_df['sv'] = brick_counts_df['label'].values
-    
+
                 # Arbitrary heuristic for whether to do the body-lookups on DVID or on the client.
                 if len(brick_counts_df['sv']) < 100_000:
                     # If we're only dealing with a few supervoxels,
@@ -810,7 +789,7 @@ class CreateMeshes(Workflow):
                     mapping = fetch_mappings(*seg_instance)
                     mapper = LabelMapper(mapping.index.values, mapping.values)
                     brick_counts_df['body'] = mapper.apply(brick_counts_df['sv'].values, True)
-                
+
                 total_sv_counts = brick_counts_df.groupby('sv')['count'].sum().rename('sv_size').reset_index()
                 total_body_counts = brick_counts_df.groupby('body')['count'].sum().rename('body_size').reset_index()
             else:
@@ -848,7 +827,7 @@ class CreateMeshes(Workflow):
             if len(subset_supervoxels) > 0:
                 sv_set = set(subset_supervoxels) #@UnusedVariable
                 brick_counts_df = brick_counts_df.query('sv in @sv_set')
-    
+
             # Filter for sv/body size constraints
             size_filters = options["size-filters"]
             min_sv_size = size_filters['minimum-supervoxel-size'] #@UnusedVariable
@@ -858,17 +837,17 @@ class CreateMeshes(Workflow):
             q = ('sv_size >= @min_sv_size and sv_size <= @max_sv_size and '
                  'body_size >= @min_body_size and body_size <= @max_body_size')
             brick_counts_df = brick_counts_df.query(q)
-    
+
             if len(brick_counts_df) == 0:
                 raise RuntimeError("Based on your current settings, no meshes will be generated at all.\n"
                                    "See sv-sizes.npy and body-sizes.npy")
 
-            
+
             if options["skip-existing"]:
                 all_svs = pd.unique(brick_counts_df['sv'])
                 if existing_svs is None:
                     existing_svs = self._determine_existing(all_svs)
-            
+
                 brick_counts_df = brick_counts_df.query('sv not in @existing_svs')
                 if len(brick_counts_df) == 0:
                     raise RuntimeError("Based on your current settings, no meshes will be generated at all.\n"
@@ -928,13 +907,13 @@ class CreateMeshes(Workflow):
                 # Reorder columns
                 cols = ['lz0', 'ly0', 'lx0', 'sv', 'body', 'mesh', 'vertex_count', 'compressed_size']
                 brick_meshes_df = brick_meshes_df[cols]
-                
+
                 result_dfs.append(brick_meshes_df)
 
             result_df = pd.concat(result_dfs, ignore_index=True)
             assert result_df.columns.tolist() == cols
             return result_df
-                
+
         dtypes = {'lz0': np.int32, 'ly0': np.int32, 'lx0': np.int32,
                   'sv': np.uint64, 'body': np.uint64,
                   'mesh': object,
@@ -966,7 +945,7 @@ class CreateMeshes(Workflow):
         stitch_method = options["stitch-method"]
         def assemble_sv_meshes(sv_brick_meshes_df):
             assert len(sv_brick_meshes_df) > 0
-            
+
             try:
                 sv = sv_brick_meshes_df['sv'].iloc[0]
             except Exception as ex:
@@ -988,20 +967,20 @@ class CreateMeshes(Workflow):
             assert (sv_brick_meshes_df['sv'] == sv).all()
 
             mesh = Mesh.concatenate_meshes(sv_brick_meshes_df['mesh'])
-            
+
             if stitch_method == 'stitch':
                 mesh.stitch_adjacent_faces(drop_unused_vertices=True, drop_duplicate_faces=True)
-            
+
             if final_smoothing != 0:
                 mesh.laplacian_smooth(final_smoothing)
-            
+
             final_decimation = post_decimation
             if max_vertices != 0 and len(mesh.vertices_zyx) > max_vertices:
                 final_decimation = min( post_decimation, max_vertices / len(mesh.vertices_zyx) )
-                
+
             if final_decimation != 1.0:
                 mesh.simplify(final_decimation, in_memory=True)
-            
+
             if not compute_normals:
                 mesh.drop_normals()
             elif len(mesh.normals_zyx) == 0:
@@ -1009,7 +988,7 @@ class CreateMeshes(Workflow):
 
             vertex_count = len(mesh.vertices_zyx)
             compressed_size = mesh.compress()
-            
+
             return pd.DataFrame({'sv': sv,
                                  'mesh': mesh,
                                  'vertex_count': vertex_count,
@@ -1018,7 +997,7 @@ class CreateMeshes(Workflow):
 
         sv_brick_meshes_dgb = brick_meshes_ddf.groupby('sv')
         #del brick_meshes_ddf
-        
+
         dtypes = {'sv': np.uint64, 'mesh': object, 'vertex_count': np.int64, 'compressed_size': int}
         sv_meshes_ddf = sv_brick_meshes_dgb.apply(assemble_sv_meshes, meta=dtypes)
         del sv_brick_meshes_dgb
@@ -1027,7 +1006,7 @@ class CreateMeshes(Workflow):
         with Timer(f"Batch {batch_index:02}: Combining brick meshes", logger):
             # Export stitched mesh statistics
             os.makedirs('stitched-mesh-stats')
-            
+
             # to_csv() blocks, so this triggers the computation.
             sv_meshes_ddf[['sv', 'vertex_count', 'compressed_size']].to_csv('stitched-mesh-stats/partition-*.csv', index=False, header=True)
 
@@ -1041,7 +1020,7 @@ class CreateMeshes(Workflow):
         skip_existing = options["skip-existing"]
         destination = self.config["output"]
         resource_mgr = self.resource_mgr_client
-        
+
         def write_sv_meshes(sv_meshes_df, log=True):
             (destination_type,) = destination.keys()
             assert destination_type in ('directory', 'keyvalue', 'tarsupervoxels')
@@ -1051,7 +1030,7 @@ class CreateMeshes(Workflow):
                              for (sv, mesh) in sv_meshes_df[['sv', 'mesh']].itertuples(index=False)]
             keyvalues = dict(zip(names, binary_meshes))
             filesizes = [len(mesh_bytes) for mesh_bytes in keyvalues.values()]
-            
+
             if not include_empty:
                 keyvalues = {k:v for (k,v) in keyvalues.items() if len(v) > 0}
 
@@ -1084,7 +1063,7 @@ class CreateMeshes(Workflow):
             # Write empty files for any supervoxels in the user's subset
             # that we didn't even see in the data (e.g. because they don't exist at the scale we used).
             missing_svs = set(subset_supervoxels) - set(written_stats_df['sv']) - existing_svs
-            
+
         if not missing_svs:
             final_stats_df = written_stats_df
         else:
@@ -1105,16 +1084,16 @@ def compute_brick_labelcounts(brick_df, subset_labels, export_labelcounts):
     For the given pandas DataFrame of Bricks,
     i.e. one partition of the dask.DataFrame returned by BrickWall.bricks_as_ddf(),
     perform a voxel count of every label contained in the brick and return the resulting dataframe.
-    
+
     Note:
         Obviously, this does NOT return a DataFrame of the same
         size or columns as the input dataframe.
         Thus, when used with dask.DataFrame.map_partitions, you must use clear_divisions().
-    
+
     Args:
         brick_df:
             One partition of a brick dataframe, as returned by BrickWall.bricks_as_ddf().
-     
+
         subset_labels:
             The labels IDs of interest.
             If empty, counts for all labels will be returned.
@@ -1122,7 +1101,7 @@ def compute_brick_labelcounts(brick_df, subset_labels, export_labelcounts):
         export_labelcounts:
             Debugging feature.
             See export-labelcounts config option.
-        
+
      Returns:
         pandas DataFrame with columns ['lz0', 'ly0', 'lx0', 'label', 'count'],
         where 'lz0', 'ly0', 'lx0' are the coordinates of the top corner of the
@@ -1140,7 +1119,7 @@ def compute_brick_labelcounts(brick_df, subset_labels, export_labelcounts):
         inner_box -= brick.physical_box[0]
         inner_vol = extract_subvol(brick.volume, inner_box)
         brick.compress() # Discard uncompressed
-        
+
         if len(subset_labels) > 0:
             # Relabel everything to 0 except for our subset of interest,
             # to reduce the size of the dataframe that we send back to the driver.
@@ -1149,18 +1128,18 @@ def compute_brick_labelcounts(brick_df, subset_labels, export_labelcounts):
 
             mapper = LabelMapper(subset_labels, subset_labels)
             inner_vol = mapper.apply_with_default(inner_vol, 0)
-        
+
         label_counts = pd.Series(inner_vol.reshape(-1)).value_counts().sort_index()
         label_counts.index.name = 'label'
         label_counts.name = 'count'
         if label_counts.index[0] == 0:
             label_counts = label_counts.iloc[1:]
-        
+
         brick_counts_df = label_counts.reset_index()
         brick_counts_df['lz0'] = brick.logical_box[0,0]
         brick_counts_df['ly0'] = brick.logical_box[0,1]
         brick_counts_df['lx0'] = brick.logical_box[0,2]
-        
+
         brick_counts_dfs.append(brick_counts_df)
 
         if export_labelcounts:
@@ -1184,12 +1163,12 @@ def compute_brick_labelcounts(brick_df, subset_labels, export_labelcounts):
 
 def compute_meshes_for_brick(brick, stats_df, options):
     logging.getLogger(__name__).info(f"Computing meshes for brick: {brick} ({len(stats_df)} meshes)")
-    
+
     smoothing = options["pre-stitch-parameters"]["smoothing"]
     decimation = options["pre-stitch-parameters"]["decimation"]
     max_vertices = options["pre-stitch-parameters"]["max-vertices"]
     rescale_factor = options["rescale-before-write"]
-    
+
     if isinstance(rescale_factor, list):
         rescale_factor = np.array( rescale_factor[::-1] ) # zyx
     else:
@@ -1202,7 +1181,7 @@ def compute_meshes_for_brick(brick, stats_df, options):
         empty64 = np.zeros((0,1), dtype=np.uint64)
         emptyObject = np.zeros((0,1), dtype=object)
         return pd.DataFrame([empty64, empty64, emptyObject, empty64, empty64], columns=cols)
-    
+
     volume = brick.volume
     brick.compress() # Is this necessary? Or will the brick be discarded?
 
@@ -1241,20 +1220,20 @@ def compute_meshes_for_brick(brick, stats_df, options):
             for row in stats_df.itertuples():
                 mask = (volume == row.sv)
                 mask, mask_box = crop(mask, brick.physical_box)
-    
+
                 # We compress the mask before passing it to delayed(),
                 # mostly to save RAM if there are lots of tasks that end up on one node.
                 compressed_mask = lz4.frame.compress(np.asarray(mask, order='C'))
-    
+
                 args = (row.sv, row.body, compressed_mask, mask_box, smoothing, decimation, max_vertices, rescale_factor, True)
-                
+
                 # Apparently the delayed() approach doesn't work
                 # (I get errors "Workers don't have promised key")
                 #task = delayed(generate_mesh)(*args)
 
                 # Use client/future method instead
                 future = client.submit(generate_mesh, *args)
-                
+
                 tasks.append( future )
 
             # See note above.  Use client/future method
@@ -1264,7 +1243,7 @@ def compute_meshes_for_brick(brick, stats_df, options):
     dtypes = {'sv': np.uint64, 'body': np.uint64,
               'mesh': object,
               'vertex_count': int, 'compressed_size': int}
-    
+
     return pd.DataFrame(mesh_results, columns=cols).astype(dtypes)
 
 
@@ -1272,23 +1251,23 @@ def generate_mesh(sv, body, mask, mask_box, smoothing, decimation, max_vertices,
     if compressed:
         mask_shape = box_shape(mask_box)
         mask = np.frombuffer(lz4.frame.decompress(mask), np.bool).reshape(mask_shape)
-    
+
     mesh = Mesh.from_binary_vol(mask, mask_box)
-    
+
     if smoothing != 0:
         mesh.laplacian_smooth(smoothing)
-    
+
     if max_vertices != 0 and len(mesh.vertices_zyx) > max_vertices:
         decimation = min( decimation, max_vertices / len(mesh.vertices_zyx) )
-    
+
     # Don't bother decimating really tiny meshes -- something usually goes wrong anyway.
     if decimation != 1.0 and len(mesh.vertices_zyx) > 10:
         # TODO: Implement a timeout here for the in-memory case (use multiprocessing)?
         mesh.simplify(decimation, in_memory=True)
-    
+
     if (rescale_factor != 1.0).any():
         mesh.vertices_zyx[:] *= rescale_factor
-    
+
     vertex_count = len(mesh.vertices_zyx)
     compressed_size = mesh.compress()
 
@@ -1307,7 +1286,7 @@ def serialize_mesh(sv, mesh, path=None, fmt=None, log=True):
         return mesh.serialize(path, fmt)
     except:
         logger = logging.getLogger(__name__)
-        
+
         msg = f"Failed to serialize mesh as {fmt}."
         if path:
             msg += f" Attempted to write to {path}"
