@@ -17,7 +17,7 @@ BrainMapsServiceSchema = \
     "properties": {
         "project": {
             "description": "Project ID",
-            "type": "string",
+            "oneOf": [{"type": "string"}, {"type": "integer"}]
         },
         "dataset": {
             "description": "Dataset identifier",
@@ -63,12 +63,12 @@ class BrainMapsVolumeServiceReader(VolumeServiceReader):
 
     def __init__(self, volume_config, resource_manager_client=None):
         validate(volume_config, BrainMapsVolumeSchema, inject_defaults=True)
-        
+
         if resource_manager_client is None:
             # Dummy client
             resource_manager_client = ResourceManagerClient("", 0)
 
-        self._brainmaps_client = BrainMapsVolume( volume_config["brainmaps"]["project"],
+        self._brainmaps_client = BrainMapsVolume( str(volume_config["brainmaps"]["project"]),
                                                   volume_config["brainmaps"]["dataset"],
                                                   volume_config["brainmaps"]["volume-id"],
                                                   volume_config["brainmaps"]["change-stack-id"],
@@ -77,12 +77,12 @@ class BrainMapsVolumeServiceReader(VolumeServiceReader):
 
         # Force client to fetch dtype now, so it isn't fetched after pickling.
         self._brainmaps_client.dtype
-        
+
         block_width = volume_config["geometry"]["block-width"]
         if block_width == -1:
             # FIXME: I don't actually know what BrainMap's internal block size is...
             block_width = 64
-        
+
         preferred_message_shape_zyx = np.array( volume_config["geometry"]["message-block-shape"][::-1] )
         replace_default_entries(preferred_message_shape_zyx, [64, 64, 6400])
 
@@ -92,7 +92,7 @@ class BrainMapsVolumeServiceReader(VolumeServiceReader):
         assert  (bounding_box_zyx[0] >= self._brainmaps_client.bounding_box[0]).all() \
             and (bounding_box_zyx[1] <= self._brainmaps_client.bounding_box[1]).all(), \
             f"Specified bounding box ({bounding_box_zyx.tolist()}) extends outside the "\
-            f"BrainMaps volume geometry ({self._brainmaps_client.bounding_box.tolist()})"        
+            f"BrainMaps volume geometry ({self._brainmaps_client.bounding_box.tolist()})"
 
         available_scales = list(volume_config["geometry"]["available-scales"])
 
