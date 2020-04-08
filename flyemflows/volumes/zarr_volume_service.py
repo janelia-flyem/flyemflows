@@ -78,6 +78,16 @@ ZarrServiceSchema = \
             "type": "string",
             "minLength": 1
         },
+        "store-type": {
+            # https://github.com/zarr-developers/zarr-python/issues/530
+            "description": "Zarr supports an assortment of 'store' types, and unfortunately it's\n"
+                           "impossible to infer the type of store used from the zarr metadata.\n"
+                           "We must specify which type of store to use when opening the volume.\n"
+                           "In general, you should use NestedDirectoryStore if your volume is large.\n",
+            "type": "string",
+            "enum": ["DirectoryStore", "NestedDirectoryStore"],
+            "default": "NestedDirectoryStore"
+        },
         "writable": {
             "description": "If True, open the array in read/write mode, otherwise open in read-only mode.\n"
                            "By default, guess based on create-if-necessary.\n",
@@ -114,7 +124,7 @@ class ZarrVolumeService(VolumeServiceWriter):
 
     def __init__(self, volume_config):
         validate(volume_config, ZarrVolumeSchema, inject_defaults=True)
-        
+
         # Convert path to absolute if necessary (and write back to the config)
         path = os.path.abspath(volume_config["zarr"]["path"])
         self._path = path
@@ -126,9 +136,14 @@ class ZarrVolumeService(VolumeServiceWriter):
             self._dataset_name = self._dataset_name[1:]
         volume_config["zarr"]["dataset"] = self._dataset_name
 
+        store_cfg = volume_config["zarr"]["store-type"]
+        self._store_cls = { 'DirectoryStore': zarr.storage.DirectoryStore,
+                            'NestedDirectoryStore': zarr.storage.NestedDirectoryStore
+                          }[store_cfg]
+
         self._zarr_file = None
         self._zarr_datasets = {}
-        
+
         self._ensure_datasets_exist(volume_config)
 
         if isinstance(self.zarr_dataset(0), zarr.hierarchy.Group):
@@ -154,7 +169,7 @@ class ZarrVolumeService(VolumeServiceWriter):
         else:
             # The notion of 'block-width' doesn't really make sense if the chunks aren't cubes.
             block_width = -1
-        
+
         auto_bb = np.array([(0,0,0), self.zarr_dataset(0).shape])
 
         bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
@@ -187,7 +202,7 @@ class ZarrVolumeService(VolumeServiceWriter):
     @property
     def block_width(self):
         return self._block_width
-    
+
     @property
     def bounding_box_zyx(self):
         return self._bounding_box_zyx
@@ -199,7 +214,7 @@ class ZarrVolumeService(VolumeServiceWriter):
     def get_subvolume(self, box_zyx, scale=0):
         box_zyx = np.asarray(box_zyx)
         return self.zarr_dataset(scale)[box_to_slicing(*box_zyx.tolist())]
-    
+
 
     def write_subvolume(self, subvolume, offset_zyx, scale=0):
         offset_zyx = np.asarray(offset_zyx)
@@ -213,7 +228,7 @@ class ZarrVolumeService(VolumeServiceWriter):
         # easier to support pickling/unpickling.
         if self._zarr_file is None:
             need_permissions_fix = not os.path.exists(self._path)
-            store = zarr.NestedDirectoryStore(self._path)
+            store = self._store_cls(self._path)
             self._zarr_file = zarr.open(store=store, mode=self._filemode)
 
             if need_permissions_fix:
@@ -248,7 +263,7 @@ class ZarrVolumeService(VolumeServiceWriter):
         writable = volume_config["zarr"]["writable"]
         if writable is None:
             writable = create_if_necessary
-        
+
         mode = 'r'
         if writable:
             mode = 'a'
@@ -259,7 +274,7 @@ class ZarrVolumeService(VolumeServiceWriter):
         bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
         creation_shape = np.array(volume_config["zarr"]["creation-settings"]["shape"][::-1])
         replace_default_entries(creation_shape, bounding_box_zyx[1])
-        
+
         if create_if_necessary:
             max_scale = volume_config["zarr"]["creation-settings"]["max-scale"]
             if max_scale == -1:
@@ -268,7 +283,7 @@ class ZarrVolumeService(VolumeServiceWriter):
                                        "(or extend) the data with, because you didn't specify a "
                                        "volume creation shape (or bounding box")
                 max_scale = choose_pyramid_depth(creation_shape, 512)
-            
+
             available_scales = [*range(1+max_scale)]
         else:
             available_scales = volume_config["geometry"]["available-scales"]
@@ -306,7 +321,7 @@ class ZarrVolumeService(VolumeServiceWriter):
                 if (chunks != block_shape) and (scale == 0):
                     logger.warning(f"Block shape ({block_shape}) is too small for "
                                    f"the dataset shape ({creation_shape}). Shrinking block shape.")
-                
+
                 self._zarr_datasets[scale] = self.zarr_file.create_dataset( name,
                                                                             shape=scaled_shape.tolist(),
                                                                             dtype=np.dtype(dtype),

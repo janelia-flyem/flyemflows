@@ -22,7 +22,7 @@ def volume_setup():
         },
         "geometry": {}
     }
-    
+
     volume = np.random.randint(100, size=(512, 256, 128))
 
     store = zarr.NestedDirectoryStore(path)
@@ -34,14 +34,14 @@ def volume_setup():
 
 def test_read(volume_setup):
     config, volume = volume_setup
-    
-    service = ZarrVolumeService(config)    
+
+    service = ZarrVolumeService(config)
     assert (service.bounding_box_zyx == [(0,0,0),volume.shape]).all()
     assert service.dtype == volume.dtype
 
     # Service INSERTS geometry into config if necessary
     assert config["geometry"]["bounding-box"] == [[0,0,0], list(volume.shape[::-1])]
-    
+
     box = [(30,40,50), (50,60,70)]
     subvol = service.get_subvolume(box)
     assert (subvol == volume[box_to_slicing(*box)]).all()
@@ -57,14 +57,14 @@ def test_write(volume_setup):
     # Can't initialize service if file doesn't exist
     with pytest.raises(RuntimeError) as excinfo:
         ZarrVolumeService(config)
-    assert 'writable' in str(excinfo.value)
+    assert 'create-if-necessary' in str(excinfo.value)
 
     assert not os.path.exists(config["zarr"]["path"])
     config["zarr"]["create-if-necessary"] = True
     config["zarr"]["creation-settings"] = {
         "shape": [*volume.shape][::-1],
         "dtype": str(volume.dtype),
-        "block-shape": [32,32,32],
+        "chunk-shape": [32,32,32],
         "max-scale": 0
     }
 
