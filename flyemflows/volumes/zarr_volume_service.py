@@ -23,7 +23,7 @@ ZarrCreationSettingsSchema = \
     "properties": {
         "shape": {
             "description": "The shape of the volume.\n"
-                           "If not provided, it is automatically set from the bounding-box upper coordinate.\n",
+                           "If not provided, it is automatically set from the bounding-box upper coordinate and global-offset (if any).\n",
             "type": "array",
             "items": { "type": "integer" },
             "minItems": 3,
@@ -87,6 +87,17 @@ ZarrServiceSchema = \
             "type": "string",
             "enum": ["DirectoryStore", "NestedDirectoryStore"],
             "default": "NestedDirectoryStore"
+        },
+        "global-offset": {
+            "description": "Indicates what global coordinate corresponds to item (0,0,0) of the zarr array.\n"
+                           "This offset will be subtracted from all read/write requests before accessing the zarr container.\n"
+                           "Pass this offset in [X,Y,Z] order!\n"
+                           "Note: If your offset is not a multiple of the chunk shape, then some workflows may not work as efficiently.\n",
+            "type": "array",
+            "items": {"type": "integer"},
+            "minItems": 3,
+            "maxItems": 3,
+            "default": flow_style([0,0,0])
         },
         "writable": {
             "description": "If True, open the array in read/write mode, otherwise open in read-only mode.\n"
@@ -170,7 +181,9 @@ class ZarrVolumeService(VolumeServiceWriter):
             # The notion of 'block-width' doesn't really make sense if the chunks aren't cubes.
             block_width = -1
 
+        global_offset = np.array(volume_config["zarr"]["global-offset"][::-1])
         auto_bb = np.array([(0,0,0), self.zarr_dataset(0).shape])
+        auto_bb += global_offset
 
         bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
         assert (auto_bb[1] >= bounding_box_zyx[1]).all(), \
@@ -185,6 +198,7 @@ class ZarrVolumeService(VolumeServiceWriter):
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
         self._block_width = block_width
         self._available_scales = volume_config["geometry"]["available-scales"]
+        self._global_offset = global_offset
 
         # Overwrite config entries that we might have modified
         volume_config["geometry"]["block-width"] = self._block_width
@@ -212,12 +226,14 @@ class ZarrVolumeService(VolumeServiceWriter):
         return self._available_scales
 
     def get_subvolume(self, box_zyx, scale=0):
-        box_zyx = np.asarray(box_zyx)
+        box_zyx = np.array(box_zyx)
+        box_zyx -= self._global_offset // (2**scale)
         return self.zarr_dataset(scale)[box_to_slicing(*box_zyx.tolist())]
 
 
     def write_subvolume(self, subvolume, offset_zyx, scale=0):
-        offset_zyx = np.asarray(offset_zyx)
+        offset_zyx = np.array(offset_zyx)
+        offset_zyx -= self._global_offset // (2**scale)
         box = np.array([offset_zyx, offset_zyx+subvolume.shape])
         self.zarr_dataset(scale)[box_to_slicing(*box)] = subvolume
 
@@ -271,9 +287,10 @@ class ZarrVolumeService(VolumeServiceWriter):
 
         block_shape = volume_config["zarr"]["creation-settings"]["chunk-shape"][::-1]
 
+        global_offset = volume_config["zarr"]["global-offset"][::-1]
         bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
         creation_shape = np.array(volume_config["zarr"]["creation-settings"]["shape"][::-1])
-        replace_default_entries(creation_shape, bounding_box_zyx[1])
+        replace_default_entries(creation_shape, bounding_box_zyx[1] - global_offset)
 
         if create_if_necessary:
             max_scale = volume_config["zarr"]["creation-settings"]["max-scale"]
