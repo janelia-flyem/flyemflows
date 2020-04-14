@@ -210,6 +210,8 @@ class CopySegmentation(Workflow):
         input_bb_zyx = self.input_service.bounding_box_zyx
         output_bb_zyx = self.output_service.bounding_box_zyx
         self.translation_offset_zyx = output_bb_zyx[0] - input_bb_zyx[0]
+        if self.translation_offset_zyx.any():
+            logger.info(f"Translation offset is {self.translation_offset_zyx[:, ::-1].tolist()}")
 
         pyramid_depth = self.config["copysegmentation"]["pyramid-depth"]
         slab_depth = self.config["copysegmentation"]["slab-depth"]
