@@ -5,7 +5,7 @@ from functools import partial
 import numpy as np
 from skimage.util import view_as_blocks
 
-from dvidutils import destripe #@UnresolvedImport 
+from dvidutils import destripe #@UnresolvedImport
 from dvid_resource_manager.client import ResourceManagerClient
 
 from neuclease.util import Grid, slabs_from_box, Timer, box_to_slicing
@@ -26,12 +26,12 @@ class CopyGrayscale(Workflow):
     """
     Copy a grayscale volume from one source to another, possibly in a different format.
     The copy is performed one "slab" at a time, with slab width defined in the config.
-    
+
     For DVID outputs, a pyramid of downsampled volumes can be generated and uploaded, too.
-    
+
     Slab boundaries must be aligned to the input/output grid, but the corresponding
     slab boundaries for the downsample pyramid volumes need not be perfectly aligned.
-    
+
     If they end up unaligned after downsampling, the existing data at the output can
     be used to "pad" the slab before it is uploaded.  (See "fill-blocks" setting.)
     """
@@ -55,7 +55,7 @@ class CopyGrayscale(Workflow):
                 "maximum": 10,
                 "default": 0
             },
-    
+
             "max-pyramid-scale": {
                 "description": "The maximum scale to copy (or compute) from input to output.",
                 "type": "integer",
@@ -65,7 +65,7 @@ class CopyGrayscale(Workflow):
                 ## NO DEFAULT: Must choose!
                 #"default": -1
             },
-            
+
             "pyramid-source": {
                 "description": "How to create the downsampled pyramid volumes, either copied \n"
                                "from the input source (if available) or computed from scale 0.\n",
@@ -73,7 +73,7 @@ class CopyGrayscale(Workflow):
                 "enum": ["copy", "compute"], # compute-as-labels is for debug and testing.
                 "default": "compute"
             },
-            
+
             "slab-depth": {
                 "description": "The volume is processed iteratively, in 'slabs'.\n"
                                "This setting determines the thickness of each slab.\n"
@@ -85,7 +85,7 @@ class CopyGrayscale(Workflow):
                 ## NO DEFAULT: Must choose!
                 #"default": -1
             },
-            
+
             "slab-axis": {
                 "description": "The axis across which the volume will be cut to create \n"
                                "'slabs' to be processed one at a time.  See 'slab-depth'.",
@@ -93,27 +93,27 @@ class CopyGrayscale(Workflow):
                 "enum": ["x", "y", "z"],
                 "default": "z"
             },
-            
+
             "downsample-method": {
                 "description": "The algorithm to use when downsampling. By default, an appropriate method is chosen",
                 "type": "string",
                 "enum": [*DOWNSAMPLE_METHODS],
                 "default": "block-mean"
             },
-            
+
             "starting-slice": {
                 "description": "In case of a failed job, you may want to restart at a particular slice.",
                 "type": "integer",
                 "default": 0
             },
-            
+
             "contrast-adjustment": {
                 "description": "How to adjust the contrast before uploading.",
                 "type": "string",
                 "enum": ["none", "clahe", "hotknife-destripe"],
                 "default": "none"
             },
-            
+
             "hotknife-seams": {
                 "description": "Used by the hotknife-destripe contrast adjustment method. \n",
                                "See dvidutils.destripe() for details."
@@ -122,7 +122,7 @@ class CopyGrayscale(Workflow):
                 "minItems": 2,
                 "default": [-1] + HEMIBRAIN_TAB_BOUNDARIES[1:].tolist() # Must begin with -1, not 0
             },
-            
+
             "fill-blocks": {
                 "description": "Some output services do not support writing partial blocks, even on volume boundaries,\n"
                                "in which case we must 'pad' partial blocks using existing data (or zeros) before writing them.\n"
@@ -201,7 +201,7 @@ class CopyGrayscale(Workflow):
         axis_name = options["slab-axis"]
         axis = 'zyx'.index(axis_name)
         brick_width = self.output_service.preferred_message_shape[axis]
-        
+
         assert options["slab-depth"] % brick_width == 0, \
             f'slab-depth ({options["slab-depth"]}) is not a multiple of the output brick width ({brick_width}) along the slab-axis ("{axis_name}")'
 
@@ -223,18 +223,18 @@ class CopyGrayscale(Workflow):
     def execute(self):
         self._init_services()
         self._validate_config()
-        
+
         options = self.config["copygrayscale"]
         input_bb_zyx = self.input_service.bounding_box_zyx
 
         min_scale = options["min-pyramid-scale"]
         max_scale = options["max-pyramid-scale"]
-        
+
         starting_slice = options["starting-slice"]
-        
+
         axis_name = options["slab-axis"]
         axis = 'zyx'.index(axis_name)
-        slab_boxes = list(slabs_from_box(input_bb_zyx, options["slab-depth"], 0, 'round-down', axis))
+        slab_boxes = list(slabs_from_box(input_bb_zyx, options["slab-depth"], slab_cutting_axis=axis))
         logger.info(f"Processing volume in {len(slab_boxes)} slabs")
 
         for slab_index, slab_fullres_box_zyx in enumerate(slab_boxes):
@@ -264,12 +264,12 @@ class CopyGrayscale(Workflow):
         if scale < min_scale and pyramid_source == "copy":
             logger.info(f"Slab {slab_index}: Skipping scale {scale}")
             return
-        
+
         slab_voxels = np.prod(slab_fullres_box_zyx[1] - slab_fullres_box_zyx[0]) // (2**scale)**3
         voxels_per_thread = slab_voxels // self.total_cores()
         partition_voxels = voxels_per_thread // 2
         logging.info(f"Slab {slab_index}: Aiming for partitions of {partition_voxels} voxels")
-        
+
         if pyramid_source == "copy" or scale == 0:
             # Copy from input source
             bricked_slab_wall = BrickWall.from_volume_service(self.input_service, scale, slab_fullres_box_zyx, self.client, partition_voxels)
@@ -282,30 +282,30 @@ class CopyGrayscale(Workflow):
 
         if scale == 0:
             bricked_slab_wall = self.adjust_contrast(bricked_slab_wall, slab_index)
-        
+
         # Remap to output bricks
         with Timer(f"Slab {slab_index}: Realigning to output grid", logger):
             output_grid = Grid(output_service.preferred_message_shape)
             output_slab_wall = bricked_slab_wall.realign_to_new_grid( output_grid )
-        
+
         if options["fill-blocks"]:
             # Pad from previously-existing pyramid data until
             # we have full storage blocks, e.g. (64,64,64),
             # but not necessarily full bricks, e.g. (64,64,6400)
             output_accessor_func = partial(output_service.get_subvolume, scale=scale)
-    
+
             # But don't bother fetching real data for scale 0
             # the input slabs are already block-aligned, and the edges of each slice will be zeros anyway.
             if scale == 0:
                 output_accessor_func = lambda _box: 0
-    
+
             if isinstance( output_service.base_service, DvidVolumeService):
                 # For DVID, we use minimum padding (just pad up to the
                 # nearest block boundary, not the whole brick boundary).
                 padding_grid = Grid( 3*(output_service.block_width,), output_grid.offset )
             else:
                 padding_grid = output_slab_wall.grid
-        
+
             output_slab_wall = output_slab_wall.fill_missing(output_accessor_func, padding_grid)
             output_slab_wall.persist_and_execute(f"Slab {slab_index}: Assembling scale {scale} bricks", logger)
 
@@ -331,10 +331,10 @@ class CopyGrayscale(Workflow):
 
         if contrast_adjustment == "none":
             return bricked_slab_wall
-        
+
         if contrast_adjustment == "hotknife-destripe":
             return self._hotknife_destripe(bricked_slab_wall, slab_index)
-        
+
         if contrast_adjustment == "clahe":
             return self._clahe_adjust(bricked_slab_wall, slab_index)
 
@@ -347,7 +347,7 @@ class CopyGrayscale(Workflow):
         wall_shape = self.output_service.bounding_box_zyx[1] - self.output_service.bounding_box_zyx[0]
         z_slice_shape = (1,) + (*wall_shape[1:],)
         z_slice_grid = Grid( z_slice_shape )
-        
+
         z_slice_slab = bricked_slab_wall.realign_to_new_grid( z_slice_grid )
         z_slice_slab.persist_and_execute(f"Slab {slab_index}: Constructing slices of shape {z_slice_shape}", logger)
 
@@ -355,18 +355,18 @@ class CopyGrayscale(Workflow):
         # but for now I have no use-case for volumes that don't start at (0,0)
         assert (bricked_slab_wall.bounding_box[0, 1:] == (0,0)).all(), \
             "Input bounding box must start at YX == (0,0)"
-        
+
         seams = options["hotknife-seams"]
         def destripe_brick(brick):
             assert brick.volume.shape[0] == 1
             adjusted_slice = destripe(brick.volume[0], seams)
             return Brick(brick.logical_box, brick.physical_box, adjusted_slice[None], location_id=brick.location_id)
-        
+
         adjusted_bricks = z_slice_slab.bricks.map(destripe_brick)
         adjusted_wall = BrickWall( bricked_slab_wall.bounding_box,
                                    bricked_slab_wall.grid,
                                    adjusted_bricks )
-        
+
         adjusted_wall.persist_and_execute(f"Slab {slab_index}: Destriping slices", logger)
         return adjusted_wall
 
@@ -386,15 +386,15 @@ def write_brick(output_service, scale, brick):
         # Typically, users will prefer bricks of shape (64,64,N).
         # However, if the bricks wider than 64, this code still works,
         # but all blocks for a given X must be empty for the brick to be trimmed.
-        
+
         block_width = output_service.block_width
         assert np.array(brick.volume.shape)[2] % block_width == 0, \
             "Brick X-dimension is not a multiple of the DVID block-shape"
-        
+
         # Omit leading/trailing empty blocks
         assert (np.array(brick.volume.shape) % block_width).all() == 0
         blockwise_view = view_as_blocks( brick.volume, brick.volume.shape[0:2] + (block_width,) )
-        
+
         # blockwise view has shape (1,1,X/bx, bz, by, bx)
         assert blockwise_view.shape[0:2] == (1,1)
         blockwise_view = blockwise_view[0,0] # drop singleton axes
@@ -402,18 +402,18 @@ def write_brick(output_service, scale, brick):
         # Compute max in each block to determine the non-empty blocks
         block_maxes = blockwise_view.max( axis=(1,2,3) )
         assert block_maxes.ndim == 1
-        
+
         nonzero_block_indexes = np.nonzero(block_maxes)[0]
         if len(nonzero_block_indexes) == 0:
             return # brick is completely empty
-        
+
         first_nonzero_block = nonzero_block_indexes[0]
         last_nonzero_block = nonzero_block_indexes[-1]
-        
+
         nonzero_start = (0, 0, block_width*first_nonzero_block)
         nonzero_stop = ( brick.volume.shape[0:2] + (block_width*(last_nonzero_block+1),) )
         nonzero_subvol = brick.volume[box_to_slicing(nonzero_start, nonzero_stop)]
         nonzero_subvol = np.asarray(nonzero_subvol, order='C')
-    
+
         output_service.write_subvolume(nonzero_subvol, brick.physical_box[0] + nonzero_start, scale)
 

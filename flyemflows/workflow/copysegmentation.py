@@ -33,26 +33,26 @@ class CopySegmentation(Workflow):
     """
     Workflow to copy segmentation from one source (e.g. a DVID segmentation
     instance or a BrainMaps volume) into a DVID segmentation instance.
-    
+
     Notes:
-    
+
     - The data is written to DVID in block-aligned 'bricks'.
       If the source data is not block-aligned at the edges,
       pre-existing data (if any) is read from the DVID destination
       to fill out ('pad') the bricks until they are completely block aligned.
-    
+
     - The data is also downsampled into a multi-scale pyramid and uploaded.
-    
+
     - The volume is processed in Z-slabs. To avoid complications during downsampling,
       the Z-slabs must be aligned to a multiple of the DVID block shape, which may be
       rather large, depending on the highest scale of the pyramid.
       (It is recommended that you don't set this explicitly in the config, so a
       suitable default can be chosen for you.)
-      
+
     - This workflow uses DvidVolumeService to write the segmentation blocks,
       which is able to send them to DVID in the pre-encoded 'labelarray' or 'labelmap' block format.
       This saves CPU resources on the DVID server.
-    
+
     - As a convenience, size of each label 'body' in the copied volume is also
       calculated and exported in an HDF5 file, sorted by body size.
     """
@@ -172,7 +172,7 @@ class CopySegmentation(Workflow):
             }
         }
     }
-    
+
     OptionsSchema["properties"]["input-mask-labels"]["description"] += (
         "If provided, only voxels under the given input labels in the output will be modified.\n"
         "Others will remain untouched.\n" )
@@ -240,13 +240,13 @@ class CopySegmentation(Workflow):
         """
         Initialize the input and output services,
         and fill in 'auto' config values as needed.
-        
+
         Also check the service configurations for errors.
         """
         input_config = self.config["input"]
         output_config = self.config["output"]
         mgr_options = self.config["resource-manager"]
-        
+
         options = self.config["copysegmentation"]
         slab_depth = options["slab-depth"]
         pyramid_depth = options["pyramid-depth"]
@@ -254,7 +254,7 @@ class CopySegmentation(Workflow):
 
         self.mgr_client = ResourceManagerClient( mgr_options["server"], mgr_options["port"] )
         self.input_service = VolumeService.create_from_config( input_config, self.mgr_client )
-        
+
         brick_shape = self.input_service.preferred_message_shape
         if slab_depth % brick_shape[0] != 0:
             self.input_service.preferred_message_shape[0]
@@ -286,7 +286,7 @@ class CopySegmentation(Workflow):
         output_service = self.output_service
         assert isinstance( output_service, VolumeServiceWriter )
 
-        if "dvid" in output_config:            
+        if "dvid" in output_config:
             assert output_config["dvid"]["supervoxels"], \
                 'DVID output service config must use "supervoxels: true"'
 
@@ -306,10 +306,10 @@ class CopySegmentation(Workflow):
             "Please add 'disable-indexing':true to your output dvid config."
 
         logger.info(f"Output bounding box (xyz) is: {output_service.bounding_box_zyx[:,::-1].tolist()}")
-        
+
         input_shape = -np.subtract(*self.input_service.bounding_box_zyx)
         output_shape = -np.subtract(*output_service.bounding_box_zyx)
-        
+
         assert not any(np.array(output_service.preferred_message_shape) % output_service.block_width), \
             "Output message-block-shape should be a multiple of the block size in all dimensions."
         assert (input_shape == output_shape).all(), \
@@ -363,17 +363,17 @@ class CopySegmentation(Workflow):
 
 
             final_box = box_intersection(input_sbm.box, output_sbm.box)
-            
+
             input_box = (input_sbm.box - final_box) // input_sbm.resolution
             input_mask = extract_subvol(input_sbm.lowres_mask, input_box)
-            
+
             output_box = (output_sbm - final_box) // output_sbm.resolution
             output_mask = extract_subvol(output_sbm.lowres_mask, output_box)
-            
+
             assert input_mask.shape == output_mask.shape
             assert input_mask.dtype == output_mask.dtype == np.bool
             final_mask = (input_mask & output_mask)
-            
+
             self.sbm = SparseBlockMask(final_mask, final_box, input_sbm.resolution)
 
         id_offset = options["add-offset-to-ids"]
@@ -382,7 +382,7 @@ class CopySegmentation(Workflow):
             input_mask_labels = np.asarray(input_mask_labels, np.uint64)
             input_mask_labels += id_offset
         self.input_mask_labels = set(input_mask_labels)
-        
+
 
     def _read_pyramid_depth(self):
         """
@@ -403,10 +403,10 @@ class CopySegmentation(Workflow):
         server = output_service.base_service.server # Note: Begins with http://
         uuid = output_service.base_service.uuid
         instance = output_service.base_service.instance_name
-        
+
         output_box_xyz = np.array(output_service.bounding_box_zyx[:, :-1])
         output_center_xyz = (output_box_xyz[0] + output_box_xyz[1]) / 2
-        
+
         link_prefix = f"{server}/neuroglancer/#!"
         link_json = \
         {
@@ -451,7 +451,7 @@ class CopySegmentation(Workflow):
         if (options["download-pre-downsampled"] and (options["input-mask-labels"] or options["output-mask-labels"])):
             # TODO: This restriction could be lifted if we also used the mask when fetching
             #       the downscale pyramids, but that's not yet implemented.  Even if you're
-            #       using 'skip-masking-step', the lowres pyramids are a problem. 
+            #       using 'skip-masking-step', the lowres pyramids are a problem.
             raise RuntimeError("You aren't allow to use download-pre-downsampled if you're using a mask.")
 
         if options["skip-scale-0-write"] and pyramid_depth == 0 and not options["compute-block-statistics"]:
@@ -488,7 +488,7 @@ class CopySegmentation(Workflow):
         No attempt is made to drop duplicate rows
         (e.g. if you started from pre-existing statistics and the new
         bounding-box overlaps with the previous run's).
-        
+
         Args:
             slab_stats_df: DataFrame to be appended to the stats file,
                            with columns and dtypes matching BLOCK_STATS_DTYPES
@@ -512,9 +512,9 @@ class CopySegmentation(Workflow):
     def _process_slab(self, slab_index, output_slab_box ):
         """
         (The main work of this file.)
-        
+
         Process a large slab of voxels:
-        
+
         1. Read a 'slab' of bricks from the input as a BrickWall
         2. Translate it to the output coordinates.
         3. Splice & group the bricks so that they are aligned to the optimal output grid
@@ -531,7 +531,7 @@ class CopySegmentation(Workflow):
             slab_sbm = None
         else:
             slab_sbm = SparseBlockMask.create_from_sbm_box(self.sbm, input_slab_box)
-        
+
         try:
             input_wall = BrickWall.from_volume_service( self.input_service,
                                                         0,
@@ -586,7 +586,7 @@ class CopySegmentation(Workflow):
                     vol = brick.volume
                     brick.compress()
                     return block_stats_for_volume(block_shape, vol, brick.physical_box)
-                
+
                 slab_block_stats_per_brick = padded_wall.bricks.map(block_stats_for_brick).compute()
                 slab_block_stats_df = pd.concat(slab_block_stats_per_brick, ignore_index=True)
                 del slab_block_stats_per_brick
@@ -629,9 +629,9 @@ class CopySegmentation(Workflow):
 
         Args:
             scale: The pyramid scale of the data.
-            
+
             output_service: The output_service to align to and pad from
-            
+
         Returns a pre-executed and persisted BrickWall.
         """
         options = self.config["copysegmentation"]
@@ -671,15 +671,15 @@ class CopySegmentation(Workflow):
                 mask = None
                 if input_mask_labels:
                     mask = mask_for_labels(input_brick.volume, input_mask_labels)
-                
+
                 if output_mask_labels:
                     output_mask = mask_for_labels(output_vol, output_mask_labels)
-                    
+
                     if mask is None:
                         mask = output_mask
                     else:
                         mask[:] &= output_mask
-    
+
                 # Start with the complete output, then
                 # change voxels that fall within both masks.
                 output_vol[mask] = input_brick.volume[mask]
@@ -695,7 +695,7 @@ class CopySegmentation(Workflow):
         del realigned_wall
         padded_wall.persist_and_execute(f"Slab {slab_index}: Scale {scale}: Padding", logger)
         return padded_wall
-        
+
 
     def _write_bricks(self, slab_index, brick_wall, scale, output_service):
         """
@@ -706,26 +706,26 @@ class CopySegmentation(Workflow):
         EMPTY_VOXEL = 0
         dont_overwrite_identical_blocks = self.config["copysegmentation"]["dont-overwrite-identical-blocks"]
         write_empty_blocks = self.config["copysegmentation"]["write-empty-blocks"]
-        
+
         def write_brick(brick):
             logger = logging.getLogger(__name__)
-            
+
             assert (brick.physical_box % block_width == 0).all(), \
                 f"This function assumes each brick's physical data is already block-aligned: {brick}"
-            
+
             if dont_overwrite_identical_blocks:
                 try:
                     existing_stored_brick = output_service.get_subvolume(brick.physical_box, scale)
                 except:
                     logger.error(f"Error reading brick: {brick.physical_box.tolist()}, scale={scale}")
                     raise
-            
+
             x_size = brick.volume.shape[2]
             # Find all non-zero blocks (and record by block index)
             block_coords = []
             for block_index, block_x in enumerate(range(0, x_size, block_width)):
                 new_block = brick.volume[:, :, block_x:block_x+block_width]
-                
+
                 # By default, write this block if it is non-empty
                 write_block = write_empty_blocks or (new_block != EMPTY_VOXEL).any()
 
@@ -756,13 +756,13 @@ class CopySegmentation(Workflow):
             # Find *runs* of non-zero blocks
             block_coords = np.asarray(block_coords, dtype=np.int32)
             block_runs = runlength_encode_to_ranges(block_coords, True) # returns [[Z,Y,X1,X2], [Z,Y,X1,X2], ...]
-            
+
             # Convert stop indexes from inclusive to exclusive
             block_runs[:,-1] += 1
-            
+
             # Discard Z,Y indexes and convert from indexes to pixels
             ranges = block_width * block_runs[:, 2:4]
-            
+
             # iterate through contiguous blocks and write to DVID
             for (data_x_start, data_x_end) in ranges:
                 datacrop = brick.volume[:,:,data_x_start:data_x_end].copy()
