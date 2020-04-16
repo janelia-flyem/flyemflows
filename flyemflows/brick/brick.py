@@ -503,7 +503,8 @@ def realign_bricks_to_new_grid(new_grid, original_bricks, output_accessor_fn=Non
 
     # Special optimization:
     # If the bricks are already aligned, return immediately
-    flags_and_corners = original_bricks.persist().map(check_aligned).compute()
+    original_bricks = original_bricks.persist()
+    flags_and_corners = original_bricks.map(check_aligned).compute()
     if len(flags_and_corners) == 0:
         return original_bricks # No bricks.  Can happen to small volumes when downsampling several times.
 
