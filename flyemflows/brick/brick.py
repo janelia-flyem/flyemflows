@@ -72,6 +72,16 @@ class Brick:
             "Must supply either volume or lazy_creation_fn (not both)"
         self.logical_box = np.asarray(logical_box)
         self.physical_box = np.asarray(physical_box)
+
+        # This is to catch bugs.
+        # These fields are supposed to be read-only.
+        # Create a new Brick from scratch if you need to change these.
+        # Setting this flag will help us catch bugs, but it's imperfect
+        # because it only truly works in single-threaded mode.
+        # (The WRITEABLE flag is not preserved after pickling.)
+        self.logical_box.flags['WRITEABLE'] = False
+        self.physical_box.flags['WRITEABLE'] = False
+
         self.location_id = location_id
 
         if self.location_id is None:
@@ -307,6 +317,11 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
 
     def make_brick( logical_and_physical_box ):
         logical_box, physical_box = logical_and_physical_box
+
+        # See comment in Brick.__init__
+        logical_box.flags['WRITEABLE'] = False
+        physical_box.flags['WRITEABLE'] = False
+
         location_id = tuple(logical_box[0] // grid.block_shape)
         if lazy:
             return Brick(logical_box, physical_box, location_id=location_id, lazy_creation_fn=volume_accessor_func, compression=compression)
