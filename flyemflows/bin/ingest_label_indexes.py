@@ -417,11 +417,6 @@ class StatsBatchProcessor:
 
         self.user = os.environ.get("USER", "unknown")
         self.mod_time = datetime.datetime.now().isoformat()
-        
-        server, uuid, instance = instance_info
-        if not server.startswith('http://'):
-            server = 'http://' + server
-            instance_info = (server, uuid, instance)
         self.instance_info = instance_info
 
 

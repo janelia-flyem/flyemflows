@@ -402,7 +402,7 @@ class CopySegmentation(Workflow):
         We assume that the output server is hosting neuroglancer at http://<server>:<port>/neuroglancer/
         """
         output_service = self.output_service
-        server = output_service.base_service.server # Note: Begins with http://
+        server = output_service.base_service.server
         uuid = output_service.base_service.uuid
         instance = output_service.base_service.instance_name
 

@@ -255,9 +255,6 @@ class DvidVolumeService(VolumeServiceWriter):
         ##   self.uuid will be resolved, but volume_config["dvid"]["uuid"]
         ##   will not be overwritten. It will remain unresolved.
         ##
-        if not volume_config["dvid"]["server"].startswith('http://'):
-            volume_config["dvid"]["server"] = 'http://' + volume_config["dvid"]["server"]
-
         self._server = volume_config["dvid"]["server"]
         self._uuid = resolve_ref( volume_config["dvid"]["server"],
                                   volume_config["dvid"]["uuid"] )
