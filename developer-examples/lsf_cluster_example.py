@@ -58,6 +58,8 @@ def init_cluster(num_workers, wait_for_all_workers=True):
         print(f"Waiting for {required_workers - len(cluster.scheduler.workers)} workers...")
         time.sleep(1.0)
     
+    print(f'Dashboard running at {client.cluster.dashboard_link}')
+
     return client
 
 def main():
