@@ -159,7 +159,7 @@ class ContingentRelabel(Workflow):
             output_service.write_subvolume(box, final_vol)
 
         for batch_index, batch_boxes in enumerate(batches):
-            with Timer(f"Batch {batch_index}: Computing tables", logger):
+            with Timer(f"Batch {batch_index}: Relabeling", logger):
                 # Aim for 4 partitions per worker
                 total_cores = sum( self.client.ncores().values() )
                 (db.from_sequence(batch_boxes, npartitions=4*total_cores)
