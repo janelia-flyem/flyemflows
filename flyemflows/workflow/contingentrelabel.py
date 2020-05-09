@@ -103,8 +103,8 @@ class ContingentRelabel(Workflow):
         if isinstance(primary_service.base_service, DvidVolumeService):
             primary_is_supervoxels = primary_service.base_service.supervoxels
 
-        roi = options["left-roi"]
-        subset_labels = load_body_list(options["left-subset-labels"], primary_is_supervoxels)
+        roi = options["roi"]
+        subset_labels = load_body_list(options["subset-labels"], primary_is_supervoxels)
         subset_labels = set(subset_labels)
         sparse_fetch = not options["skip-sparse-fetch"]
 
