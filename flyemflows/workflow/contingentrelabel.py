@@ -9,6 +9,7 @@ from dvid_resource_manager.client import ResourceManagerClient
 from neuclease.util import Timer, round_box, SparseBlockMask, boxes_from_grid, iter_batches
 from neuclease.dvid import fetch_roi
 
+from ..util import replace_default_entries
 from ..volumes import VolumeService, VolumeServiceWriter, SegmentationVolumeSchema, DvidVolumeService, ScaledVolumeService
 from .util.config_helpers import BodyListSchema, load_body_list
 from . import Workflow
@@ -25,6 +26,8 @@ class ContingentRelabel(Workflow):
     relabel the 'primary' volume according to the mapping,
     using both the 'primary' and 'contingent' labels at each voxel
     position as the mapping key.
+
+    To produce a suitable contingent-mapping for this workflow from a contingency table, see flyemflows/workflow/contingent_mapping.py
     """
     ContingentRelabelOptionsSchema = {
         "type": "object",
@@ -50,7 +53,7 @@ class ContingentRelabel(Workflow):
                 "description": "Bricks will be relabeled in batches.\n"
                                "This setting specifies the number of bricks in each batch.\n",
                 "type": "integer",
-                "default": "1000"
+                "default": 1000
             },
             "write-changed-bricks-only": {
                 "description": "Write only bricks that have voxels that were relabeled; leave others untouched.\n"
@@ -81,7 +84,7 @@ class ContingentRelabel(Workflow):
         "primary-input": SegmentationVolumeSchema,
         "contingency-input": SegmentationVolumeSchema,
         "output": SegmentationVolumeSchema,
-        "ContingentRelabel": ContingentRelabelOptionsSchema
+        "contingentrelabel": ContingentRelabelOptionsSchema
     })
 
     @classmethod
@@ -169,6 +172,11 @@ class ContingentRelabel(Workflow):
         self.resource_mgr_client = ResourceManagerClient( mgr_config["server"], mgr_config["port"] )
         self.primary_service = VolumeService.create_from_config( primary_config, self.resource_mgr_client )
         self.contingency_service = VolumeService.create_from_config( contingency_config, self.resource_mgr_client )
+
+        # Replace 'auto' dimensions with input bounding box
+        replace_default_entries(output_config["geometry"]["bounding-box"], self.primary_service.bounding_box_zyx[:, ::-1])
+        replace_default_entries(output_config["geometry"]["message-block-shape"], self.primary_service.preferred_message_shape[::-1])
+
         self.output_service = VolumeService.create_from_config( output_config, self.resource_mgr_client )
 
         assert isinstance(self.output_service, VolumeServiceWriter)
