@@ -1,4 +1,5 @@
 import copy
+import pickle
 import logging
 
 import numpy as np
@@ -128,7 +129,14 @@ class ContingentRelabel(Workflow):
             _primary_labels = pd.unique(primary_vol.reshape(-1))  # noqa
             _contingency_labels = pd.unique(contingency_vol.reshape(-1))  # noqa
 
-            _cm = np.load(options["contingent-mapping"])
+            cm_path = options["contingent-mapping"]
+            if cm_path.endswith('.npy'):
+                _cm = np.load(options["contingent-mapping"])
+            elif cm_path.endswith('.pkl'):
+                _cm = pickle.load(open(cm_path, 'rb'))
+            else:
+                raise RuntimeError(f"Don't know how to open mapping file: {cm_path}")
+
             cm_df = pd.DataFrame(_cm)
             assert {*cm_df.columns} == {'primary', 'contingency', 'final'}
 
