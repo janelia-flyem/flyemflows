@@ -647,7 +647,7 @@ class DvidVolumeService(VolumeServiceWriter):
     @auto_retry(2, pause_between_tries=5*60.0, logging_name=__name__,
                 predicate=lambda ex: '503' in str(ex.args[0]) or '504' in str(ex.args[0]))
     @auto_retry(3, pause_between_tries=60.0, logging_name=__name__)
-    def write_subvolume(self, subvolume, offset_zyx, scale):
+    def write_subvolume(self, subvolume, offset_zyx, scale=0):
         req_bytes = self._dtype_nbytes * np.prod(subvolume.shape)
 
         offset_zyx = np.asarray(offset_zyx)

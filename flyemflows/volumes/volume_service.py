@@ -316,6 +316,6 @@ class VolumeServiceReader(VolumeService):
 class VolumeServiceWriter(VolumeServiceReader):
 
     @abstractmethod
-    def write_subvolume(self, subvolume, offset_zyx, scale):
+    def write_subvolume(self, subvolume, offset_zyx, scale=0):
         raise NotImplementedError
 
