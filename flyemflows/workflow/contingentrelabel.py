@@ -156,7 +156,7 @@ class ContingentRelabel(Workflow):
             final_vol = input_df['final'].values.reshape(primary_vol.shape)
             del input_df
 
-            output_service.write_subvolume(box, final_vol)
+            output_service.write_subvolume(final_vol, box[0])
 
         for batch_index, batch_boxes in enumerate(batches):
             with Timer(f"Batch {batch_index}: Relabeling", logger):
