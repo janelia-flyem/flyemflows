@@ -7,7 +7,7 @@ import pandas as pd
 import dask.bag as db
 
 from dvid_resource_manager.client import ResourceManagerClient
-from neuclease.util import Timer, round_box, SparseBlockMask, boxes_from_grid, iter_batches
+from neuclease.util import Timer, round_box, SparseBlockMask, boxes_from_grid, iter_batches, extract_subvol, box_intersection
 from neuclease.dvid import fetch_roi
 
 from ..util import replace_default_entries
@@ -226,14 +226,30 @@ class ContingentRelabel(Workflow):
 
             seg_box = volume_service.bounding_box_zyx
             seg_box = round_box(seg_box, brick_shape)
-            seg_box_s0 = seg_box * 2**scale
             seg_box_s5 = seg_box // 2**(5-scale)
 
-            with Timer(f"Fetching mask for ROI '{roi}' ({seg_box_s0[:, ::-1].tolist()})", logger):
-                roi_mask_s5, _ = fetch_roi(server, uuid, roi, format='mask', mask_box=seg_box_s5)
+            with Timer(f"Fetching mask for ROI '{roi}'", logger):
+                roi_mask_s5, roi_box_s5 = fetch_roi(server, uuid, roi, format='mask')
+
+            # Restrict to input bounding box
+            clipped_roi_box_s5 = box_intersection(seg_box_s5, roi_box_s5)
+            clipped_roi_mask_s5 = extract_subvol(roi_mask_s5, clipped_roi_box_s5-roi_box_s5[0])
+
+            # Align to brick grid
+            aligned_roi_box_s5 = round_box(clipped_roi_box_s5, brick_shape // 2**5, 'out')
+            padding = (aligned_roi_box_s5 - clipped_roi_box_s5)
+            padding[0] *= -1
+            aligned_roi_mask_s5 = np.pad(clipped_roi_mask_s5, padding.transpose())
+
+            # At the service native scale
+            aligned_roi_box = (2**(5-scale)*aligned_roi_box_s5)
+            logger.info(f"Brick-aligned ROI '{roi}' has bounding-box {aligned_roi_box[:, ::-1].tolist()}")
 
             # SBM 'full-res' corresponds to the input service voxels, not necessarily scale-0.
-            sbm = SparseBlockMask.create_from_highres_mask(roi_mask_s5, 2**(5-scale), seg_box, brick_shape)
+            sbm = SparseBlockMask.create_from_highres_mask( aligned_roi_mask_s5,
+                                                            2**(5-scale),
+                                                            aligned_roi_box,
+                                                            brick_shape )
         elif subset_labels:
             try:
                 sbm = volume_service.sparse_block_mask_for_labels([*subset_labels])
@@ -248,4 +264,13 @@ class ContingentRelabel(Workflow):
                                     clipped=True)
             return np.array([*boxes])
         else:
-            return sbm.sparse_boxes(brick_shape)
+            boxes = sbm.sparse_boxes(brick_shape)
+            boxes = np.array(boxes)
+
+            # Clip
+            boxes[:,0,:] = np.maximum(volume_service.bounding_box_zyx[0], boxes[:,0,:])
+            boxes[:,1,:] = np.minimum(volume_service.bounding_box_zyx[1], boxes[:,1,:])
+            assert (boxes[:,0,:] < boxes[:,1,:]).all(), \
+                "After cropping to input volume, some bricks disappeared."
+
+            return boxes
