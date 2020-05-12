@@ -141,7 +141,7 @@ class ScaledVolumeService(VolumeServiceWriter):
             return np.asarray(requested_data, order='C')
 
 
-    def write_subvolume(self, subvolume, offset_zyx, scale):
+    def write_subvolume(self, subvolume, offset_zyx, scale=0):
         """
         Write the given data into the original volume source
         at the given scale, but upsample/downsample it first

@@ -126,7 +126,7 @@ class LabelmappedVolumeService(VolumeServiceWriter):
 
         return volume
 
-    def write_subvolume(self, subvolume, offset_zyx, scale):
+    def write_subvolume(self, subvolume, offset_zyx, scale=0):
         if self.apply_when_writing:
             # Copy first to avoid remapping user's input volume
             # (which they might want to reuse)
