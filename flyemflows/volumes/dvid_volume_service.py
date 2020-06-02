@@ -492,6 +492,14 @@ class DvidVolumeService(VolumeServiceWriter):
                                   settings["enable-index"],
                                   pyramid_depth )
 
+        # Workaround for https://github.com/janelia-flyem/dvid/issues/344
+        # Write an empty block to the first and last blocks to set the
+        # bounding-box in DVID now, without any concurrency issues.
+        empty_block = np.zeros((64,64,64), np.uint64)
+        first_block_start, last_block_stop = round_box(self.bounding_box_zyx, 64, 'out')
+        last_block_start = last_block_stop - 64
+        self.write_subvolume(empty_block, first_block_start)
+        self.write_subvolume(empty_block, last_block_start)
 
     def _create_grayscale_instances(self, volume_config):
         """
