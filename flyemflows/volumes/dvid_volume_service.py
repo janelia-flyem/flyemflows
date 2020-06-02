@@ -133,6 +133,15 @@ DvidServiceSchema = \
                            "      and use that instead.\n",
             "type": "boolean",
             "default": False
+        },
+        "write-empty-blocks": {
+            "description": "By default, write empty (zero-filled) blocks to the output.\n"
+                           "If 'false', omit those blocks when writing to DVID if possible, leaving the blocks untouched.\n"
+                           "This leaves empty blocks empty (implicitly zeros), but if the block had a previous\n"
+                           "value in dvid, it won't be overwritten with zeros.\n"
+                           "This setting should only be used when you start starting with a completely empty output instance.\n",
+            "type": "boolean",
+            "default": True
         }
     }
 }
@@ -388,6 +397,7 @@ class DvidVolumeService(VolumeServiceWriter):
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
         self._available_scales = available_scales
         self._use_resource_manager_for_sparse_coords = use_resource_manager_for_sparse_coords
+        self._write_empty_blocks = volume_config["dvid"]["write-empty-blocks"]
 
         ##
         ## Overwrite config entries that we might have modified
@@ -684,7 +694,7 @@ class DvidVolumeService(VolumeServiceWriter):
             if self._instance_type in ('labelarray', 'labelmap') and is_block_aligned:
                 # Encode and post in two separate steps, so that the compression
                 # can be peformed before obtaining a token from the resource manager.
-                encoded = encode_labelarray_volume(offset_zyx, subvolume, self.gzip_level)
+                encoded = encode_labelarray_volume(offset_zyx, subvolume, self.gzip_level, not self._write_empty_blocks)
                 with self._resource_manager_client.access_context(self._server, False, 1, req_bytes):
                     # Post pre-encoded data with 'is_raw'
                     post_labelmap_blocks( self._server, self._uuid, instance_name, None, encoded, scale,
