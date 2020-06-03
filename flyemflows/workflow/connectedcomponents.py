@@ -530,6 +530,9 @@ class ConnectedComponents(Workflow):
             grouped_mapping_ddf = ddf.from_pandas(grouped_mapping_df,
                                                   name='grouped_mapping',
                                                   npartitions=max(1, bricks_ddf.npartitions // 100))
+            # Note:
+            #   I've seen strange errors here from ddf.DataFrame.repartition() if all partitions are empty.
+            #   If that's what you're seeing, make sure the input is reasonable.
             grouped_mapping_ddf = grouped_mapping_ddf.repartition(npartitions=bricks_ddf.npartitions)
             assert None not in grouped_mapping_ddf.divisions
 
