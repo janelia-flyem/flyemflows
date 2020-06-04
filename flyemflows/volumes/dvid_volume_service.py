@@ -14,7 +14,8 @@ from dvidutils import LabelMapper
 
 from neuclease.util import Timer, choose_pyramid_depth, round_box, parse_timestamp
 from neuclease.dvid import ( fetch_repo_instances, resolve_ref, fetch_instance_info, fetch_volume_box,
-                             fetch_raw, post_raw, fetch_labelarray_voxels, encode_labelarray_volume, post_labelmap_blocks,
+                             fetch_raw, post_raw, fetch_labelmap_voxels, fetch_labelmap_voxels_chunkwise,
+                             encode_labelarray_volume, post_labelmap_blocks,
                              update_extents, extend_list_value, create_voxel_instance, create_labelmap_instance,
                              fetch_mapping, fetch_mappings, fetch_labelindex, convert_labelindex_to_pandas,
                              read_kafka_messages, filter_kafka_msgs_by_timerange, compute_affected_bodies )
@@ -626,15 +627,30 @@ class DvidVolumeService(VolumeServiceWriter):
                 # Obtain permission from the resource manager while fetching the compressed data,
                 # but release the resource token before inflating the data.
                 with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
-                    vol_proxy = fetch_labelarray_voxels( self._server,
-                                                         self._uuid,
-                                                         instance_name,
-                                                         box_zyx,
-                                                         scale,
-                                                         self._throttle,
-                                                         supervoxels=self.supervoxels,
-                                                         format='lazy-array' )
-                # Inflate
+                    aligned_box = round_box(box_zyx, 64, 'out')
+                    if 8*np.prod(aligned_box[1] - aligned_box[0]) < 2**31:
+                        vol_proxy = fetch_labelmap_voxels( self._server,
+                                                           self._uuid,
+                                                           instance_name,
+                                                           box_zyx,
+                                                           scale,
+                                                           self._throttle,
+                                                           supervoxels=self.supervoxels,
+                                                           format='lazy-array' )
+                    else:
+                        # Requested subvolume is too large to download in one request.
+                        # Download it in chunks, with a somewhat arbitrary chunkshape
+                        chunk_shape = (64, 128, 10240)
+                        vol_proxy = fetch_labelmap_voxels_chunkwise( self._server,
+                                                                     self._uuid,
+                                                                     instance_name,
+                                                                     box_zyx,
+                                                                     scale,
+                                                                     self._throttle,
+                                                                     supervoxels=self.supervoxels,
+                                                                     format='lazy-array',
+                                                                     chunk_shape=chunk_shape )
+                # Inflate after releasing resource token
                 return vol_proxy()
             else:
                 with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
