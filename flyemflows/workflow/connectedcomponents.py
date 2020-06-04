@@ -354,14 +354,14 @@ class ConnectedComponents(Workflow):
             assert (links_df.dtypes == np.uint64).all()
 
         with Timer("Writing links_df.pkl", logger):
-            pickle.dump(links_df, open('links_df.pkl', 'wb'))
+            pickle.dump(links_df, open('links_df.pkl', 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
 
         with Timer("Concatenating cc_overlaps", logger):
             cc_mapping_df = pd.concat(cc_overlaps.compute(), ignore_index=True)
             cc_mapping_df = cc_mapping_df[['lz0', 'ly0', 'lx0', 'orig', 'cc']]
             
         with Timer("Writing cc_mapping_df.pkl", logger):
-            pickle.dump(cc_mapping_df, open('cc_mapping_df.pkl', 'wb'))
+            pickle.dump(cc_mapping_df, open('cc_mapping_df.pkl', 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
             
         #
         # Append columns for original labels
@@ -395,7 +395,7 @@ class ConnectedComponents(Workflow):
             assert (links_df.dtypes == np.uint64).all()
 
         with Timer("Writing links_df.pkl", logger):
-            pickle.dump(links_df, open('links_df.pkl', 'wb'))
+            pickle.dump(links_df, open('links_df.pkl', 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
 
         with Timer("Dropping 'island' components", logger):
             # Before computing the CC of the whole graph, we can 
@@ -425,7 +425,7 @@ class ConnectedComponents(Workflow):
             del halo_links, link_cc
 
         with Timer("Writing node_df_unfiltered.pkl", logger):
-            pickle.dump(node_df, open('node_df_unfiltered.pkl', 'wb'))
+            pickle.dump(node_df, open('node_df_unfiltered.pkl', 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
 
         with Timer("Dropping unsplit objects", logger):
             # Original objects that ended up with only a single
@@ -463,7 +463,7 @@ class ConnectedComponents(Workflow):
             node_df['final_cc'] = mapper.apply(node_df['link_cc'].values)
         
         with Timer("Writing node_df_final.pkl", logger):
-            pickle.dump(node_df, open('node_df_final.pkl', 'wb'))
+            pickle.dump(node_df, open('node_df_final.pkl', 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
 
         if options["log-relabeled-objects"]:
             # This is mostly for convenient unit testing
