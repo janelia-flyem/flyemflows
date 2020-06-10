@@ -87,6 +87,17 @@ def main_impl(args):
             if args.agglomeration_mapping.endswith('.csv'):
                 mapping_pairs = load_edge_csv(args.agglomeration_mapping)
                 segment_to_body_df = pd.DataFrame(mapping_pairs, columns=AGGLO_MAP_COLUMNS)
+            elif args.agglomeration_mapping.endswith('.npy'):
+                mapping_pairs = np.load(args.agglomeration_mapping)
+                # Accept either a (N,2) array or an (N,) record array
+                if mapping_pairs.ndim == 2 and mapping_pairs.shape[1] == 2:
+                    segment_to_body_df = pd.DataFrame(mapping_pairs, columns=AGGLO_MAP_COLUMNS)
+                elif mapping_pairs.ndim == 1:
+                    segment_to_body_df = pd.DataFrame(mapping_pairs)
+                    assert segment_to_body_df.columns.tolist() == AGGLO_MAP_COLUMNS, \
+                        f"mapping given in {args.agglomeration_mapping} has the wrong column names."
+                else:
+                    raise RuntimeError(f"Did not understand mapping file: {args.agglomeration_mapping}")
             else:
                 if set(args.agglomeration_mapping) - set('0123456789abcdef'):
                     raise RuntimeError(f"Your agglomeration mapping is neither a CSV file nor a UUID: {args.agglomeration_mapping}")
