@@ -152,8 +152,19 @@ class CopySegmentation(Workflow):
                 "type": "integer",
                 "default": 0,
             },
-            "input-mask-labels": BodyListSchema,
-            "output-mask-labels": BodyListSchema,
+            "input-mask-labels": {
+                "description": "If provided, only voxels under the given input labels in the output will be modified.\n"
+                               "Others will remain untouched.\n",
+                **BodyListSchema
+            },
+            "output-mask-labels": {
+                "description": "If provided, only voxels under the given labels in the output will be modified.\n"
+                               "Others will remain untouched.\n"
+                               "Note: At the time of this writing, the output mask is NOT used to enable sparse-fetching from DVID.\n"
+                               "      Only the input mask is used for that, so if you're using an output mask without an input mask,\n"
+                               "      you'll still fetch the entire input volume, even if most of it will be written unchanged!\n",
+                **BodyListSchema
+            },
             "skip-masking-step": {
                 "description": "When using an input mask, normally the entire output block must be fetched so it can be combined with the input.\n"
                                "but if you know you're writing to an empty volume, or if the output happens to match the input\n"
@@ -172,17 +183,6 @@ class CopySegmentation(Workflow):
             }
         }
     }
-
-    OptionsSchema["properties"]["input-mask-labels"]["description"] += (
-        "If provided, only voxels under the given input labels in the output will be modified.\n"
-        "Others will remain untouched.\n" )
-
-    OptionsSchema["properties"]["output-mask-labels"]["description"] += (
-        "If provided, only voxels under the given labels in the output will be modified.\n"
-        "Others will remain untouched.\n"
-        "Note: At the time of this writing, the output mask is NOT used to enable sparse-fetching from DVID.\n"
-        "      Only the input mask is used for that, so if you're using an output mask without an input mask,\n"
-        "      you'll still fetch the entire input volume, even if most of it will be written unchanged!\n" )
 
     Schema = copy.deepcopy(Workflow.schema())
     Schema["properties"].update({

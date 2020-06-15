@@ -39,12 +39,13 @@ class SparseBlockstats(Workflow):
                 "type": "string",
                 "default": "block-statistics.h5"
             },
-            "mask-labels": BodyListSchema
+            "mask-labels": {
+                "description": "Only blocks which contain the given labels from the mask-input will be processed.\n",
+                **BodyListSchema
+            }
         }
     }
 
-    OptionsSchema["properties"]["mask-labels"]["description"] += (
-        "Only blocks which contain the given labels from the mask-input will be processed.\n")
 
     Schema = copy.deepcopy(Workflow.schema())
     Schema["properties"].update({

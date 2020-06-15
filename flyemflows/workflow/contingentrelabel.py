@@ -43,7 +43,11 @@ class ContingentRelabel(Workflow):
                 "type": "string",
                 "default": ""
             },
-            "subset-labels": BodyListSchema,
+            "subset-labels": {
+                "description": "If provided, only the listed labels will be analyzed.\n"
+                               "Other labels will be left untouched in the results.\n",
+                **BodyListSchema,
+            },
             "skip-sparse-fetch": {
                 "description": "If True, do not attempt to fetch the sparsevol-coarse for the given subset-labels.\n"
                                "Just fetch the entire bounding-box.\n",
@@ -75,10 +79,6 @@ class ContingentRelabel(Workflow):
             }
         }
     }
-
-    ContingentRelabelOptionsSchema["properties"]["subset-labels"]["description"] += (
-        "If provided, only the listed labels will be analyzed.\n"
-        "Other labels will be left untouched in the results.\n")
 
     Schema = copy.deepcopy(Workflow.schema())
     Schema["properties"].update({

@@ -75,7 +75,11 @@ class FindAdjacencies(Workflow):
                 "default": 0
             },
             "subset-label-groups": LabelGroupSchema,
-            "subset-labels": BodyListSchema,
+            "subset-labels": {
+                "description": "If provided, this list will be used to limit the set adjacencies returned.\n"
+                               "See 'subset-labels-requirement'\n",
+                **BodyListSchema
+            },
             "subset-labels-requirement": {
                 "description": "When using subset-labels, use this setting to specify whether\n"
                                "each edge must include 1 or 2 of the listed labels.\n",
@@ -116,10 +120,6 @@ class FindAdjacencies(Workflow):
         }
     }
     
-    FindAdjacenciesOptionsSchema["properties"]["subset-labels"]["description"] += (
-        "If provided, this list will be used to limit the set adjacencies returned.\n"
-        "See 'subset-labels-requirement'\n")
-
     Schema = copy.deepcopy(Workflow.schema())
     Schema["properties"].update({
         "input": SegmentationVolumeSchema,
