@@ -49,6 +49,12 @@ class MaskedCopy(Workflow):
                                "This setting specifies the number of bricks in each batch.\n",
                 "type": "integer",
                 "default": 1000
+            },
+            "restart-at-batch": {
+                "description": "If you're restarting the job for some reason and\n"
+                               "you want to skip the first N batches, set this.\n",
+                "type": "integer",
+                "default": 0
             }
         }
     }
@@ -84,6 +90,10 @@ class MaskedCopy(Workflow):
         logger.info(f"Processing {len(batches)} batches of {options['batch-size']} bricks each.")
 
         for batch_index, batch_boxes in enumerate(batches):
+            if batch_index < options["restart-at-batch"]:
+                logger.info("Batch {batch_index}: Skipping")
+                continue
+
             with Timer(f"Batch {batch_index}: Copying", logger):
                 # Aim for 4 partitions per worker
                 total_cores = sum( self.client.ncores().values() )
