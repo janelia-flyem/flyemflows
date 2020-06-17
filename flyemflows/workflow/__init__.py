@@ -8,6 +8,7 @@ from .copysegmentation import CopySegmentation
 from .decimatemeshes import DecimateMeshes
 from .findadjacencies import FindAdjacencies
 from .labelmapcopy import LabelmapCopy
+from .maskedcopy import MaskedCopy
 from .masksegmentation import MaskSegmentation
 from .roistats import RoiStats
 from .samplepoints import SamplePoints
@@ -26,6 +27,7 @@ BUILTIN_WORKFLOWS = [
     DecimateMeshes,
     FindAdjacencies,
     LabelmapCopy,
+    MaskedCopy,
     MaskSegmentation,
     RoiStats,
     SamplePoints,

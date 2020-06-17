@@ -27,7 +27,11 @@ SEGMENT_STATS_COLUMNS = ['segment', 'voxel_count', 'bounding_box_start', 'boundi
 
 class MaskSegmentation(Workflow):
     """
-    Workflow to "mask out" a portion of a DVID segmentation volume.
+    Workflow to "mask out" a portion of a DVID segmentation volume from a DVID ROI.
+
+    Note:
+        For masking out a segmentation based on a high-res mask, such as a labelmap
+        instance, see the MaskedCopy workflow.
     """
 
     OptionsSchema = {
