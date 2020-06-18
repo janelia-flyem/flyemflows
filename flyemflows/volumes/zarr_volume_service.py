@@ -2,6 +2,7 @@ import os
 import platform
 
 import zarr
+import numcodecs
 import numpy as np
 
 from confiddler import validate, flow_style
@@ -52,6 +53,12 @@ ZarrCreationSettingsSchema = \
             "minValue": -1,
             "maxValue": 10, # arbitrary limit, but if you're using a higher value, you're probably mistaken.
             "default": -1
+        },
+        "compression": {
+            "description": "What type of compression to use.  We only use options supported by numcodecs.Blosc\n",
+            "type": "string",
+            "enum": ['', 'blosc-blosclz', 'blosc-lz4', 'blosc-lz4hc', 'blosc-snappy', 'blosc-zlib', 'blosc-zstd'],
+            "default": 'blosc-zstd'
         }
     }
 }
@@ -294,6 +301,14 @@ class ZarrVolumeService(VolumeServiceWriter):
         creation_shape = np.array(volume_config["zarr"]["creation-settings"]["shape"][::-1])
         replace_default_entries(creation_shape, bounding_box_zyx[1] - global_offset)
 
+        compression = volume_config["zarr"]["creation-settings"]["compression"]
+        if compression:
+            assert compression.startswith('blosc-')
+            cname = compression[len('blosc-'):]
+            compressor = numcodecs.Blosc(cname)
+        else:
+            compressor = None
+
         if create_if_necessary:
             max_scale = volume_config["zarr"]["creation-settings"]["max-scale"]
             if max_scale == -1:
@@ -345,4 +360,4 @@ class ZarrVolumeService(VolumeServiceWriter):
                                                                             shape=scaled_shape.tolist(),
                                                                             dtype=np.dtype(dtype),
                                                                             chunks=chunks,
-                                                                            compressor=None )
+                                                                            compressor=compressor )
