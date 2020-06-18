@@ -72,11 +72,8 @@ class MaskedCopy(Workflow):
         return MaskedCopy.Schema
 
     def execute(self):
-        input_service, mask_service, output_service = self.init_services()
         options = self.config["maskedcopy"]
-
-        # Boxes are determined by the left volume/labels/roi
-        boxes = self.init_boxes( input_service, options["roi"] )
+        input_service, mask_service, output_service = self.init_services()
 
         def _masked_copy(box):
             seg_vol = input_service.get_subvolume(box)
@@ -85,13 +82,16 @@ class MaskedCopy(Workflow):
             output_service.write_subvolume(seg_vol, box[0])
             return (*box[0], mask_vol.sum())
 
+        # Boxes are determined by the left volume/labels/roi
+        boxes = self.init_boxes( input_service, options["roi"] )
+
         batches = iter_batches(boxes, options["batch-size"])
         logger.info(f"Performing masked copy of {len(boxes)} bricks in total.")
         logger.info(f"Processing {len(batches)} batches of {options['batch-size']} bricks each.")
 
         for batch_index, batch_boxes in enumerate(batches):
             if batch_index < options["restart-at-batch"]:
-                logger.info("Batch {batch_index}: Skipping")
+                logger.info(f"Batch {batch_index}: Skipping")
                 continue
 
             with Timer(f"Batch {batch_index}: Copying", logger):
@@ -135,41 +135,38 @@ class MaskedCopy(Workflow):
         return input_service, mask_service, output_service
 
     def init_boxes(self, volume_service, roi):
-        sbm = None
-        if roi:
-            base_service = volume_service.base_service
-            assert isinstance(base_service, DvidVolumeService), \
-                "Can't specify an ROI unless you're using a dvid input"
-
-            assert isinstance(volume_service, (ScaledVolumeService, DvidVolumeService)), \
-                "The 'roi' option doesn't support adapters other than 'rescale-level'"
-            scale = 0
-            if isinstance(volume_service, ScaledVolumeService):
-                scale = volume_service.scale_delta
-                assert scale <= 5, \
-                    "The 'roi' option doesn't support volumes downscaled beyond level 5"
-
-            server, uuid, _seg_instance = base_service.instance_triple
-
-            brick_shape = volume_service.preferred_message_shape
-            assert not (brick_shape % 2**(5-scale)).any(), \
-                "If using an ROI, select a brick shape that is divisible by 32"
-
-            seg_box = volume_service.bounding_box_zyx
-            seg_box = round_box(seg_box, brick_shape)
-            seg_box_s0 = seg_box * 2**scale
-            seg_box_s5 = seg_box // 2**(5-scale)
-
-            with Timer(f"Fetching mask for ROI '{roi}' ({seg_box_s0[:, ::-1].tolist()})", logger):
-                roi_mask_s5, _ = fetch_roi(server, uuid, roi, format='mask', mask_box=seg_box_s5)
-
-            # SBM 'full-res' corresponds to the input service voxels, not necessarily scale-0.
-            sbm = SparseBlockMask.create_from_highres_mask(roi_mask_s5, 2**(5-scale), seg_box, brick_shape)
-
-        if sbm is None:
+        if not roi:
             boxes = boxes_from_grid(volume_service.bounding_box_zyx,
                                     volume_service.preferred_message_shape,
                                     clipped=True)
             return np.array([*boxes])
-        else:
-            return sbm.sparse_boxes(brick_shape)
+
+        base_service = volume_service.base_service
+        assert isinstance(base_service, DvidVolumeService), \
+            "Can't specify an ROI unless you're using a dvid input"
+
+        assert isinstance(volume_service, (ScaledVolumeService, DvidVolumeService)), \
+            "The 'roi' option doesn't support adapters other than 'rescale-level'"
+        scale = 0
+        if isinstance(volume_service, ScaledVolumeService):
+            scale = volume_service.scale_delta
+            assert scale <= 5, \
+                "The 'roi' option doesn't support volumes downscaled beyond level 5"
+
+        server, uuid, _seg_instance = base_service.instance_triple
+
+        brick_shape = volume_service.preferred_message_shape
+        assert not (brick_shape % 2**(5-scale)).any(), \
+            "If using an ROI, select a brick shape that is divisible by 32"
+
+        seg_box = volume_service.bounding_box_zyx
+        seg_box = round_box(seg_box, brick_shape)
+        seg_box_s0 = seg_box * 2**scale
+        seg_box_s5 = seg_box // 2**(5-scale)
+
+        with Timer(f"Fetching mask for ROI '{roi}' ({seg_box_s0[:, ::-1].tolist()})", logger):
+            roi_mask_s5, _ = fetch_roi(server, uuid, roi, format='mask', mask_box=seg_box_s5)
+
+        # SBM 'full-res' corresponds to the input service voxels, not necessarily scale-0.
+        sbm = SparseBlockMask(roi_mask_s5, seg_box, 2**(5-scale))
+        return sbm.sparse_boxes(brick_shape)
