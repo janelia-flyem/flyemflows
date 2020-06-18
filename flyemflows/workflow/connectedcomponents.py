@@ -51,10 +51,26 @@ class ConnectedComponents(Workflow):
                 "default": False
             },
             "roi": {
-                "description": "Limit analysis to bricks that intersect the given ROI.\n"
-                               "(Only for DVID inputs.)",
-                "type": "string",
-                "default": ""
+                "description": "Limit analysis to bricks that intersect the given DVID ROI.\n",
+                "type": "object",
+                "default": {},
+                "properties": {
+                    "server": {
+                        "description": "dvid server for the ROI. If not provided, the input server will be used (if possible).",
+                        "type": "string",
+                        "default": ""
+                    },
+                    "uuid": {
+                        "description": "dvid UUID for the ROI.  If not provided, the input UUID will be used (if possible).",
+                        "type": "string",
+                        "default": ""
+                    },
+                    "name": {
+                        "description": "name of the ROI",
+                        "type": "string",
+                        "default": ""
+                    }
+                }
             },
             "halo": {
                 "description": "How much overlapping context between bricks in the grid (in voxels)\n",
@@ -208,8 +224,7 @@ class ConnectedComponents(Workflow):
         subset_labels = set(subset_labels)
         
         sparse_fetch = not options["skip-sparse-fetch"]
-        roi = options["roi"]
-        input_wall = self.init_brickwall(input_service, sparse_fetch and subset_labels, roi)
+        input_wall = self.init_brickwall(input_service, sparse_fetch and subset_labels, options["roi"])
         
         def brick_cc(brick):
             orig_vol = brick.volume
@@ -643,7 +658,7 @@ class ConnectedComponents(Workflow):
         if isinstance(self.output_service.base_service, DvidVolumeService):
             if not self.output_service.base_service.supervoxels:
                 raise RuntimeError("Can't write to a non-supervoxels output service.")
-            
+
             if not self.output_service.base_service.disable_indexing:
                 logger.warning("******************************************************************************")
                 logger.warning("Your output config does not specify 'disable-indexing', which means DVID will "
@@ -653,25 +668,26 @@ class ConnectedComponents(Workflow):
                 logger.warning("******************************************************************************")
 
         logger.info(f"Output bounding box: {self.output_service.bounding_box_zyx[:,::-1].tolist()}")
-        
+
 
     def init_brickwall(self, volume_service, subset_labels, roi):
         sbm = None
 
-        if roi:
+        if roi["name"]:
             base_service = volume_service.base_service
-            assert isinstance(base_service, DvidVolumeService), \
-                "Can't specify an ROI unless you're using a dvid input"
 
-            assert isinstance(volume_service, (ScaledVolumeService, DvidVolumeService)), \
-                "The 'roi' option doesn't support adapters other than 'rescale-level'" 
+            if not roi["server"] or not roi["uuid"]:
+                assert isinstance(base_service, DvidVolumeService), \
+                    "Since you aren't using a DVID input source, you must specify the ROI server and uuid."
+
+            roi["server"] = (roi["server"] or volume_service.server)
+            roi["uuid"] = (roi["uuid"] or volume_service.uuid)
+
             scale = 0
             if isinstance(volume_service, ScaledVolumeService):
                 scale = volume_service.scale_delta
                 assert scale <= 5, \
                     "The 'roi' option doesn't support volumes downscaled beyond level 5"
-                
-            server, uuid, _seg_instance = base_service.instance_triple
 
             brick_shape = volume_service.preferred_message_shape
             assert not (brick_shape % 2**(5-scale)).any(), \
@@ -681,9 +697,9 @@ class ConnectedComponents(Workflow):
             seg_box = round_box(seg_box, brick_shape)
             seg_box_s0 = seg_box * 2**scale
             seg_box_s5 = seg_box // 2**(5-scale)
-            
+
             with Timer(f"Fetching mask for ROI '{roi}' ({seg_box_s0[:, ::-1].tolist()})", logger):
-                roi_mask_s5, _ = fetch_roi(server, uuid, roi, format='mask', mask_box=seg_box_s5)
+                roi_mask_s5, _ = fetch_roi(roi["server"], roi["uuid"], roi["name"], format='mask', mask_box=seg_box_s5)
 
             # SBM 'full-res' corresponds to the input service voxels, not necessarily scale-0.
             sbm = SparseBlockMask.create_from_highres_mask(roi_mask_s5, 2**(5-scale), seg_box, brick_shape)
