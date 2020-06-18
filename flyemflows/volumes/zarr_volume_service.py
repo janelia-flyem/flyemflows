@@ -173,8 +173,8 @@ class ZarrVolumeService(VolumeServiceWriter):
         preferred_message_shape_zyx[missing_shape_dims] = chunk_shape[missing_shape_dims]
 
         if (preferred_message_shape_zyx % chunk_shape).any():
-            msg = (f"zarr volume: Expected message-block-shape ({preferred_message_shape_zyx}) "
-                  f"to be a multiple of the chunk shape ({chunk_shape})")
+            msg = (f"zarr volume: Expected message-block-shape ({preferred_message_shape_zyx[::-1]}) "
+                  f"to be a multiple of the chunk shape ({chunk_shape[::-1]})")
             logger.warning(msg)
 
         if chunk_shape[0] == chunk_shape[1] == chunk_shape[2]:
