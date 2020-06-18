@@ -694,7 +694,7 @@ class ConnectedComponents(Workflow):
                 "If using an ROI, select a brick shape that is divisible by 32"
 
             seg_box = volume_service.bounding_box_zyx
-            seg_box = round_box(seg_box, brick_shape)
+            seg_box = round_box(seg_box, 2**(5-scale))
             seg_box_s0 = seg_box * 2**scale
             seg_box_s5 = seg_box // 2**(5-scale)
 
@@ -702,7 +702,7 @@ class ConnectedComponents(Workflow):
                 roi_mask_s5, _ = fetch_roi(roi["server"], roi["uuid"], roi["name"], format='mask', mask_box=seg_box_s5)
 
             # SBM 'full-res' corresponds to the input service voxels, not necessarily scale-0.
-            sbm = SparseBlockMask.create_from_highres_mask(roi_mask_s5, 2**(5-scale), seg_box, brick_shape)
+            sbm = SparseBlockMask(roi_mask_s5, seg_box, 2**(5-scale))
 
         elif subset_labels:
             try:

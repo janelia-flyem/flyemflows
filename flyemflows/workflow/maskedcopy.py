@@ -160,7 +160,7 @@ class MaskedCopy(Workflow):
             "If using an ROI, select a brick shape that is divisible by 32"
 
         seg_box = volume_service.bounding_box_zyx
-        seg_box = round_box(seg_box, brick_shape)
+        seg_box = round_box(seg_box, 2**(5-scale))
         seg_box_s0 = seg_box * 2**scale
         seg_box_s5 = seg_box // 2**(5-scale)
 
@@ -169,4 +169,9 @@ class MaskedCopy(Workflow):
 
         # SBM 'full-res' corresponds to the input service voxels, not necessarily scale-0.
         sbm = SparseBlockMask(roi_mask_s5, seg_box, 2**(5-scale))
-        return sbm.sparse_boxes(brick_shape)
+        boxes = sbm.sparse_boxes(brick_shape)
+
+        # Clip boxes to the true (not rounded) bounding box
+        boxes[:, 0] = np.maximum(boxes[:, 0], volume_service.bounding_box_zyx[0])
+        boxes[:, 1] = np.minimum(boxes[:, 1], volume_service.bounding_box_zyx[1])
+        return boxes
