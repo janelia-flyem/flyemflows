@@ -69,6 +69,16 @@ class ConnectedComponents(Workflow):
                         "description": "name of the ROI",
                         "type": "string",
                         "default": ""
+                    },
+                    "scale": {
+                        "description": "Optionally rescale the ROI.\n"
+                                       "Scale 0 means each ROI voxel is 32px wide in full-res coordinates.\n"
+                                       "Scale 1 means 16px, etc.  By default, choose the scale automatically by inspecting the input rescale-level.\n",
+                        "default": None,
+                        "oneOf": [
+                            {"type": "null"},
+                            {"type": "integer"}
+                        ]
                     }
                 }
             },
@@ -683,11 +693,14 @@ class ConnectedComponents(Workflow):
             roi["server"] = (roi["server"] or volume_service.server)
             roi["uuid"] = (roi["uuid"] or volume_service.uuid)
 
-            scale = 0
-            if isinstance(volume_service, ScaledVolumeService):
+            if roi["scale"] is not None:
+                scale = roi["scale"]
+            elif isinstance(volume_service, ScaledVolumeService):
                 scale = volume_service.scale_delta
                 assert scale <= 5, \
                     "The 'roi' option doesn't support volumes downscaled beyond level 5"
+            else:
+                scale = 0
 
             brick_shape = volume_service.preferred_message_shape
             assert not (brick_shape % 2**(5-scale)).any(), \
