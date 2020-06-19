@@ -76,6 +76,7 @@ def test_no_adapter(setup_hdf5_service):
     assert isinstance(reader, Hdf5VolumeService), \
         "Should not create a ScaledVolumeService adapter at all if rescale-level is null"
 
+
 def test_full_volume_no_scaling(setup_hdf5_service):
     _raw_volume, _volume_config, full_from_h5, h5_reader = setup_hdf5_service
     
@@ -104,6 +105,24 @@ def test_full_volume_downsample_1(setup_hdf5_service):
 
     full_scaled = scaled_reader.get_subvolume(scaled_reader.bounding_box_zyx)
     assert (full_scaled == downsample(full_from_h5, 2, 'block-mean')).all()
+    assert full_scaled.flags.c_contiguous
+    
+def test_full_volume_specified_method(setup_hdf5_service):
+    _raw_volume, volume_config, full_from_h5, h5_reader = setup_hdf5_service
+    validate(volume_config, GrayscaleVolumeSchema, inject_defaults=True)
+
+    # Scale 1
+    volume_config["adapters"]["rescale-level"] = {"level": 1, "method": "subsample"}
+
+    scaled_reader = VolumeService.create_from_config(volume_config)
+    
+    assert (scaled_reader.bounding_box_zyx == h5_reader.bounding_box_zyx // 2).all()
+    assert (scaled_reader.preferred_message_shape == h5_reader.preferred_message_shape // 2).all()
+    assert scaled_reader.block_width == h5_reader.block_width // 2
+    assert scaled_reader.dtype == h5_reader.dtype
+
+    full_scaled = scaled_reader.get_subvolume(scaled_reader.bounding_box_zyx)
+    assert (full_scaled == downsample(full_from_h5, 2, 'subsample')).all()
     assert full_scaled.flags.c_contiguous
     
 def test_full_volume_upsample_1(setup_hdf5_service):

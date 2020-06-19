@@ -2,7 +2,7 @@ import numpy as np
 
 from neuclease.util import box_to_slicing
 
-from ...util import downsample, upsample
+from ...util import downsample, upsample, DOWNSAMPLE_METHODS
 from .. import VolumeServiceWriter
 
 RescaleLevelSchema = \
@@ -24,7 +24,14 @@ RescaleLevelSchema = \
                    "       2: downsample by 4x, e.g. If the client requests scale 1, return (or generate) scale 3 from the base service.\n"
                    "    \n"
                    "      -1: upsample by 2x\n",
-    "oneOf": [ {"type": "integer"}, {"type": "null"} ],
+    "oneOf": [ {"type": "integer"},
+               {"type": "null"},
+               {"type": "object",
+                "properties": {
+                    "level": {"type": "integer"},
+                    "method": {"type": "string", "enum": DOWNSAMPLE_METHODS}
+                }}
+              ],
     "default": None
 }
 
@@ -42,9 +49,10 @@ class ScaledVolumeService(VolumeServiceWriter):
           does not fetch a halo before computing the downsample.
         - In both cases, upsampling is performed without any interpolation.
     """
-    def __init__(self, original_volume_service, scale_delta=0):
+    def __init__(self, original_volume_service, scale_delta=0, method=None):
         self.original_volume_service = original_volume_service
         self.scale_delta = scale_delta
+        self.method = method
 
     @property
     def base_service(self):
@@ -118,9 +126,11 @@ class ScaledVolumeService(VolumeServiceWriter):
             orig_box_zyx = box_zyx * 2**delta_from_best
             orig_data = self.original_volume_service.get_subvolume(orig_box_zyx, best_base_scale)
 
-            if np.dtype(self.dtype) == np.uint64:
+            if self.method:
+                downsampled_data = downsample( orig_data, 2**delta_from_best, self.method )
+            elif np.dtype(self.dtype) == np.uint64:
                 # Assume that uint64 means labels.
-                
+
                 ## FIXME: Our C++ method for downsampling ('labels')
                 ##        seems to have a bad build at the moment (it segfaults and/or produces zeros)
                 ##        For now, we use the 'labels-numba' method

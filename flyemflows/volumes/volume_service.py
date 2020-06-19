@@ -1,11 +1,12 @@
 import logging
 from abc import ABCMeta, abstractmethod, abstractproperty
-from dvid_resource_manager.client import ResourceManagerClient
+from collections.abc import Mapping
 
 import numpy as np
 import pandas as pd
 
 from neuclease.util import Timer
+from dvid_resource_manager.client import ResourceManagerClient
 logger = logging.getLogger(__name__)
 
 class VolumeService(metaclass=ABCMeta):
@@ -121,7 +122,15 @@ class VolumeService(metaclass=ABCMeta):
         # We only avoid the ScaledVolumeService adapter if rescale-level is None.
         from . import ScaledVolumeService
         if "rescale-level" in adapter_config and adapter_config["rescale-level"] is not None:
-            service = ScaledVolumeService(service, adapter_config["rescale-level"])
+            rescale_cfg = adapter_config["rescale-level"]
+            if isinstance(rescale_cfg, Mapping):
+                level = rescale_cfg["level"]
+                method = rescale_cfg["method"]
+            else:
+                level = rescale_cfg
+                method = None
+
+            service = ScaledVolumeService(service, level, method)
 
         return service
 
