@@ -1,3 +1,4 @@
+import os
 import copy
 import logging
 
@@ -89,6 +90,8 @@ class MaskedCopy(Workflow):
         logger.info(f"Performing masked copy of {len(boxes)} bricks in total.")
         logger.info(f"Processing {len(batches)} batches of {options['batch-size']} bricks each.")
 
+        os.makedirs('mask-stats', exist_ok=True)
+
         for batch_index, batch_boxes in enumerate(batches):
             if batch_index < options["restart-at-batch"]:
                 logger.info(f"Batch {batch_index}: Skipping")
@@ -102,7 +105,7 @@ class MaskedCopy(Workflow):
                                   .compute())
 
                 brick_counts_df = pd.DataFrame(brick_counts, columns=[*'zyx', 'mask_voxels'])
-                brick_counts_df.to_csv(f'batch-{batch_index:03d}-brick-mask-voxels.csv', header=True, index=False)
+                brick_counts_df.to_csv(f'mask-stats/batch-{batch_index:03d}-brick-mask-voxels.csv', header=True, index=False)
 
     def init_services(self):
         """
