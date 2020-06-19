@@ -3,6 +3,7 @@ import sys
 import copy
 import pickle
 import logging
+from concurrent.futures import CancelledError
 
 import h5py
 import numpy as np
@@ -279,10 +280,14 @@ class ConnectedComponents(Workflow):
 
             return cc_brick, cc_overlaps, cc_max, orig_max
 
-        cc_results = input_wall.bricks.map(brick_cc)
-        cc_results = cc_results.persist()
-            
+        cc_results = input_wall.bricks.map(brick_cc).persist()
         cc_bricks, cc_overlaps, cc_maxes, orig_maxes = cc_results.unzip(4)
+
+        # Persist like crazy... trying to work around a non-deterministic scheduler issue.
+        cc_bricks = cc_bricks.persist()
+        cc_overlaps = cc_overlaps.persist()
+        cc_maxes = cc_maxes.persist()
+        orig_maxes = orig_maxes.persist()
 
         with Timer("Computing blockwise CC", logger):
             max_brick_cc = cc_maxes.max().compute()
@@ -374,7 +379,15 @@ class ConnectedComponents(Workflow):
         
         with Timer("Offsetting block CC and computing links", logger):
             links_df = combined_halos_ddf.map_partitions(find_partition_links, meta=links_meta).clear_divisions()
-            links_df = links_df.compute()
+            try:
+                links_df = links_df.compute()
+            except CancelledError as ex:
+                # This is an attempt to get more info when the scheduler is misbehaving.
+                task_name = ex.args[0]
+                story = self.client.cluster.scheduler.story(task_name)
+                logger.error(f"Task cancelled: {task_name}.\nStory:\n{story}")
+                raise
+
             assert links_df.columns.tolist() == ['cc_outer', 'cc_inner'] 
             assert (links_df.dtypes == np.uint64).all()
 
