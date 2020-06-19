@@ -711,7 +711,7 @@ class ConnectedComponents(Workflow):
             seg_box_s0 = seg_box * 2**scale
             seg_box_s5 = seg_box // 2**(5-scale)
 
-            with Timer(f"Fetching mask for ROI '{roi}' ({seg_box_s0[:, ::-1].tolist()})", logger):
+            with Timer(f"Fetching mask for ROI '{roi['name']}' ({seg_box_s0[:, ::-1].tolist()})", logger):
                 roi_mask_s5, _ = fetch_roi(roi["server"], roi["uuid"], roi["name"], format='mask', mask_box=seg_box_s5)
 
             # SBM 'full-res' corresponds to the input service voxels, not necessarily scale-0.
