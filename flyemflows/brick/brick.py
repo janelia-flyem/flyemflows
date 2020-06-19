@@ -293,10 +293,13 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
     if boxes_bag.npartitions != num_partitions:
         boxes_bag = boxes_bag.repartition(num_partitions)
 
-    # Try really hard to scatter the data???
-    with Timer() as scatter_timer:
-        boxes_bag = client.scatter(boxes_bag).result()
-    time.sleep(2.0)
+    ## Commented out for now due to
+    ## https://github.com/dask/distributed/issues/3703#issuecomment-619446739
+    # # Try really hard to scatter the data???
+    # with Timer() as scatter_timer:
+    #     boxes_bag = client.scatter(boxes_bag).result()
+    # time.sleep(2.0)
+
     boxes_bag = boxes_bag.persist()
     boxes_bag.compute()
 
