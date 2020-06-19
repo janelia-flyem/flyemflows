@@ -24,15 +24,34 @@ RescaleLevelSchema = \
                    "       2: downsample by 4x, e.g. If the client requests scale 1, return (or generate) scale 3 from the base service.\n"
                    "    \n"
                    "      -1: upsample by 2x\n",
-    "oneOf": [ {"type": "integer"},
-               {"type": "null"},
-               {"type": "object",
-                "properties": {
-                    "level": {"type": "integer"},
-                    "method": {"type": "string", "enum": DOWNSAMPLE_METHODS}
-                }}
-              ],
-    "default": None
+    "default": None,
+    "oneOf": [
+        {"type": "integer"},
+        {"type": "null"},
+        {
+            "type": "object",
+            "default": {},
+            "properties": {
+                "level": {"type": "integer", "default": 0},
+
+                "method": {
+                    "type": "string",
+                    "enum": DOWNSAMPLE_METHODS,
+                    "default": "subsample"
+                },
+
+                # If the source should not advertise all scales as being available,
+                # you can specify a specific set of 'available-scales' here.
+                # Otherwise, scales 0-9 are advertised as available.
+                # (Nothing stops callers from asking for unadvertised scales, though.)
+                "available-scales": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "default": [*range(10)]
+                }
+            }
+        }
+    ]
 }
 
 class ScaledVolumeService(VolumeServiceWriter):
@@ -49,10 +68,14 @@ class ScaledVolumeService(VolumeServiceWriter):
           does not fetch a halo before computing the downsample.
         - In both cases, upsampling is performed without any interpolation.
     """
-    def __init__(self, original_volume_service, scale_delta=0, method=None):
+    def __init__(self, original_volume_service, scale_delta=0, method=None, available_scales=None):
         self.original_volume_service = original_volume_service
         self.scale_delta = scale_delta
         self.method = method
+
+        if available_scales is None:
+            available_scales = [*range(10)]
+        self._available_scales = available_scales
 
     @property
     def base_service(self):
@@ -102,7 +125,7 @@ class ScaledVolumeService(VolumeServiceWriter):
 
     @property
     def available_scales(self):
-        return list(range(10)) # arbitrary limit
+        return self._available_scales
 
     def get_subvolume(self, box_zyx, scale=0):
         """

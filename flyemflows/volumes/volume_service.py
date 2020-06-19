@@ -126,11 +126,13 @@ class VolumeService(metaclass=ABCMeta):
             if isinstance(rescale_cfg, Mapping):
                 level = rescale_cfg["level"]
                 method = rescale_cfg["method"]
+                available_scales = rescale_cfg["available-scales"]
             else:
                 level = rescale_cfg
                 method = None
+                available_scales = None
 
-            service = ScaledVolumeService(service, level, method)
+            service = ScaledVolumeService(service, level, method, available_scales)
 
         return service
 
