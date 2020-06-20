@@ -2,6 +2,7 @@ import os
 import copy
 import time
 import json
+import pickle
 import logging
 from functools import partial
 
@@ -151,6 +152,13 @@ class CopySegmentation(Workflow):
                                "Should not be necessary for most use-cases.",
                 "type": "integer",
                 "default": 0,
+            },
+            "sparse-block-mask": {
+                "description": "Optionally provide a mask which limits the set of bricks to be processed.\n"
+                               "If you already have a map of where the valid data is, you can provide a\n"
+                               "pickled SparseBlockMask here.\n",
+                "type": "string",
+                "default": ""
             },
             "input-mask-labels": {
                 "description": "If provided, only voxels under the given input labels in the output will be modified.\n"
@@ -325,6 +333,16 @@ class CopySegmentation(Workflow):
 
     def _init_masks(self):
         options = self.config["copysegmentation"]
+        self.sbm = None
+
+        if options["sparse-block-mask"]:
+            # In theory, we could just take the intersection of the masks involved.
+            # But I'm too lazy to think about that right now.
+            assert not options["input-mask-labels"] and not options["output-mask-labels"], \
+                "Not Implemented: Can't use sparse-block-mask in conjunction with input-mask-labels or output-mask-labels"
+
+            with open(options["sparse-block-mask"], 'rb') as f:
+                self.sbm = pickle.load(f)
 
         is_supervoxels = False
         if isinstance(self.input_service.base_service, DvidVolumeService):
@@ -354,7 +372,9 @@ class CopySegmentation(Workflow):
             except NotImplementedError:
                 input_sbm = None
 
-        if input_sbm is None:
+        if self.sbm is not None:
+            pass
+        elif input_sbm is None:
             self.sbm = output_sbm
         elif output_sbm is None:
             self.sbm = input_sbm

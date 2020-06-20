@@ -1,4 +1,5 @@
 import os
+import pickle
 import tempfile
 import textwrap
 from io import StringIO
@@ -12,8 +13,9 @@ import numpy as np
 import pandas as pd
 
 from dvidutils import downsample_labels
-from neuclease.util import box_to_slicing, extract_subvol, overwrite_subvol, box_intersection, mask_for_labels, apply_mask_for_labels
-from neuclease.dvid import create_labelmap_instance, post_labelmap_voxels, fetch_raw, fetch_labelmap_voxels
+
+from neuclease.util import box_to_slicing, extract_subvol, overwrite_subvol, box_intersection, mask_for_labels, apply_mask_for_labels, SparseBlockMask
+from neuclease.dvid import fetch_repo_instances, create_labelmap_instance, post_labelmap_voxels, fetch_raw, fetch_labelmap_voxels
 
 from flyemflows.bin.launchflow import launch_flow
 
@@ -34,7 +36,12 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
             pass
         
     post_labelmap_voxels(dvid_address, repo_uuid, input_segmentation_name, (0,0,0), random_segmentation)
-    
+
+    # Make sure the output is empty (if it exists)
+    if output_segmentation_name in fetch_repo_instances(dvid_address, repo_uuid):
+        z = np.zeros((256, 256, 256), np.uint64)
+        post_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, (0,0,0), z, 0, True)
+
     template_dir = tempfile.mkdtemp(suffix="copysegmentation-from-dvid-template")
  
     config_text = textwrap.dedent(f"""\
@@ -96,6 +103,11 @@ def setup_hdf5_segmentation_input(setup_dvid_repo, write_hdf5_volume):
     template_dir = tempfile.mkdtemp(suffix="copysegmentation-from-hdf5-template")
     
     output_segmentation_name = 'segmentation-output-from-hdf5'
+
+    # Make sure the output is empty (if it exists)
+    if output_segmentation_name in fetch_repo_instances(dvid_address, repo_uuid):
+        z = np.zeros((256, 256, 256), np.uint64)
+        post_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, (0,0,0), z, 0, True)
     
     config_text = textwrap.dedent(f"""\
         workflow-name: copysegmentation
@@ -107,7 +119,7 @@ def setup_hdf5_segmentation_input(setup_dvid_repo, write_hdf5_volume):
             dataset: volume
           
           geometry:
-            message-block-shape: [64,64,256]
+            message-block-shape: [64,64,256] # note: this is weird because normally we stripe in the X direction...
             bounding-box: [[0,0,100], [256,200,256]]
 
         output:
@@ -158,16 +170,19 @@ def _run_to_dvid(setup, check_scale_0=True):
     output_box_xyz = np.array( final_config['output']['geometry']['bounding-box'] )
     output_box_zyx = output_box_xyz[:,::-1]
     output_vol = fetch_raw(dvid_address, repo_uuid, output_segmentation_name, output_box_zyx, dtype=np.uint64)
-    
+
+    np.save('/tmp/output_vol.npy', output_vol)
+    np.save('/tmp/expected_vol.npy', expected_vol)
+
     if check_scale_0:
         assert (output_vol == expected_vol).all(), \
             "Written vol does not match expected"
     
-    return input_box_zyx, expected_vol
+    return input_box_zyx, expected_vol, output_vol
 
 
 def test_copysegmentation_from_dvid_to_dvid(setup_dvid_segmentation_input, disable_auto_retry):
-    _box_zyx, _expected_vol = _run_to_dvid(setup_dvid_segmentation_input)
+    _box_zyx, _expected_vol, _output_vol = _run_to_dvid(setup_dvid_segmentation_input)
 
 
 def test_copysegmentation_from_dvid_to_dvid_with_labelmap(setup_dvid_segmentation_input, disable_auto_retry):
@@ -186,9 +201,9 @@ def test_copysegmentation_from_dvid_to_dvid_with_labelmap(setup_dvid_segmentatio
         "file": "labelmap.csv",
         "file-type": "label-to-body"
     }
-    
+
     setup = template_dir, config, expected_vol, dvid_address, repo_uuid, output_segmentation_name
-    _box_zyx, _expected_vol = _run_to_dvid(setup)
+    _box_zyx, _expected_vol, _output_vol = _run_to_dvid(setup)
 
 
 
@@ -221,7 +236,7 @@ def test_copysegmentation_from_dvid_to_dvid_input_mask(setup_dvid_segmentation_i
     overwrite_subvol(expected_vol, subvol_box, selected_subvol) 
 
     setup = template_dir, config, expected_vol, dvid_address, repo_uuid, output_segmentation_name
-    _box_zyx, _expected_vol = _run_to_dvid(setup)
+    _box_zyx, _expected_vol, _output_vol = _run_to_dvid(setup)
 
 
 # def test_copysegmentation_from_dvid_to_dvid_both_masks(setup_dvid_segmentation_input, disable_auto_retry):
@@ -229,8 +244,29 @@ def test_copysegmentation_from_dvid_to_dvid_input_mask(setup_dvid_segmentation_i
 
 
 def test_copysegmentation_from_hdf5_to_dvid(setup_hdf5_segmentation_input, disable_auto_retry):
-    _box_zyx, _expected_vol = _run_to_dvid(setup_hdf5_segmentation_input)
+    _box_zyx, _expected_vol, _output_vol = _run_to_dvid(setup_hdf5_segmentation_input)
  
+
+def test_copysegmentation_from_hdf5_to_dvid_custom_sbm(setup_hdf5_segmentation_input, disable_auto_retry):
+    template_dir, config, volume, dvid_address, repo_uuid, output_segmentation_name = setup_hdf5_segmentation_input
+
+    # Our bricks are long in Z, so use a mask that's aligned that way, too.
+    mask = np.zeros(volume.shape, bool)
+    mask[:, :, 64:128] = True
+    mask[:, :, 192:256] = True
+
+    sbm = SparseBlockMask(mask[::64, ::64, ::64], [(0,0,0), volume.shape], (64,64,64))
+    with open(f"{template_dir}/sbm.pkl", 'wb') as f:
+        pickle.dump(sbm, f)
+    config["copysegmentation"]["sparse-block-mask"] = f"{template_dir}/sbm.pkl"
+
+    setup = (template_dir, config, volume, dvid_address, repo_uuid, output_segmentation_name)
+    box_zyx, expected_vol, output_vol = _run_to_dvid(setup, check_scale_0=False)
+
+    expected_vol = expected_vol.copy()
+    mask = mask[box_to_slicing(*box_zyx)]
+    expected_vol[~mask] = 0
+    assert (output_vol == expected_vol).all()
 
 def test_copysegmentation_from_hdf5_to_dvid_input_mask(setup_hdf5_segmentation_input, disable_auto_retry):
     template_dir, config, volume, dvid_address, repo_uuid, _output_segmentation_name = setup_hdf5_segmentation_input
@@ -254,7 +290,8 @@ def test_copysegmentation_from_hdf5_to_dvid_input_mask(setup_hdf5_segmentation_i
     overwrite_subvol(expected_vol, input_box, extract_subvol(volume, input_box))
 
     setup = template_dir, config, expected_vol, dvid_address, repo_uuid, output_segmentation_name
-    _box_zyx, _expected_vol = _run_to_dvid(setup)
+    _box_zyx, _expected_vol, _output_vol = _run_to_dvid(setup)
+
 
 
 def test_copysegmentation_from_hdf5_to_dvid_output_mask(setup_hdf5_segmentation_input, disable_auto_retry):
@@ -288,7 +325,7 @@ def test_copysegmentation_from_hdf5_to_dvid_output_mask(setup_hdf5_segmentation_
     post_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, (0,0,0), output_volume)
 
     setup = template_dir, config, expected_vol, dvid_address, repo_uuid, output_segmentation_name
-    _box_zyx, _expected_vol = _run_to_dvid(setup)
+    _box_zyx, _expected_vol, _output_vol = _run_to_dvid(setup)
 
 
 def test_copysegmentation_from_hdf5_to_dvid_multiscale(setup_hdf5_segmentation_input, disable_auto_retry):
@@ -430,5 +467,5 @@ if __name__ == "__main__":
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_copysegmentation']
     args += ['-x']
-    #args += ['-k', 'copysegmentation_from_brainmaps_to_dvid']
+    #args += ['-k', 'copysegmentation_from_hdf5_to_dvid_custom_sbm or copysegmentation_from_hdf5_to_dvid_input_mask']
     pytest.main(args)
