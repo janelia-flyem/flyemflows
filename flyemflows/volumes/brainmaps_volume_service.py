@@ -132,13 +132,13 @@ class BrainMapsVolumeServiceReader(VolumeServiceReader):
     def resource_manager_client(self):
         return self._resource_manager_client
 
-    # Two-levels of auto-retry:
-    # 1. Auto-retry up to three time for any reason.
-    # 2. If that fails due to 504 or 503 (probably cloud VMs warming up), wait 5 minutes and try again.
+    # Two levels of auto-retry:
+    # If a failure is not 503, restart it up to three times, with a short delay.
+    # If the request fails due to 504 or 503 (probably cloud VMs warming up), wait 5 minutes and try again.
     @auto_retry(2, pause_between_tries=5*60.0, logging_name=__name__,
                 predicate=lambda ex: '503' in str(ex.args[0]) or '504' in str(ex.args[0]))
-    @auto_retry(3, pause_between_tries=60.0, logging_name=__name__,
-                predicate=lambda ex: not isinstance(ex, HTTPError))
+    @auto_retry(3, pause_between_tries=30.0, logging_name=__name__,
+                predicate=lambda ex: '503' not in str(ex.args[0]) and '504' not in str(ex.args[0]))
     def get_subvolume(self, box, scale=0):
         req_bytes = 8 * np.prod(box[1] - box[0])
         with self._resource_manager_client.access_context('brainmaps', True, 1, req_bytes):
