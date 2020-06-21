@@ -9,6 +9,7 @@ from ruamel.yaml import YAML
 from requests import HTTPError
 
 import h5py
+import zarr
 import numpy as np
 import pandas as pd
 
@@ -85,6 +86,67 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
         config = yaml.load(f)
  
     return template_dir, config, random_segmentation, dvid_address, repo_uuid, output_segmentation_name
+
+
+@pytest.fixture
+def setup_dvid_to_zarr(setup_dvid_repo, random_segmentation):
+    dvid_address, repo_uuid = setup_dvid_repo
+ 
+    input_segmentation_name = 'segmentation-input'
+ 
+    try:
+        create_labelmap_instance(dvid_address, repo_uuid, input_segmentation_name)
+    except HTTPError as ex:
+        if ex.response is not None and 'already exists' in ex.response.content.decode('utf-8'):
+            pass
+        
+    post_labelmap_voxels(dvid_address, repo_uuid, input_segmentation_name, (0,0,0), random_segmentation)
+
+    template_dir = tempfile.mkdtemp(suffix="copysegmentation-from-dvid-template")
+ 
+    output_path = 'output.zarr'
+
+    config_text = textwrap.dedent(f"""\
+        workflow-name: copysegmentation
+        cluster-type: {CLUSTER_TYPE}
+         
+        input:
+          dvid:
+            server: {dvid_address}
+            uuid: {repo_uuid}
+            segmentation-name: {input_segmentation_name}
+            supervoxels: true
+           
+          geometry:
+            message-block-shape: [64,64,512]
+            bounding-box: [[0,0,100], [256,200,256]]
+          
+          adapters: {{}}
+ 
+        output:
+          zarr:
+            path: {output_path}
+            dataset: s0
+            create-if-necessary: true
+            creation-settings:
+              dtype: uint64
+              chunk-shape: [64,64,64]
+           
+          geometry: {{}} # Auto-set from input
+ 
+        copysegmentation:
+          pyramid-depth: 1
+          slab-depth: 128
+    """)
+ 
+    with open(f"{template_dir}/workflow.yaml", 'w') as f:
+        f.write(config_text)
+ 
+    yaml = YAML()
+    with StringIO(config_text) as f:
+        config = yaml.load(f)
+ 
+    return template_dir, config, random_segmentation, dvid_address, repo_uuid, output_path
 
 
 @pytest.fixture(scope='module')
@@ -379,6 +441,43 @@ def test_copysegmentation_from_hdf5_to_dvid_multiscale(setup_hdf5_segmentation_i
         "Scale 2: Written vol does not match expected"
 
 
+def test_copysegmentation_dvid_to_zarr(setup_dvid_to_zarr):
+    template_dir, config, volume, dvid_address, repo_uuid, output_file = setup_dvid_to_zarr
+
+    # Modify the config from above to compute pyramid scales,
+    # and choose a bounding box that is aligned with the bricks even at scale 2
+    # (just for easier testing).
+    box_zyx = [[0,0,0],[256,256,256]]
+    config["input"]["geometry"]["bounding-box"] = box_zyx
+    config["copysegmentation"]["pyramid-depth"] = 2
+
+    yaml = YAML()
+    yaml.default_flow_style = False
+    with open(f"{template_dir}/workflow.yaml", 'w') as f:
+        yaml.dump(config, f)
+
+    execution_dir, _workflow = launch_flow(template_dir, 1)
+
+    box_zyx = np.array(box_zyx)
+
+    scale_0_vol = volume[box_to_slicing(*box_zyx)]
+    scale_1_vol = downsample_labels(scale_0_vol, 2, True)
+    scale_2_vol = downsample_labels(scale_1_vol, 2, True)
+ 
+    store = zarr.NestedDirectoryStore(f"{execution_dir}/{output_file}")
+    f = zarr.open(store, 'r')
+    output_0_vol = f['s0'][box_to_slicing(*(box_zyx // 1))]
+    output_1_vol = f['s1'][box_to_slicing(*(box_zyx // 2))]
+    output_2_vol = f['s2'][box_to_slicing(*(box_zyx // 4))]
+
+    assert (output_0_vol == scale_0_vol).all(), \
+        "Scale 0: Written vol does not match expected"
+    assert (output_1_vol == scale_1_vol).all(), \
+        "Scale 1: Written vol does not match expected"
+    assert (output_2_vol == scale_2_vol).all(), \
+        "Scale 2: Written vol does not match expected"
+
+
 @pytest.mark.skipif(not os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', None), reason="Skipping Brainmaps test")
 def test_copysegmentation_from_brainmaps_to_dvid(setup_dvid_repo):
     """
@@ -468,4 +567,5 @@ if __name__ == "__main__":
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_copysegmentation']
     args += ['-x']
     #args += ['-k', 'copysegmentation_from_hdf5_to_dvid_custom_sbm or copysegmentation_from_hdf5_to_dvid_input_mask']
+    #args += ['-k', 'copysegmentation_dvid_to_zarr']
     pytest.main(args)

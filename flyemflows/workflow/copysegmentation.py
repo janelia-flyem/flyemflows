@@ -19,9 +19,7 @@ from dvid_resource_manager.client import ResourceManagerClient
 
 from ..util import replace_default_entries, COMPRESSION_METHODS, DOWNSAMPLE_METHODS
 from ..brick import BrickWall
-from ..volumes import ( VolumeService, VolumeServiceWriter, SegmentationVolumeSchema,
-                                 DvidSegmentationVolumeSchema, TransposedVolumeService, ScaledVolumeService,
-                                 DvidVolumeService )
+from ..volumes import ( VolumeService, VolumeServiceWriter, SegmentationVolumeSchema, TransposedVolumeService, ScaledVolumeService, DvidVolumeService )
 
 from . import Workflow
 from .util.config_helpers import BodyListSchema, load_body_list
@@ -194,8 +192,8 @@ class CopySegmentation(Workflow):
 
     Schema = copy.deepcopy(Workflow.schema())
     Schema["properties"].update({
-        "input": SegmentationVolumeSchema,      # For now, any input source is supported,
-        "output": DvidSegmentationVolumeSchema, # but only dvid output is supported.
+        "input": SegmentationVolumeSchema,
+        "output": SegmentationVolumeSchema,
         "copysegmentation" : OptionsSchema
     })
 
@@ -274,21 +272,28 @@ class CopySegmentation(Workflow):
             assert input_config["dvid"]["supervoxels"], \
                 'DVID input service config must use "supervoxels: true"'
 
-        if "dvid" in output_config:
-            if output_config["dvid"]["create-if-necessary"]:
+        # Special handling for creation of multi-scale outputs:
+        # auto-configure the pyramid depths
+        multiscale_output_type = None
+        for t in ["dvid", "n5", "zarr"]:
+            if t in output_config and not hasattr(output_config[t], 'from_default'):
+                multiscale_output_type = t
+        if multiscale_output_type:
+            out_fmt = multiscale_output_type
+            if output_config[out_fmt]["create-if-necessary"]:
                 if self.config["copysegmentation"]["skip-scale-0-write"] and pyramid_depth == 0:
                     # Nothing to write.  Maybe the user is just computing block statistics.
                     msg = ("Since your config specifies no pyramid levels to write, no output instance will be created. "
                            "Avoid this warning by removing 'create-if-necessary' from your config")
                     logger.warning(msg)
-                    output_config["dvid"]["create-if-necessary"] = False
+                    output_config[out_fmt]["create-if-necessary"] = False
                 else:
-                    max_scale = output_config["dvid"]["creation-settings"]["max-scale"]
+                    max_scale = output_config[out_fmt]["creation-settings"]["max-scale"]
                     if max_scale not in (-1, pyramid_depth):
                         msg = (f"Inconsistent max-scale ({max_scale}) and pyramid-depth ({pyramid_depth}). "
                                "Omit max-scale from your creation-settings.")
                         raise RuntimeError(msg)
-                    output_config["dvid"]["creation-settings"]["max-scale"] = pyramid_depth
+                    output_config[out_fmt]["creation-settings"]["max-scale"] = pyramid_depth
 
         # Replace 'auto' dimensions with input bounding box
         replace_default_entries(output_config["geometry"]["bounding-box"], self.input_service.bounding_box_zyx[:, ::-1])
@@ -300,20 +305,21 @@ class CopySegmentation(Workflow):
             assert output_config["dvid"]["supervoxels"], \
                 'DVID output service config must use "supervoxels: true"'
 
-        if output_service.instance_name in fetch_repo_instances(output_service.server, output_service.uuid):
-            existing_depth = self._read_pyramid_depth()
-            if pyramid_depth not in (-1, existing_depth) and not permit_inconsistent_pyramids:
-                raise Exception(f"Can't set pyramid-depth to {pyramid_depth}: "
-                                f"Data instance '{output_service.instance_name}' already existed, with depth {existing_depth}")
+            if output_service.instance_name in fetch_repo_instances(output_service.server, output_service.uuid):
+                existing_depth = self._read_pyramid_depth()
+                if pyramid_depth not in (-1, existing_depth) and not permit_inconsistent_pyramids:
+                    raise Exception(f"Can't set pyramid-depth to {pyramid_depth}: "
+                                    f"Data instance '{output_service.instance_name}' already existed, with depth {existing_depth}")
 
         # These services aren't supported because we copied some geometry (bounding-box)
         # directly from the input service.
         assert not isinstance( output_service, TransposedVolumeService )
         assert not isinstance( output_service, ScaledVolumeService ) or output_service.scale_delta == 0
 
-        assert output_service.base_service.disable_indexing, \
-            "During ingestion, indexing should be disabled.\n" \
-            "Please add 'disable-indexing':true to your output dvid config."
+        if isinstance(self.output_service.base_service, DvidVolumeService):
+            assert output_service.base_service.disable_indexing, \
+                "During ingestion, dvid labelmap indexing should be disabled.\n" \
+                "Please add 'disable-indexing: true' to your output dvid config."
 
         logger.info(f"Output bounding box (xyz) is: {output_service.bounding_box_zyx[:,::-1].tolist()}")
 
@@ -421,6 +427,9 @@ class CopySegmentation(Workflow):
         Write a link to the log file for viewing the segmentation data after it is ingested.
         We assume that the output server is hosting neuroglancer at http://<server>:<port>/neuroglancer/
         """
+        if not isinstance(self.output_service.base_service, DvidVolumeService):
+            return
+
         output_service = self.output_service
         server = output_service.base_service.server
         uuid = output_service.base_service.uuid
@@ -723,7 +732,6 @@ class CopySegmentation(Workflow):
         """
         Writes partition to specified dvid.
         """
-        instance_name = output_service.base_service.instance_name
         block_width = output_service.block_width
         EMPTY_VOXEL = 0
         dont_overwrite_identical_blocks = self.config["copysegmentation"]["dont-overwrite-identical-blocks"]
@@ -804,9 +812,10 @@ class CopySegmentation(Workflow):
 
             brick.compress()
 
-        logger.info(f"Slab {slab_index}: Scale {scale}: Writing bricks to {instance_name}...")
-        with Timer() as timer:
+        msg = f"Slab {slab_index}: Scale {scale}: Writing bricks"
+        if isinstance(output_service.base_service, DvidVolumeService):
+            instance_name = output_service.base_service.instance_name
+            msg += f"to {instance_name}"
+
+        with Timer(msg, logger):
             brick_wall.bricks.map(write_brick).compute()
-        logger.info(f"Slab {slab_index}: Scale {scale}: Writing bricks to {instance_name} took {timer.timedelta}")
-
-
