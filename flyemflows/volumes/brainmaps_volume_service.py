@@ -2,6 +2,7 @@ import numpy as np
 
 from confiddler import validate
 from dvid_resource_manager.client import ResourceManagerClient
+from neuclease.util import boxes_from_grid, box_to_slicing
 
 from ..util import auto_retry, replace_default_entries
 from . import VolumeServiceReader, GeometrySchema, SegmentationAdapters
@@ -37,6 +38,13 @@ BrainMapsServiceSchema = \
             "description": "Whether or not to use gzip transfer encoding (on top of the snappy compression)",
             "type": "boolean",
             "default": True
+        },
+        "fetch-blockwise": {
+            "description": "When fetching each subvolume, split the fetch across multiple requests,\n"
+                           "according to the block-width specifed in the volume geometry metadata.\n"
+                           "(If this setting is enabled and you don't set the block-width, it defaults to 64.)\n",
+            "type": "boolean",
+            "default": False
         }
     }
 }
@@ -54,6 +62,7 @@ BrainMapsVolumeSchema = \
                                          # SegmentationAdapters is a superset of GrayscaleAdapters.
     }
 }
+
 
 class BrainMapsVolumeServiceReader(VolumeServiceReader):
     """
@@ -95,6 +104,7 @@ class BrainMapsVolumeServiceReader(VolumeServiceReader):
             f"BrainMaps volume geometry ({self._brainmaps_client.bounding_box.tolist()})"
 
         available_scales = list(volume_config["geometry"]["available-scales"])
+        fetch_blockwise = volume_config["brainmaps"]["fetch-blockwise"]
 
         # Store members
         self._bounding_box_zyx = bounding_box_zyx
@@ -102,6 +112,7 @@ class BrainMapsVolumeServiceReader(VolumeServiceReader):
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
         self._block_width = block_width
         self._available_scales = available_scales
+        self._fetch_blockwise = fetch_blockwise
 
         # Overwrite config entries that we might have modified
         volume_config["geometry"]["block-width"] = self._block_width
@@ -142,4 +153,13 @@ class BrainMapsVolumeServiceReader(VolumeServiceReader):
     def get_subvolume(self, box, scale=0):
         req_bytes = 8 * np.prod(box[1] - box[0])
         with self._resource_manager_client.access_context('brainmaps', True, 1, req_bytes):
-            return self._brainmaps_client.get_subvolume(box, scale)
+            if not self._fetch_blockwise:
+                return self._brainmaps_client.get_subvolume(box, scale)
+            else:
+                block_shape = 3*(self._block_width,)
+                subvol = np.zeros(box[1] - box[0], self.dtype)
+                for block_box in boxes_from_grid(box, block_shape, clipped=True):
+                    block = self._brainmaps_client.get_subvolume(block_box, scale)
+                    outbox = block_box - box[0]
+                    subvol[box_to_slicing(*outbox)] = block
+                return subvol

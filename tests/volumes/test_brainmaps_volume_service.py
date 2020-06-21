@@ -8,7 +8,7 @@ from flyemflows.volumes.brainmaps_volume import BrainMapsVolume
 
 @pytest.mark.skipif(not os.environ.get('GOOGLE_APPLICATION_CREDENTIALS', ''),
                     reason="Skipping BrainMaps test: GOOGLE_APPLICATION_CREDENTIALS is not defined")
-def test_read():
+def test_read(disable_auto_retry):
     """
     Minimal test to exercise the BrainMapsVolumeServiceReader.
     Reads a tiny subvolume from a known remote Brainmaps volume instance.
@@ -45,10 +45,19 @@ def test_read():
     start_xyz = np.array([18954, 3865, 15305])
     start_zyx = start_xyz[::-1]
     box_zyx = np.array([start_zyx, start_zyx + 256])
+
     subvol = service.get_subvolume(box_zyx)
-    
     assert (subvol == bmv.get_subvolume(box_zyx)).all()
     assert subvol.any(), "Volume is all zeros"
+
+    # Again, but this time with fetch-blockwise: true
+    config["brainmaps"]["fetch-blockwise"] = True
+    service = BrainMapsVolumeServiceReader(config)
+
+    subvol = service.get_subvolume(box_zyx)
+    assert (subvol == bmv.get_subvolume(box_zyx)).all()
+    assert subvol.any(), "Volume is all zeros"
+
 
 if __name__ == "__main__":
     pytest.main(['-s', '--tb=native', '--pyargs', 'tests.volumes.test_brainmaps_volume_service'])
