@@ -32,6 +32,9 @@ class ConnectedComponents(Workflow):
     Analyze a segmentation volume in which some objects may
     consist of multiple disconnected pieces, and relabel
     those pieces to give them unique IDs.
+
+    Please see the ConnectedComponents workflow source code for
+    a detailed description of the procedure and the resulting output.
     """
     ConnectedComponentsOptionsSchema = \
     {
@@ -143,7 +146,47 @@ class ConnectedComponents(Workflow):
         Their voxels retain their original values and they are simply copied to
         the output.  Only objects which consist of multiple disconnected pieces
         are given new label values.
-        
+
+        In addition to exporting a few intermediate dataframes for debugging purposes,
+        this workflow also exports the final table of all objects that were relabeled
+        in the output, with the IDs that were used to compute the table for every
+        processed brick.  The table is written to 'node_df_final.pkl'
+
+        Note:
+            The table does NOT include components that didn't need to
+            be re-written at all. (This workflow does not alter labels
+            that consisted of only one component to begin with.)
+
+        Example:
+
+               lz0    ly0    lx0       orig         cc  link_cc  final_cc
+            0  512  10752  11776  110390011  144347596        0         2
+            1  512  10752  11776  110390011  144347597        1         3
+            2  512  10752  11776  110390011  144347598        2         4
+            3  512  10752  11776  110390011  144347599        3         5
+            4  512  10752  11776  110390011  144347600        4         6
+
+        Columns Descriptions:
+
+            lz0, ly0, lx0:
+                Logical starting corner of a brick.
+                Does not include the 1-px halo that was used to ensure bricks overlapped
+                in space.  Also does not account for the fact that bricks on the edge
+                of the volume may have been cropped during processing due to a user-provided
+                bounding-box.
+            orig:
+                Label in the original volume
+            cc:
+                label after running connected components on each brick independently
+                (but adding an offset to each brick's labels to ensure that no IDs
+                are duplicated across bricks)
+            link_cc:
+                The global component ID after unifying cc labels across neighboring bricks
+            final_cc:
+                The final component label written to the output.
+                Computed my mapping the link_cc values into the correct output
+                label range as determined by orig-max-label
+
         Procedure Overview:
 
         1. Accepts any segmentation volume as input, divided into
