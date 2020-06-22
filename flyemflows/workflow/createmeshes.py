@@ -290,6 +290,12 @@ class CreateMeshes(Workflow):
                                "shuffling the order of the labels before assigning them to batches helps.\n",
                 "type": "boolean",
                 "default": True # Usually disabled for testing only
+            },
+            "partition-volume-size": {
+                "description": "Approximately how much data in total should go to each worker\n"
+                               "when bricks when bricks are distributed to workers, in bytes, not voxels.\n",
+                "type": "number",
+                "default": 1 * (2**30)  # 1 GB
             }
         }
     }
@@ -565,9 +571,9 @@ class CreateMeshes(Workflow):
                 sbm = None
 
         with Timer(msg, logger):
-            # Aim for 2 GB RDD partitions when loading segmentation
-            GB = 2**30
-            target_partition_size_voxels = 2 * GB // np.uint64().nbytes
+            # By defaut, aim for 1 GB RDD partitions when loading segmentation (see default above)
+            psize = self.config["createmeshes"]["partition-volume-size"]
+            target_partition_size_voxels = psize // np.uint64().nbytes
 
             # Apply halo WHILE downloading the data.
             # TODO: Allow the user to configure whether or not the halo should
