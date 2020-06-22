@@ -992,15 +992,15 @@ class CreateMeshes(Workflow):
                                  'compressed_size': compressed_size},
                                 index=[sv])
 
-        sv_brick_meshes_dgb = brick_meshes_ddf.groupby('sv')
-        #del brick_meshes_ddf
-
-        dtypes = {'sv': np.uint64, 'mesh': object, 'vertex_count': np.int64, 'compressed_size': int}
-        sv_meshes_ddf = sv_brick_meshes_dgb.apply(assemble_sv_meshes, meta=dtypes)
-        del sv_brick_meshes_dgb
-        sv_meshes_ddf = drop_empty_partitions(sv_meshes_ddf)
-
         with Timer(f"Batch {batch_index:02}: Combining brick meshes", logger):
+            sv_brick_meshes_dgb = brick_meshes_ddf.groupby('sv')
+            #del brick_meshes_ddf
+
+            dtypes = {'sv': np.uint64, 'mesh': object, 'vertex_count': np.int64, 'compressed_size': int}
+            sv_meshes_ddf = sv_brick_meshes_dgb.apply(assemble_sv_meshes, meta=dtypes)
+            del sv_brick_meshes_dgb
+            sv_meshes_ddf = drop_empty_partitions(sv_meshes_ddf)
+
             # Export stitched mesh statistics
             os.makedirs('stitched-mesh-stats')
 
