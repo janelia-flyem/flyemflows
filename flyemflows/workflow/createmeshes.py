@@ -1249,10 +1249,12 @@ def generate_mesh(sv, body, mask, mask_box, smoothing, decimation, max_vertices,
         mask_shape = box_shape(mask_box)
         mask = np.frombuffer(lz4.frame.decompress(mask), np.bool).reshape(mask_shape)
 
-    mesh = Mesh.from_binary_vol(mask, mask_box)
-
-    if smoothing != 0:
-        mesh.laplacian_smooth(smoothing)
+    # Since vol2mesh.Mesh.from_binary_vol() uses the 'ilastik' method
+    # by default, it supports smoothing natively.
+    # It's ~2x faster to do it there instead of via a separate step.
+    mesh = Mesh.from_binary_vol(mask, mask_box, smoothing_rounds=smoothing)
+    # if smoothing != 0:
+    #     mesh.laplacian_smooth(smoothing)
 
     if max_vertices != 0 and len(mesh.vertices_zyx) > max_vertices:
         decimation = min( decimation, max_vertices / len(mesh.vertices_zyx) )
