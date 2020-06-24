@@ -815,7 +815,7 @@ class CopySegmentation(Workflow):
         msg = f"Slab {slab_index}: Scale {scale}: Writing bricks"
         if isinstance(output_service.base_service, DvidVolumeService):
             instance_name = output_service.base_service.instance_name
-            msg += f"to {instance_name}"
+            msg += f" to {instance_name}"
 
         with Timer(msg, logger):
             brick_wall.bricks.map(write_brick).compute()
