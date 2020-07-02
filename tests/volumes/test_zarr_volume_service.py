@@ -48,6 +48,15 @@ def test_read(volume_setup):
     subvol = service.get_subvolume(box + global_offset)
     assert (subvol == volume[box_to_slicing(*box)]).all()
 
+    #
+    # Check sample_labels()
+    #
+    points = [np.random.randint(d, size=(10,)) for d in volume.shape]
+    points = np.transpose(points)
+    global_points = points + global_offset
+    labels = service.sample_labels(global_points)
+    assert (labels == volume[(*points.transpose(),)]).all()
+
 
 def test_write(volume_setup):
     tmpdir = tempfile.mkdtemp()

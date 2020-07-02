@@ -200,5 +200,23 @@ def test_subvolume_upsample_1(setup_hdf5_service):
     assert subvol_scaled.flags.c_contiguous
 
 
+def test_sample_labels(setup_hdf5_service):
+    _raw_volume, volume_config, full_from_h5, h5_reader = setup_hdf5_service
+    validate(volume_config, GrayscaleVolumeSchema, inject_defaults=True)
+
+    downsampled = downsample(full_from_h5, 2, 'block-mean')
+    points = [np.random.randint(d, size=(10,)) for d in downsampled.shape]
+    points = np.transpose(points)
+
+    # Scale 1
+    volume_config["adapters"]["rescale-level"] = 1
+    scaled_reader = VolumeService.create_from_config(volume_config)
+
+    labels = scaled_reader.sample_labels(points)
+    assert (labels == downsampled[(*points.transpose(),)]).all()
+
+
 if __name__ == "__main__":
-    pytest.main(['-s', '--tb=native', '--pyargs', 'tests.volumes.test_scaled_volume_service'])
+    args = ['-s', '--tb=native', '--pyargs', 'tests.volumes.test_scaled_volume_service']
+    #args += ['-k', 'sample_labels']
+    pytest.main(args)

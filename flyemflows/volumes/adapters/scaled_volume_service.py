@@ -132,6 +132,7 @@ class ScaledVolumeService(VolumeServiceWriter):
         Extract the subvolume, specified in new (scaled) coordinates from the
         original volume service, then scale result accordingly before returning it.
         """
+        box_zyx = np.asarray(box_zyx)
         true_scale = scale + self.scale_delta
         
         if true_scale in self.original_volume_service.available_scales:
@@ -206,6 +207,17 @@ class ScaledVolumeService(VolumeServiceWriter):
                 downsampled_data = downsample( subvolume, 2**(-self.scale_delta), 'block-mean' )
             self.original_volume_service.write_subvolume(downsampled_data, offset_zyx, scale)
             
+
+    def sample_labels(self, points_zyx, scale=0, npartitions=1024):
+        true_scale = scale + self.scale_delta
+
+        if true_scale in self.original_volume_service.available_scales:
+            # The original source already has the data at the necessary scale.
+            return self.original_volume_service.sample_labels(points_zyx, true_scale, npartitions)
+
+        # FIXME: It would be good to select the "best scale" as is done in get_subvolume() above.
+        return super().sample_labels(points_zyx, scale, npartitions)
+
 
     def sparse_brick_coords_for_labels(self, labels, clip=True):
         coords_df = self.original_volume_service.sparse_brick_coords_for_labels(labels, clip)

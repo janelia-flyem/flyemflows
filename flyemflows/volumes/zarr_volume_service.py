@@ -6,7 +6,7 @@ import numcodecs
 import numpy as np
 
 from confiddler import validate, flow_style
-from neuclease.util import box_to_slicing, choose_pyramid_depth
+from neuclease.util import box_to_slicing, choose_pyramid_depth, box_intersection
 
 from ..util import replace_default_entries
 from . import VolumeServiceWriter, GeometrySchema, GrayscaleAdapters
@@ -236,14 +236,34 @@ class ZarrVolumeService(VolumeServiceWriter):
 
     def get_subvolume(self, box_zyx, scale=0):
         box_zyx = np.array(box_zyx)
-        box_zyx -= self._global_offset // (2**scale)
-        return self.zarr_dataset(scale)[box_to_slicing(*box_zyx.tolist())]
+        orig_box = box_zyx.copy()
+        box_zyx -= (self._global_offset // (2**scale))
 
+        clipped_box = box_intersection(box_zyx, [(0,0,0), self.zarr_dataset(scale).shape])
+        if (clipped_box == box_zyx).all():
+            return self.zarr_dataset(scale)[box_to_slicing(*box_zyx.tolist())]
+
+        logger.warning(f"Zarr Request is out-of-bounds (XYZ): {orig_box[:, ::-1].tolist()}")
+
+        if (clipped_box[1] - clipped_box[0] <= 0).any():
+            # request is completely out-of-bounds; just return zeros
+            return np.zeros(box_zyx[1] - box_zyx[0], self.dtype)
+
+        # Request is partially out-of-bounds; read what we can, zero-fill for the rest.
+        clipped_vol = self.zarr_dataset(scale)[box_to_slicing(*clipped_box.tolist())]
+        result = np.zeros(box_zyx[1] - box_zyx[0], self.dtype)
+        localbox = clipped_box - box_zyx[0]
+        result[box_to_slicing(*localbox)] = clipped_vol
+        return result
 
     def write_subvolume(self, subvolume, offset_zyx, scale=0):
         offset_zyx = np.array(offset_zyx)
         offset_zyx -= self._global_offset // (2**scale)
         box = np.array([offset_zyx, offset_zyx+subvolume.shape])
+
+        if (box[0] < 0).any() or (box[1] > self.bounding_box_zyx).any():
+            raise RuntimeError(f"box extends beyond volume bounds: {box[:, ::-1].tolist()}")
+
         self.zarr_dataset(scale)[box_to_slicing(*box)] = subvolume
 
 

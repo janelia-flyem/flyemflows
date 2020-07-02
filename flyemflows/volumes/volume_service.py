@@ -5,7 +5,7 @@ from collections.abc import Mapping
 import numpy as np
 import pandas as pd
 
-from neuclease.util import Timer
+from neuclease.util import Timer, lexsort_columns, groupby_presorted
 from dvid_resource_manager.client import ResourceManagerClient
 logger = logging.getLogger(__name__)
 
@@ -163,6 +163,56 @@ class VolumeServiceReader(VolumeService):
     @abstractmethod
     def get_subvolume(self, box_zyx, scale=0):
         raise NotImplementedError
+
+    def sample_labels(self, points_zyx, scale=0, npartitions=1024):
+        """
+        Read the label under each of the given points.
+        """
+        if isinstance(points_zyx, pd.DataFrame):
+            assert not ({*'zyx'} - {*points_zyx.columns}), \
+                "points must have columns 'z', 'y', 'x', your dataframe had: {points_zyx.columns.tolist()}"
+            points_zyx = points_zyx[[*'zyx']].values
+        else:
+            points_zyx = np.asarray(points_zyx)
+
+        assert points_zyx.shape[1] == 3
+
+        brick_shape = self.preferred_message_shape // (2**scale)
+        idx = np.arange(len(points_zyx))[:, None]
+
+        # columns: [bz, by, bx, z, y, x, i]
+        brick_ids_and_points = np.concatenate((points_zyx // brick_shape, points_zyx, idx), axis=1)
+        brick_ids_and_points = lexsort_columns(brick_ids_and_points)
+
+        # extract columns brick_ids, zyxi
+        brick_ids = brick_ids_and_points[:, :3]
+        sorted_points = brick_ids_and_points[:, 3:]
+
+        # This is faster than pandas.DataFrame.groupby() for large data
+        point_groups = [*groupby_presorted(sorted_points, brick_ids)]
+        num_groups = len(point_groups)
+        logger.info(f"Sampling labels for {len(points_zyx)} points from {num_groups} bricks")
+
+        def sample_labels_from_brick(points_zyxi):
+            points_zyx = points_zyxi[:, :3]
+            box = (points_zyx.min(axis=0), 1+points_zyx.max(axis=0))
+            vol = self.get_subvolume(box, scale)
+            localpoints = points_zyx - box[0]
+            labels = vol[(*localpoints.transpose(),)]
+            df = pd.DataFrame(points_zyxi, columns=[*'zyxi'])
+            df['label'] = labels
+            return df
+
+        import dask.bag as db
+
+        point_groups = db.from_sequence(point_groups, npartitions=npartitions)
+        label_dfs = point_groups.map(sample_labels_from_brick).compute()
+        label_df = pd.concat(label_dfs, ignore_index=True)
+
+        # Return in the same order the user passed in
+        label_df = label_df.sort_values('i')
+        return label_df["label"].values
+
 
     def sparse_brick_coords_for_labels(self, labels, clip=True):
         """
@@ -322,7 +372,6 @@ class VolumeServiceReader(VolumeService):
 
         logger.info(f"Keeping {len(filtered_df)} label+group combinations")
         return filtered_df
-
 
 class VolumeServiceWriter(VolumeServiceReader):
 

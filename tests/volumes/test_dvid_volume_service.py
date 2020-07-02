@@ -197,7 +197,15 @@ def test_dvid_volume_service_labelmap(setup_dvid_repo, random_segmentation, disa
     assert expected_df.shape == brick_coords_df.shape
     assert (brick_coords_df == expected_df).all().all()
 
+    #
+    # Check sample_labels()
+    #
+    points = [np.random.randint(d, size=(10,)) for d in vol.shape]
+    points = np.transpose(points)
+    labels = service.sample_labels(points)
+    assert (labels == volume[(*points.transpose(),)]).all()
+
 if __name__ == "__main__":
     args = ['-s', '--tb=native', '--pyargs', 'tests.volumes.test_dvid_volume_service']
-    #args += ['-k', 'dvid_volume_service_branch']
+    #args += ['-k', 'test_dvid_volume_service_labelmap']
     pytest.main(args)

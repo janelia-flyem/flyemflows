@@ -743,6 +743,13 @@ class DvidVolumeService(VolumeServiceWriter):
             raise
 
 
+    def sample_labels(self, points_zyx, scale=0, npartitions=1024):
+        msg = ("FIXME: DvidVolumeService.sample_labels() has not yet been optimized to use DVID's GET /label endpoint. "
+               "This will be much slower than it could be.")
+        logger.warning(msg)
+        return super().sample_labels(points_zyx, scale, npartitions)
+
+
     def sparse_brick_coords_for_labels(self, labels, clip=True):
         """
         Return a DataFrame indicating the brick
