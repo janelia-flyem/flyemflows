@@ -1,3 +1,67 @@
+"""
+Script to "correct" the centroids produced by the MitoStats workflow.
+
+Given a segmentation source containing the mito CC objects and
+a table of their centroids as exported by the MitoStats workflow,
+reads the label from the segmentation under every centroid point,
+to verify that it matches the corresponding mito id.
+If it doesn't match, that implies the mito must have a non-convex
+shape, so the centroid doesn't fall within the segment itself.
+That's not technically wrong, but it's inconvenient for downstream
+processing, so here we "correct" the centroid by simply picking an
+arbitrary point that does lie within the mito segment.
+
+Notes
+-----
+
+There are two steps to this procedure:
+
+    1. Sample the label under every centroid point
+    2. Fetch a block of segmentation for each "mismatched" mito
+       we found, using the sparse blocks of the segment.
+
+Since we need sparse blocks for step 2, we need to provide a dvid labelmap instance.
+But for step 1, we just need a copy of the segmentation that can read points quickly.
+If you only have one copy of the segmentation (in a dvid labelmap instance),
+then provide it as the mito-sparsevol-source, and it will be used for both steps.
+But if you happen to have a copy of the segmentation in zarr format,
+you can provide it as the mito-sparsevol-source, in which case it will be used
+for step 1 (and will be faster).
+
+Example config
+--------------
+mito-sparsevol-source:
+  dvid:
+    server: emdata3:8900
+    uuid: d31b64ac81444923a0319961736a6c31
+    segmentation-name: masked-mito-cc
+    supervoxels: true
+
+  geometry:
+    message-block-shape: [-1, -1, -1]
+
+mito-point-source:
+  zarr:
+    path: /sharedscratch/flyem/bergs/v1.1/masked-mito-cc.zarr
+    dataset: s1
+
+  geometry:
+    message-block-shape: [-1, -1, -1]
+    block-width: -1
+    available-scales: [0]
+
+  adapters:
+    # Upscale
+    rescale-level: -1
+
+Example Usage:
+--------------
+# On a big machine:
+correct_centroids.py -s 1 -p 32 centroid-correction-config.yaml scale_0_stats_df.pkl
+
+# As a cluster job:
+bsub -n 32 -a sharedscratch -o correct-stats.log python correct_centroids.py -s 1 -p 32 centroid-correction-config.yaml scale_0_stats_df.pkl
+"""
 import sys
 import pickle
 import argparse
@@ -5,6 +69,7 @@ import logging
 from functools import partial
 
 logger = logging.getLogger(__name__)
+
 
 def config_schema():
     from flyemflows.volumes import VolumeService, SegmentationVolumeSchema, DvidSegmentationVolumeSchema, DvidVolumeService, ScaledVolumeService
@@ -121,7 +186,9 @@ def main():
     parser.add_argument('--dump-config-template', '-d', action='store_true')
     parser.add_argument('--verify', '-v', action='store_true')
     parser.add_argument('config')
-    parser.add_argument('stats_df_pkl')
+    parser.add_argument('stats_df_pkl', help='Mito statistics table, as produced by the MitoStats workflow.'
+                                             'Note: The coordinates must be provided in scale-0 units,'
+                                             '      regardless of the check-scale you want to use!')
     args = parser.parse_args()
 
     if args.threads == 0 and args.processes == 0:
