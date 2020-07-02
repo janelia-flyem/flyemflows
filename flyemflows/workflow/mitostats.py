@@ -130,14 +130,13 @@ class MitoStats(Workflow):
             min_size = options["min-size"]
             stats_df = stats_df.query("total_size >= @min_size").copy()
 
-        with Timer("Writing to stats_df.npy", logger):
+        with Timer(f"Exporting stats_df.pkl", logger):
             # Assume all centroids are 'exact' by default (overwritten below if necessary)
             stats_df['centroid_type'] = 'exact'
 
             stats_df = stats_df.astype({a: np.int32 for a in 'zyx'})
             stats_df = stats_df[[*'xyz', 'total_size', *class_cols, 'centroid_type']]
 
-        with Timer(f"Exporting stats_df.pkl", logger):
             with open('stats_df.pkl', 'wb') as f:
                 pickle.dump(stats_df, f, protocol=pickle.HIGHEST_PROTOCOL)
 
