@@ -23,6 +23,16 @@ class MitoStats(Workflow):
     Given a mitochondria segmentation and a mito "mask" segmentation,
     compute the centroid of each mito and the number of voxels it
     contains of each mask class.
+
+    Note:
+        For mito objects that are not convex, the computed centroid
+        will not necessarily fall within the mito object itself.
+
+        See the following post-processing script, which can be used
+        to "correct" the centroids by moving them to a point within
+        the actual object:
+
+            flyemflows/workflow/util/correct_centroids.py
     """
     MitoStatsOptionsSchema = \
     {
