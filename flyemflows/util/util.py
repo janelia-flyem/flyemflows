@@ -20,6 +20,7 @@ import psutil
 import numpy as np
 import scipy.ndimage
 from skimage.util import view_as_blocks
+from skimage.measure import block_reduce
 from skimage.transform import downscale_local_mean
 
 from dvidutils import downsample_labels
@@ -107,7 +108,14 @@ def block_downsample(volume, factor):
     if not isinstance(factor, Iterable):
         factor = (factor,)*volume.ndim
 
-    if np.issubdtype(volume.dtype, np.integer):
+    # Special case for uint8 grayscale downsampling;
+    # Use uint16 intermediate value instead of instead
+    # of float (as long as the sum of the bin voxels always fits in a uint16).
+    if volume.dtype == np.uint8 and np.prod(factor) <= 256:
+        sums = block_reduce(volume, factor, lambda a, axis: a.sum(axis, np.uint16))
+        denominator = np.prod(factor)
+        return (sums // denominator).astype(np.uint8)
+    elif np.issubdtype(volume.dtype, np.integer):
         # numpy/scipy will convert integers to float64
         # unless we pre-convert to lower precision first.
         volume = volume.astype(np.float32, order='C')
