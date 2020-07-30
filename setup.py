@@ -26,6 +26,7 @@ setup( name='flyemflows',
               'ingest_label_indexes = flyemflows.bin.ingest_label_indexes:main',
               'erase_from_labelindexes = flyemflows.bin.erase_from_labelindexes:main',
               'mesh_update_daemon = flyemflows.bin.mesh_update_daemon:main',
+              'roistats_table = flyemflows.workflow.util.roistats_table:main',
           ]
        }
      )
