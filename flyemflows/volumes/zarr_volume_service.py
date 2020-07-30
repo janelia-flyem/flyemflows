@@ -262,7 +262,8 @@ class ZarrVolumeService(VolumeServiceWriter):
         box = np.array([offset_zyx, offset_zyx+subvolume.shape])
 
         if (box[0] < 0).any() or (box[1] > self.bounding_box_zyx).any():
-            raise RuntimeError(f"box extends beyond volume bounds: {box[:, ::-1].tolist()}")
+            raise RuntimeError("box extends beyond volume bounds: "
+                               f"{box[:, ::-1].tolist()} exceeds {self.bounding_box_zyx[:, ::-1].tolist()}")
 
         self.zarr_dataset(scale)[box_to_slicing(*box)] = subvolume
 
