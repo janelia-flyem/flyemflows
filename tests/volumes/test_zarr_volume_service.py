@@ -48,6 +48,17 @@ def test_read(volume_setup):
     subvol = service.get_subvolume(box + global_offset)
     assert (subvol == volume[box_to_slicing(*box)]).all()
 
+    # Check out-of-bounds read (should be zeros)
+    oob_box = box.copy()
+    oob_box[1,2] = 500
+    subvol = service.get_subvolume(oob_box + global_offset)
+
+    # In-bounds portion should match
+    assert (subvol[box_to_slicing(*box - box[0])] == volume[box_to_slicing(*box)]).all()
+
+    # Everything else should be zeros
+    assert (subvol[:, :, 128:] == 0).all()
+
     #
     # Check sample_labels()
     #
@@ -91,6 +102,21 @@ def test_write(volume_setup):
     # Read it back.
     subvol = service.get_subvolume(box + global_offset)
     assert (subvol == volume[box_to_slicing(*box)]).all()
+
+    # Write some out-of-bounds zeros
+    oob_box = box.copy()
+    oob_box[1,2] = 500
+    subvol = np.zeros(oob_box[1] - oob_box[0], int)
+    service.write_subvolume(subvol, oob_box[0] + global_offset)
+
+    # Read it back.
+    readback = service.get_subvolume(oob_box + global_offset)
+    assert (readback == subvol).all()
+
+    # Try writing something other than zeros -- should fail
+    subvol[:,:,-1] = 1
+    with pytest.raises(RuntimeError):
+        service.write_subvolume(subvol, oob_box[0] + global_offset)
 
 
 if __name__ == "__main__":
