@@ -106,14 +106,16 @@ ZarrServiceSchema = \
             "maxItems": 3,
             "default": flow_style([0,0,0])
         },
-        "permit-out-of-bounds": {
-            "description": "If true, out-of-bounds reads will be permitted.  Out-of-bounds voxels are returned as 0.\n"
-                           "Out-of-bounds writes will also be permitted, as long as the out-of-bounds portion is entirely 0.\n"
-                           "Otherwise, out-of-bounds writes are treated as an error.\n",
-            "type": "boolean",
-            "default": True
+        "out-of-bounds-access": {
+            "description": "If 'forbid', any out-of-bounds read/write is an error.\n"
+                           "If 'permit', out-of-bounds reads are permitted, and filled with zeros, and out-of-bounds writes are merely ignored.\n"
+                           "If 'permit-empty', out-of-bounds writes are permitted (and ignored) only if the out-of-bounds voxels are zero.\n"
+                           "Otherwise, they're an error.",
+            "type": "string",
+            "enum": ["forbid", "permit", "permit-empty"],
+            "default": "permit-empty"
         },
-            "writable": {
+        "writable": {
             "description": "If True, open the array in read/write mode, otherwise open in read-only mode.\n"
                            "By default, guess based on create-if-necessary.\n",
             "oneOf": [ {"type": "boolean"}, {"type": "null"} ],
@@ -216,7 +218,7 @@ class ZarrVolumeService(VolumeServiceWriter):
         self._block_width = block_width
         self._available_scales = volume_config["geometry"]["available-scales"]
         self._global_offset = global_offset
-        self._permit_out_of_bounds = volume_config["zarr"]["permit-out-of-bounds"]
+        self._out_of_bounds_access = volume_config["zarr"]["out-of-bounds-access"]
 
         # Overwrite config entries that we might have modified
         volume_config["geometry"]["block-width"] = self._block_width
@@ -255,10 +257,10 @@ class ZarrVolumeService(VolumeServiceWriter):
         # Note that this message shows the true zarr storage bounds,
         # and doesn't show the logical bounds according to global_offset (if any).
         msg = f"Zarr Request is out-of-bounds (XYZ): {orig_box[:, ::-1].tolist()}"
-        if self._permit_out_of_bounds:
+        if self._out_of_bounds_access in ("permit", "permit-empty"):
             logger.warning(msg)
         else:
-            msg += "\nAdd permit-out-of-bounds to your config to allow such requests"
+            msg += "\nAdd 'out-of-bounds-access' to your config to allow such requests"
             raise RuntimeError(msg)
 
         if (clipped_box[1] - clipped_box[0] <= 0).any():
@@ -285,9 +287,7 @@ class ZarrVolumeService(VolumeServiceWriter):
             msg = ("Box extends beyond Zarr volume bounds (XYZ): "
                    f"{box[:, ::-1].tolist()} exceeds {stored_bounding_box[:, ::-1].tolist()}")
 
-            if self._permit_out_of_bounds:
-                logger.warning(msg)
-            else:
+            if self._out_of_bounds_access == 'forbid':
                 # Note that this message shows the true zarr storage bounds,
                 # and doesn't show the logical bounds according to global_offset (if any).
                 msg = "Cannot write subvolume. " + msg
@@ -295,21 +295,22 @@ class ZarrVolumeService(VolumeServiceWriter):
                 msg += " assuming the out-of-bounds portion is completely empty."
                 raise RuntimeError(msg)
 
-        clipped_box = box_intersection(box, stored_bounding_box)
+            clipped_box = box_intersection(box, stored_bounding_box)
 
-        # If any of the out-of-bounds portion is non-empty, that's an error.
-        subvol_copy = subvolume.copy()
-        subvol_copy[box_to_slicing(*(clipped_box - box[0]))] = 0
-        if subvol_copy.any():
-            # Note that this message shows the true zarr storage bounds,
-            # and doesn't show the logical bounds according to global_offset (if any).
-            msg = ("Cannot write subvolume. Box extends beyond Zarr volume storage bounds (XYZ): "
-                   f"{box[:, ::-1].tolist()} exceeds {stored_bounding_box[:, ::-1].tolist()}\n"
-                   "and the out-of-bounds portion is not empty (contains non-zero values).\n")
-            raise RuntimeError(msg)
+            # If any of the out-of-bounds portion is non-empty, that's an error.
+            subvol_copy = subvolume.copy()
+            subvol_copy[box_to_slicing(*(clipped_box - box[0]))] = 0
+            if self._out_of_bounds_access == 'permit-empty' and subvol_copy.any():
+                # Note that this message shows the true zarr storage bounds,
+                # and doesn't show the logical bounds according to global_offset (if any).
+                msg = ("Cannot write subvolume. Box extends beyond Zarr volume storage bounds (XYZ): "
+                    f"{box[:, ::-1].tolist()} exceeds {stored_bounding_box[:, ::-1].tolist()}\n"
+                    "and the out-of-bounds portion is not empty (contains non-zero values).\n")
+                raise RuntimeError(msg)
 
-        clipped_subvolume = subvolume[box_to_slicing(*clipped_box - box[0])]
-        self.zarr_dataset(scale)[box_to_slicing(*clipped_box)] = clipped_subvolume
+            logger.warning(msg)
+            clipped_subvolume = subvolume[box_to_slicing(*clipped_box - box[0])]
+            self.zarr_dataset(scale)[box_to_slicing(*clipped_box)] = clipped_subvolume
 
 
     @property
