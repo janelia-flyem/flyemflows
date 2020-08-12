@@ -22,13 +22,19 @@ The command above will display the built-in workflows, and it will also describe
 
 `mkdir mesh_template && launchflow -y CreateMeshes > mesh_template/workflow.yaml`
 
-You can also get a more detailed YAML file by running eg `launchflow -v CreateMeshes` for the verbose version. Once you specify the details required of your workflow (input data settings, output data settings, workflow-specific parameters, etc), you can run the workflow! To run our example workflow with 10 workers, we would simply issue the following command.
+You can also get a more detailed YAML file by running eg `launchflow -v CreateMeshes` for the verbose version. Once you specify the details required of your workflow (input data settings, output data settings, workflow-specific parameters, etc), you can run the workflow! In order to run successfully, you must at a minimum set values for parameters where the value is `{{NO_DEFAULT}}`. Note that the data sources (input/output) should only have value.
+
+To run our example workflow with 10 workers, we would simply issue the following command.
 
 `launchflow -n 10 mesh_template`
 
 This will create a run directory based on the template with a timestamp appended to the name. That run directory will contain information about that run of the workflow, and you can reuse the template directory at a later date to run the job again.
 
 Congratulations, you've run flyemflows!
+
+Running Locally
+==========
+While leveraging cluster resources can be invaluable for large-scale data processing, it is often easier to get off the ground by running locally. To use local resources, simply set the value of the `cluster-type` field to `local-cluster`. You can still pull/push data from/to remote resources, but the compute itself will be local in this case.
 
 Data Sources
 ==========
