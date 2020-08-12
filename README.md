@@ -44,4 +44,5 @@ Downsampling
 
 Mesh Generation
 ==========
+The CreateMeshes workflow provides a convenient entrypoint for mesh generation, the manufacture of approximations the surfaces of segmented objects. In a volume consisting of contiguous labels each comprising a distinct object (ie neurons in a brain), one can use the CreateMeshes workflow to generate a triangular mesh for each member of a subset of the labels. The default is all labels EXCEPT 0, which is typically designated as background.
 
