@@ -16,6 +16,20 @@ Yes, workflows! These are defined sequences of operations that are useful for al
 
 `launchflow -w`
 
+Running a Workflow
+==========
+The command above will display the built-in workflows, and it will also describe the process for using third-party workflows. Want to use a given workflow? This can be done by pointing `launchflow` at a template directory containing a workflow.yaml document. Once you know which workflow you want to run, you can use the following command to get an template directory named `mesh_template` that will contain the scaffolding of the YAML required for running the `CreateMeshes` workflow.
+
+`mkdir mesh_template && launchflow -y CreateMeshes > mesh_template/workflow.yaml`
+
+You can also get a more detailed YAML file by running eg `launchflow -v CreateMeshes` for the verbose version. Once you specify the details required of your workflow (input data settings, output data settings, workflow-specific parameters, etc), you can run the workflow! To run our example workflow with 10 workers, we would simply issue the following command.
+
+`launchflow -n 10 mesh_template`
+
+This will create a run directory based on the template with a timestamp appended to the name. That run directory will contain information about that run of the workflow, and you can reuse the template directory at a later date to run the job again.
+
+Congratulations, you've run flyemflows!
+
 Data Sources
 ==========
 
