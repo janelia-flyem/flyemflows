@@ -6,6 +6,9 @@
 
 python:
   - 3.6
+lz4:
+  - 3
 
 pin_run_as_build:
   python: x.x
+  lz4: x
