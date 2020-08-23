@@ -581,9 +581,8 @@ class CreateMeshes(Workflow):
             halo = self.config["createmeshes"]["halo"]
             brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.client, target_partition_size_voxels, halo, sbm, compression='lz4_2x')
 
-        # Convert to dask.DataFrame
-        bricks_ddf = BrickWall.bricks_as_ddf(brickwall.bricks, logical=True)
-        bricks_ddf = bricks_ddf[['lz0', 'ly0', 'lx0', 'brick']]
+        # Convert to dask.DataFrame, including logical scan-order position as the DataFrame index.
+        bricks_ddf = brickwall.as_ddf()[['brick_index', 'lz0', 'ly0', 'lx0', 'brick']]
         return bricks_ddf, subset_labels
 
 
@@ -757,7 +756,7 @@ class CreateMeshes(Workflow):
                 logger.info(f"Batch {batch_index:02}:  *** Also exporting labelcounts (slow) ***")
 
             dtypes = {'label': np.uint64, 'count': np.int64,
-                      'lz0': np.int32, 'ly0': np.int32, 'lx0': np.int32}
+                      'brick_index': np.int32, 'lz0': np.int32, 'ly0': np.int32, 'lx0': np.int32}
 
             # subset_supervoxels could be large, so it's more efficient to pass
             # it via dask.delayed rather than a normally captured variable.
@@ -868,11 +867,9 @@ class CreateMeshes(Workflow):
 
 
     def _distribute_counts(self, batch_index, bricks_ddf, brick_counts_df):
-        # FIXME: If we set an index when calling bricks_as_ddf,
-        #        then this merge could be on the index (faster).
         with Timer(f"Batch {batch_index:02}: Distributing counts", logger):
             brick_counts_grouped_df = (brick_counts_df
-                                        .groupby(['lz0', 'ly0', 'lx0'])[['sv', 'sv_size', 'body', 'body_size']]
+                                        .groupby('brick_index')[['sv', 'sv_size', 'body', 'body_size']]
                                         .agg(list)
                                         .reset_index())
 
@@ -882,7 +879,7 @@ class CreateMeshes(Workflow):
             # Use an inner merge to discard bricks that had no objects of interest.
             brick_counts_grouped_ddf = ddf.from_delayed([delayed(brick_counts_grouped_df)],
                                                         meta=brick_counts_grouped_df.iloc[0:0])
-            bricks_ddf = bricks_ddf.merge(brick_counts_grouped_ddf, 'inner', ['lz0', 'ly0', 'lx0'])
+            bricks_ddf = bricks_ddf.merge(brick_counts_grouped_ddf, 'inner', left_index=True, right_on='brick_index')
             bricks_ddf = drop_empty_partitions(bricks_ddf)
 
         return bricks_ddf, len(brick_counts_grouped_df)
@@ -1139,6 +1136,7 @@ def compute_brick_labelcounts(brick_df, subset_labels, export_labelcounts):
             label_counts = label_counts.iloc[1:]
 
         brick_counts_df = label_counts.reset_index()
+        brick_counts_df['brick_index'] = row.Index
         brick_counts_df['lz0'] = brick.logical_box[0,0]
         brick_counts_df['ly0'] = brick.logical_box[0,1]
         brick_counts_df['lx0'] = brick.logical_box[0,2]
