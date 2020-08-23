@@ -333,12 +333,23 @@ class BrickWall:
         
         return BrickWall( new_bounding_box, new_grid, new_bricks, self.num_bricks )
 
+    def as_ddf(self, logical=True, physical=False, names='short', set_index=True):
+        """
+        Return given dask Bag of bricks as a dask DataFrame,
+        with columns for the logical and physical boxes.
+
+        This function sets the DataFrame index according to each logical box's scan-order position.
+
+        See the classmethod BrickWall.bricks_as_ddf() for argument details.
+        """
+        return BrickWall.bricks_as_ddf(self.bricks, logical, physical, names, True, self.bounding_box, self.grid)
+
     @classmethod
     def bricks_as_ddf(cls, bricks, logical=True, physical=False, names='short', set_index=False, wall_box=None, wall_grid=None):
         """
         Return given dask Bag of bricks as a dask DataFrame,
         with columns for the logical and physical boxes.
-        
+
         Args:
             bricks:
                 A dask.Bag of bricks
@@ -359,12 +370,14 @@ class BrickWall:
             wall_grid:
                 The Grid on which these bricks are laid out.
                 Used to compute the index.
-        
+
         Returns:
             dask.dataframe.DataFrame
         """
-        cols = []
+        assert not set_index or (wall_box is not None and wall_grid is not None), \
+            "If using set_index=True, you must provide wall_box and wall_grid"
 
+        cols = []
         if logical:
             if names == 'long':
                 cols += LB_COLS
@@ -382,16 +395,16 @@ class BrickWall:
             bounds = []
             if logical:
                 bounds += list(brick.logical_box.flat)
-            
+
             if physical:
                 bounds += list(brick.physical_box.flat)
 
             if set_index:
-                brick_index = cls.compute_brick_index(brick)
+                brick_index = cls.compute_brick_index(brick, wall_box, wall_grid)
                 return (brick_index, *bounds, brick)
             else:
                 return (*bounds, brick)
-        
+
         brick_table = bricks.map(boxes_and_brick)
         dtypes = {}
         if set_index:
@@ -400,13 +413,15 @@ class BrickWall:
             brick_indexes = brick_table.pluck(0).compute()
             is_sorted = (brick_indexes == sorted(brick_indexes))
             dtypes['brick_index'] = np.int32
-        
+
         dtypes.update({col: np.int32 for col in cols})
         dtypes['brick'] = object
         bricks_ddf = brick_table.to_dataframe(dtypes)
 
         if set_index:
-            bricks_ddf = bricks_ddf.set_index('brick_index', sorted=is_sorted)
+            # Add it as both the index and as a column, to permit either downstream preference.
+            bricks_ddf['brick_idx'] = bricks_ddf['brick_index']
+            bricks_ddf = bricks_ddf.set_index('brick_idx', sorted=is_sorted)
 
         return bricks_ddf
 
