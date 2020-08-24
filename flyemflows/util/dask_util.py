@@ -12,6 +12,7 @@ import dask.bag
 import dask.dataframe
 from dask.bag import Bag
 from distributed.utils import parse_bytes
+from distributed.client import futures_of
 
 from confiddler import dump_config
 from neuclease.util import Timer
@@ -261,6 +262,24 @@ def drop_empty_ddf_partitions(df):
     if pempty is not None:
         df = dask.dataframe.from_delayed(df_delayed_new, meta=pempty)
     return df
+
+
+def release_collection(collection, client=None):
+    """
+    An explicit unpersist() function for dask collections,
+    for when you can't merely release the reference because
+    it is held by a downstream persisted() task.
+
+    Copied from:
+        - https://github.com/dask/dask/issues/2492
+        - https://stackoverflow.com/questions/44797668
+    """
+    if client is None or isinstance(client, DebugClient):
+        return
+
+    for future in futures_of(collection):
+        future.release()
+
 
 class as_completed_synchronous:
     """

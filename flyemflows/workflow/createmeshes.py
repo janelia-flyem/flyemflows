@@ -25,7 +25,7 @@ from dvidutils import LabelMapper
 
 from vol2mesh import Mesh
 
-from ..util.dask_util import drop_empty_partitions, DebugClient
+from ..util.dask_util import drop_empty_partitions, DebugClient, release_collection
 from .util.config_helpers import BodyListSchema, load_body_list
 from ..volumes import VolumeService, SegmentationVolumeSchema, DvidVolumeService
 from ..brick import BrickWall
@@ -536,15 +536,20 @@ class CreateMeshes(Workflow):
         del brick_counts_df
 
         brick_meshes_ddf = self._compute_brickwise_meshes(batch_index, bricks_ddf, num_brick_meshes, num_bricks)
+        release_collection(bricks_ddf)
+        del bricks_ddf
 
         # TODO: max-body-vertices (before assembly...)
 
         sv_meshes_ddf = self._combine_brick_meshes(batch_index, brick_meshes_ddf)
+        release_collection(brick_meshes_ddf)
         del brick_meshes_ddf
 
         # TODO: Repartition?
 
         self._write_meshes(batch_index, sv_meshes_ddf, subset_supervoxels, existing_svs)
+        release_collection(sv_meshes_ddf)
+        del sv_meshes_ddf
 
 
     def init_bricks_ddf(self, volume_service, subset_labels):
