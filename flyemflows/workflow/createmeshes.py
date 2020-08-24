@@ -289,13 +289,23 @@ class CreateMeshes(Workflow):
                                "consecutive labels are often spatially correlated (especially for small supervoxels),\n"
                                "shuffling the order of the labels before assigning them to batches helps.\n",
                 "type": "boolean",
-                "default": True # Usually disabled for testing only
+                "default": True  # Usually disabled for testing only
             },
             "partition-volume-size": {
                 "description": "Approximately how much data in total should go to each worker\n"
                                "when bricks when bricks are distributed to workers, in bytes, not voxels.\n",
                 "type": "number",
                 "default": 1 * (2**30)  # 1 GB
+            },
+            "max-svs-per-brick": {
+                "description": "Some bricks may happen to contain many supervoxels of interest, while others contain only a few.\n"
+                               "This can lead to imbalanced computations, where most bricks are processed quickly, but some take\n"
+                               "a long time to process, since there are many more meshes to generate from that brick's voxels.\n"
+                               "This can be avoided by copying the brick and splitting the list of supervoxels to process between the copies.\n"
+                               "This config setting specifies how many supervoxels can be processed in a single brick without copying it.\n"
+                               "Note: Using this setting carries some overhead, since it incurs a repartition of the brick set.\n",
+                "type": "integer",
+                "default": 1_000_000  # Essentially unlimited.
             }
         }
     }
@@ -532,10 +542,11 @@ class CreateMeshes(Workflow):
         brick_counts_df, existing_svs = self._filter_svs(batch_index, brick_counts_df, subset_supervoxels, existing_svs)
         num_brick_meshes = len(brick_counts_df)
 
-        bricks_ddf, num_bricks = self._distribute_counts(batch_index, bricks_ddf, brick_counts_df)
+        max_svs_per_brick = self.config["createmeshes"]["max-svs-per-brick"]
+        bricks_ddf, num_unique_bricks, num_bricks = self._distribute_counts(batch_index, bricks_ddf, brick_counts_df, max_svs_per_brick)
         del brick_counts_df
 
-        brick_meshes_ddf = self._compute_brickwise_meshes(batch_index, bricks_ddf, num_brick_meshes, num_bricks)
+        brick_meshes_ddf = self._compute_brickwise_meshes(batch_index, bricks_ddf, num_brick_meshes, num_bricks, num_unique_bricks)
         release_collection(bricks_ddf)
         del bricks_ddf
 
@@ -871,12 +882,54 @@ class CreateMeshes(Workflow):
         return brick_counts_df, existing_svs
 
 
-    def _distribute_counts(self, batch_index, bricks_ddf, brick_counts_df):
+    def _distribute_counts(self, batch_index, bricks_ddf, brick_counts_df, max_svs_per_brick=None):
+        """
+        Each row of the given bricks_ddf lists a brick_index and the Brick object.
+        the brick_counts_df contains a table of supervoxels and their corresponding
+        bodies, along with the total supervoxel and body voxel counts (totals are across
+        all bricks).
+
+        This function creates a list of supervoxels (and bodies, and sizes) for each brick,
+        and adds those lists as columns to bricks_ddf (i.e. adds new columns with dtype=object,
+        where each entry is a list).
+
+        The updated bricks_ddf can then be processed one row (brick) at a time, and the supervoxels
+        that should be processed in that brick are listed in the 'sv' column.
+
+        Args:
+            max_svs_per_brick:
+                If provided, split groups of supervoxels into smaller groups,
+                forcing some bricks to be listed more than once in the final results.
+        """
         with Timer(f"Batch {batch_index:02}: Distributing counts", logger):
             brick_counts_grouped_df = (brick_counts_df
                                         .groupby('brick_index')[['sv', 'sv_size', 'body', 'body_size']]
                                         .agg(list)
                                         .reset_index())
+
+            num_unique_bricks = len(brick_counts_grouped_df)
+            brick_counts_grouped_df['num_svs'] = brick_counts_grouped_df['sv'].map(len)
+
+            # For bricks that have too many supervoxels of interest,
+            # Split those sv lists across multiple rows.
+            unchanged_df = brick_counts_grouped_df.query('num_svs <= @max_svs_per_brick')
+            too_many_df = brick_counts_grouped_df.query('num_svs > @max_svs_per_brick')
+            if len(too_many_df) > 0:
+                split_rows = []
+                for row in too_many_df.itertuples(index=False):
+                    for svs, sv_sizes, bodies, body_sizes in zip(iter_batches(row.sv, max_svs_per_brick),
+                                                                 iter_batches(row.sv_size, max_svs_per_brick),
+                                                                 iter_batches(row.body, max_svs_per_brick),
+                                                                 iter_batches(row.body_size, max_svs_per_brick)):
+                        split_rows.append((row.brick_index, svs, sv_sizes, bodies, body_sizes, len(svs)))
+
+                split_df = pd.DataFrame(split_rows, columns=brick_counts_grouped_df.columns)
+                split_df = split_df.astype(brick_counts_grouped_df.dtypes.to_dict())
+
+                brick_counts_grouped_df = (
+                    pd.concat((unchanged_df, split_df), ignore_index=True)
+                      .sort_values('brick_index')
+                      .reset_index(drop=True))
 
             np.save('grouped-brick-counts.npy', brick_counts_grouped_df.to_records(index=False))
 
@@ -884,13 +937,26 @@ class CreateMeshes(Workflow):
             # Use an inner merge to discard bricks that had no objects of interest.
             brick_counts_grouped_ddf = ddf.from_delayed([delayed(brick_counts_grouped_df)],
                                                         meta=brick_counts_grouped_df.iloc[0:0])
-            bricks_ddf = bricks_ddf.merge(brick_counts_grouped_ddf, 'inner', left_index=True, right_on='brick_index')
-            bricks_ddf = drop_empty_partitions(bricks_ddf)
+            bricks_ddf = (bricks_ddf
+                            .drop(columns=['brick_index'])
+                            .merge(brick_counts_grouped_ddf, 'inner', left_index=True, right_on='brick_index'))
 
-        return bricks_ddf, len(brick_counts_grouped_df)
+            bricks_ddf = drop_empty_partitions(bricks_ddf).reset_index(drop=True)
+
+            if len(too_many_df):
+                n = len(brick_counts_grouped_df)
+                logger.info(f"Repartitioning bricks_ddf with {n} partitions")
+                # The repartition() method is super annoying to use, and I'm not
+                # convinced that its requirements actually make sense,
+                # so I'm doing it this ridiculous way.
+                bricks_ddf.index.name = 'index'
+                bricks_ddf = bricks_ddf.reset_index()
+                bricks_ddf = bricks_ddf.set_index('index', divisions=[*range(n), n-1])
+
+        return bricks_ddf, num_unique_bricks, len(brick_counts_grouped_df)
 
 
-    def _compute_brickwise_meshes(self, batch_index, bricks_ddf, num_brick_meshes, num_bricks):
+    def _compute_brickwise_meshes(self, batch_index, bricks_ddf, num_brick_meshes, num_bricks, num_unique_bricks):
         options = self.config["createmeshes"]
         def compute_meshes_for_bricks(bricks_partition_df):
             assert len(bricks_partition_df) > 0, "partition is empty" # drop_empty_partitions() should have eliminated these.
@@ -927,7 +993,7 @@ class CreateMeshes(Workflow):
         brick_meshes_ddf = bricks_ddf.map_partitions(compute_meshes_for_bricks, meta=dtypes).clear_divisions()
         brick_meshes_ddf = brick_meshes_ddf.persist()
 
-        msg = f"Batch {batch_index:02}: Computing {num_brick_meshes} brickwise meshes from {num_bricks} bricks"
+        msg = f"Batch {batch_index:02}: Computing {num_brick_meshes} brickwise meshes from {num_bricks} bricks ({num_unique_bricks} unique)"
         with Timer(msg, logger):
             # Export brick mesh statistics
             os.makedirs('brick-mesh-stats')

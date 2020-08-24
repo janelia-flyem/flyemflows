@@ -200,6 +200,7 @@ def test_createmeshes_basic(setup_createmeshes_config, disable_auto_retry):
     #print(execution_dir)
     check_outputs(execution_dir, object_boxes)
 
+
 def test_createmeshes_max_vertices(setup_createmeshes_config, disable_auto_retry):
     template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
     max_vertices = 1000
@@ -209,6 +210,20 @@ def test_createmeshes_max_vertices(setup_createmeshes_config, disable_auto_retry
     execution_dir, _workflow = launch_flow(template_dir, 1)
     #print(execution_dir)
     check_outputs(execution_dir, object_boxes, max_vertices=max_vertices)
+
+
+def test_createmeshes_max_svs_per_brick(setup_createmeshes_config, disable_auto_retry):
+    template_dir, config, _dvid_address, _repo_uuid, object_boxes, _object_sizes = setup_createmeshes_config
+    config['createmeshes']['max-svs-per-brick'] = 1
+    # Use just one brick, but it should end up getting split for each object.
+    config["input"]["geometry"].update({
+        "message-block-shape": [128,128,128]
+    })
+    YAML().dump(config, open(f"{template_dir}/workflow.yaml", 'w'))
+
+    execution_dir, _workflow = launch_flow(template_dir, 1)
+    #print(execution_dir)
+    check_outputs(execution_dir, object_boxes)
 
 
 def test_createmeshes_to_tarsupervoxels(setup_createmeshes_config, disable_auto_retry):
@@ -449,5 +464,5 @@ if __name__ == "__main__":
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_createmeshes']
     args += ['-x']
     #args += ['-Werror']
-    #args += ['-k', 'createmeshes_subset_bodies_in_batches']
+    args += ['-k', 'createmeshes_max_svs_per_brick']
     pytest.main(args)
