@@ -1,7 +1,8 @@
 from .. import ( Hdf5ServiceSchema, ZarrServiceSchema,
                  DvidGrayscaleServiceSchema, SliceFilesServiceSchema, N5ServiceSchema,
                  DvidSegmentationServiceSchema, BossServiceSchema,
-                 BrainMapsServiceSchema, GrayscaleAdapters, SegmentationAdapters )
+                 TensorStoreServiceSchema, BrainMapsServiceSchema,
+                 GrayscaleAdapters, SegmentationAdapters )
 
 from .geometry import GeometrySchema
 
@@ -32,6 +33,7 @@ GrayscaleVolumeSchema = \
         { "properties": { "n5": N5ServiceSchema } },
         { "properties": { "hdf5": Hdf5ServiceSchema } },
         { "properties": { "boss": BossServiceSchema } },
+        { "properties": { "tensorstore": TensorStoreServiceSchema } },
         { "properties": { "brainmaps": BrainMapsServiceSchema } },
     ],
     "properties": {
@@ -61,6 +63,7 @@ SegmentationVolumeSchema = \
         { "properties": { "n5": N5ServiceSchema } },
         { "properties": { "hdf5": Hdf5ServiceSchema }, "required": ["hdf5"] },
         { "properties": { "boss": BossServiceSchema }, "required": ["boss"] },
+        { "properties": { "tensorstore": TensorStoreServiceSchema }, "required": ["tensorstore"] },
         { "properties": { "brainmaps": BrainMapsServiceSchema }, "required": ["brainmaps"] },
     ],
     "properties": {

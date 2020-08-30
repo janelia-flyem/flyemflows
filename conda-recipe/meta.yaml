@@ -70,6 +70,9 @@ requirements:
     - oauth2client
     - snappy
     - python-snappy
+
+    # Not included:
+    # - tensorstore # install with pip!
     
     # At the time of this writing, gsutil does not support Python 3 [1],
     # so it can't be directly installed into the same environment as flyemflows.
