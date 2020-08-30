@@ -2,7 +2,7 @@ import numpy as np
 
 from neuclease.util import Grid, SparseBlockMask, round_box, extract_subvol
 
-from ..util import persist_and_execute, downsample, DebugClient
+from ..util import persist_and_execute, downsample, DebugClient, drop_empty_partitions
 from .brick import ( Brick, generate_bricks_from_volume_source, realign_bricks_to_new_grid, pad_brick_data_from_volume_source )
 
 # Column names used below for logical box coordinates and physical box coordinates.
@@ -419,6 +419,7 @@ class BrickWall:
         dtypes.update({col: np.int32 for col in cols})
         dtypes['brick'] = object
         bricks_ddf = brick_table.to_dataframe(dtypes)
+        bricks_ddf = drop_empty_partitions(bricks_ddf)
 
         if set_index:
             # Add it as both the index and as a column, to permit either downstream preference.
