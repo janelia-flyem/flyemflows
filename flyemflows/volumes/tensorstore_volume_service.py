@@ -154,8 +154,17 @@ class TensorStoreVolumeServiceReader(VolumeServiceReader):
             resource_manager_client = ResourceManagerClient("", 0)
 
         self.volume_config = volume_config
-        self._stores = {}
 
+        try:
+            # Strip 'gs://' if the user provided it.
+            bucket = volume_config['spec']['kvstore']['bucket']
+            if bucket.startswith('gs://'):
+                bucket = bucket[len('gs://'):]
+                volume_config['spec']['kvstore']['bucket'] = bucket
+        except KeyError:
+            pass
+
+        self._stores = {}
         store = self.store(0)
         spec = store.spec()
 
