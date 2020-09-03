@@ -1,7 +1,7 @@
 import copy
 import numpy as np
 
-from confiddler import validate
+from confiddler import validate, emit_defaults
 from dvid_resource_manager.client import ResourceManagerClient
 from neuclease.util import box_to_slicing
 
@@ -12,8 +12,8 @@ TensorStoreSpecSchema = \
 {
     "description": "TensorStore Spec",
     "type": "object",
-    "required": [],
     "default": {},
+    "required": ["driver", "kvstore", "path"],
     # "additionalProperties": False, # Can't use this in conjunction with 'oneOf' schema feature
     "properties": {
         "driver": {
@@ -78,6 +78,7 @@ TensorStoreContextSchema = {
     "properties": {
         "cache_pool": {
             "type": "object",
+            "default": {},
             "properties": {
                 "total_bytes_limit": {
                     "type": "integer",
@@ -87,6 +88,7 @@ TensorStoreContextSchema = {
         },
         "data_copy_concurrency": {
             "type": "object",
+            "default": {},
             "properties": {
                 "limit": {
                     "default": 1,  # TensorStore's default is 'shared' but in a
@@ -100,6 +102,7 @@ TensorStoreContextSchema = {
         },
         "file_io_concurrency": {
             "type": "object",
+            "default": {},
             "properties": {
                 "limit": {
                     "default": 1,  # TensorStore's default is 'shared' but in a
@@ -117,8 +120,8 @@ TensorStoreContextSchema = {
 TensorStoreServiceSchema = {
     "description": "TensorStore Service settings",
     "type": "object",
-    "required": [],
     "default": {},
+    "required": ["spec", "context"],
     # "additionalProperties": False, # Can't use this in conjunction with 'oneOf' schema feature
     "properties": {
         "spec": TensorStoreSpecSchema,
@@ -145,6 +148,10 @@ class TensorStoreVolumeServiceReader(VolumeServiceReader):
     A wrapper around the TensorStore API to
     implement the VolumeServiceReader API.
     """
+
+    @classmethod
+    def default_config(cls):
+        return emit_defaults(TensorStoreVolumeSchema)
 
     def __init__(self, volume_config, resource_manager_client=None):
         validate(volume_config, TensorStoreVolumeSchema, inject_defaults=True)
