@@ -56,7 +56,7 @@ N5CreationSettingsSchema = \
             "description": "The type of compression to use for all blocks.\n"
                            'Choices: ["raw", "gzip", "bzip2", "xz", "lz4"]',
             "type": "string",
-            "enum": ["raw", "gzip", "bzip2", "xz", "lz4"],
+            "enum": ["raw", "gzip", "bzip2", "xz", "lz4"], # don't be fooled -- blosc is allowed by z5py, but not for N5
             "default": "raw"
         },
         "compression-level": {
