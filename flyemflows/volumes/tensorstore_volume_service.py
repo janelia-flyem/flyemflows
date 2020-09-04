@@ -1,4 +1,5 @@
 import copy
+import pickle
 import numpy as np
 
 from confiddler import validate, emit_defaults
@@ -219,6 +220,31 @@ class TensorStoreVolumeServiceReader(VolumeServiceReader):
             store = ts.open(spec, read=True, write=False, context=ts.Context(context)).result()
             self._stores[scale] = store
             return store
+
+    def __getstate__(self):
+        """
+        Pickle representation.
+        """
+        d = self.__dict__.copy()
+
+        # Apparently unpickling can fail intermittently due to network issues, so we
+        # pickle/unpickle it explicitly so we can control the process and retry if necessary.
+        d['_stores'] = pickle.dumps(d['_stores'])
+        return d
+
+    @auto_retry(3, pause_between_tries=5.0, logging_name=__name__)
+    def __setstate__(self, d):
+        # We unpickle the TensorStore(s) explicitly here, to ensure
+        # that errors are caught by the auto_retry decorator.
+        #
+        # Here's an example error we want to catch:
+        #
+        #   ValueError: Error opening "neuroglancer_precomputed" driver:
+        #     Error reading "gs://vnc-v3-seg/rc4_wsexp/info":
+        #     CURL error[16] Error in the HTTP2 framing layer
+        #
+        d['_stores'] = pickle.loads(d['_stores'])
+        self.__dict__ = d
 
     @property
     def dtype(self):
