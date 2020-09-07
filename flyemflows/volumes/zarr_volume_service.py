@@ -205,8 +205,9 @@ class ZarrVolumeService(VolumeServiceWriter):
         auto_bb += global_offset
 
         bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
-        assert (auto_bb[1] >= bounding_box_zyx[1]).all(), \
-            f"Volume config bounding box ({bounding_box_zyx}) exceeds the bounding box of the data ({auto_bb})."
+        assert (auto_bb[1] >= bounding_box_zyx[1]).all() or volume_config["zarr"]["out-of-bounds-access"] != "forbid", \
+            f"Volume config bounding box ({bounding_box_zyx}) exceeds the bounding box of the data ({auto_bb}).\n"\
+            f"If you want to enable reading out-of-bounds regions (as empty), add out-of-bounds-access: 'permit-empty' to your config."
 
         # Replace -1 bounds with auto
         missing_bounds = (bounding_box_zyx == -1)
