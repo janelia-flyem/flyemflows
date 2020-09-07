@@ -54,7 +54,9 @@ N5CreationSettingsSchema = \
         },
         "compression": {
             "description": "The type of compression to use for all blocks.\n"
-                           'Choices: ["raw", "gzip", "bzip2", "xz", "lz4"]',
+                           'Choices: ["raw", "gzip", "bzip2", "xz"]\n'
+                           "Note: At the time of this writing, neuroglancer only supports 'raw' and 'gzip'.\n"
+                           "Note: In theory, 'blosc' and 'lz4' should be allowed, but z5py doesn't support those for n5.\n",
             "type": "string",
             "enum": ["raw", "gzip", "bzip2", "xz", "lz4"], # don't be fooled -- blosc is allowed by z5py, but not for N5
             "default": "raw"
