@@ -217,7 +217,10 @@ class VolumeServiceReader(VolumeService):
         label_df = label_df.sort_values('i')
         return label_df["label"].values
 
-    @abstractmethod
+    # This is abstract, but we refrain from declaring it as such.
+    # Subclasses which can't implement this can still be instantiated,
+    # but they won't be usable in all workflows.
+    # @abstractmethod
     def sparse_brick_coords_for_labels(self, labels, clip=True):
         """
         Return a DataFrame indicating the brick
