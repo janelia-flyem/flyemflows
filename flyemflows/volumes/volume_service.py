@@ -9,6 +9,7 @@ from neuclease.util import Timer, lexsort_columns, groupby_presorted
 from dvid_resource_manager.client import ResourceManagerClient
 logger = logging.getLogger(__name__)
 
+
 class VolumeService(metaclass=ABCMeta):
 
     SUPPORTED_SERVICES = ['hdf5', 'dvid', 'boss', 'tensorstore', 'brainmaps', 'n5', 'slice-files', 'zarr']
@@ -216,22 +217,22 @@ class VolumeServiceReader(VolumeService):
         label_df = label_df.sort_values('i')
         return label_df["label"].values
 
-
+    @abstractmethod
     def sparse_brick_coords_for_labels(self, labels, clip=True):
         """
         Return a DataFrame indicating the brick
         coordinates (starting corner) that encompass the given labels.
-        
+
         Args:
             labels:
                 A list of label IDs.
-            
+
             clip:
                 If True, filter the results to exclude any coordinates
                 that fall outside this service's bounding-box.
                 Otherwise, all brick coordinates that encompass the given labels
                 will be returned, whether or not they fall within the bounding box.
-                
+
         Returns:
             DataFrame with columns [z,y,x,label],
             where z,y,x represents the starting corner (in full-res coordinates)
@@ -279,7 +280,6 @@ class VolumeServiceReader(VolumeService):
         coords = coords_df[['z', 'y', 'x']].values
         return SparseBlockMask.create_from_lowres_coords(coords, brick_shape)
 
-
     def sparse_brick_coords_for_label_pairs(self, label_pairs, clip=True):
         """
         Given a list of label pairs, determine which bricks in
@@ -310,7 +310,6 @@ class VolumeServiceReader(VolumeService):
         label_groups_df = pd.DataFrame({'label': label_pairs.reshape(-1)})
         label_groups_df['group'] = np.arange(label_pairs.size, dtype=np.int32) // 2
         return self.sparse_brick_coords_for_label_groups(label_groups_df, 2, clip)
-
 
     def sparse_brick_coords_for_label_groups(self, label_groups_df, min_subset_size=2, clip=True):
         """
@@ -352,7 +351,7 @@ class VolumeServiceReader(VolumeService):
         all_labels = label_groups_df['label'].unique()
         coords_df = self.sparse_brick_coords_for_labels(all_labels, clip)
 
-        with Timer(f"Associating brick coords with group IDs", logger):
+        with Timer("Associating brick coords with group IDs", logger):
             combined_df = coords_df.merge(label_groups_df, 'inner', 'label', copy=False)
             combined_df = combined_df[['z', 'y', 'x', 'group', 'label']]
 
@@ -368,7 +367,7 @@ class VolumeServiceReader(VolumeService):
             # Keep brick/group combinations that have enough labels.
             brick_groups_to_keep = labelcounts.loc[(labelcounts['labelcount'] >= min_subset_size)]
             brick_groups_to_keep = brick_groups_to_keep[['z', 'y', 'x', 'group']]
-            
+
         with Timer("Filtering for kept bricks", logger):
             filtered_df = combined_df.merge(brick_groups_to_keep, 'inner', ['z', 'y', 'x', 'group'], copy=False)
             assert filtered_df.columns.tolist() == ['z', 'y', 'x', 'group', 'label']
@@ -376,9 +375,9 @@ class VolumeServiceReader(VolumeService):
         logger.info(f"Keeping {len(filtered_df)} label+group combinations")
         return filtered_df
 
+
 class VolumeServiceWriter(VolumeServiceReader):
 
     @abstractmethod
     def write_subvolume(self, subvolume, offset_zyx, scale=0):
         raise NotImplementedError
-
