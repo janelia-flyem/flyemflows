@@ -44,7 +44,7 @@ df = pd.DataFrame(np.load('roi-stats.npy', allow_pickle=True))
 # Pivot so roi names are in the columns
 print("Pivoting stats")
 pdf = df[['body', 'roi', 'voxels_s1']].pivot('body', 'roi')
-pdf = pdf.fillna(0).astype(np.int32)
+pdf = pdf.fillna(0).astype(np.int64)
 pdf.columns = pdf.columns.droplevel()
 
 # Compute non-leaf roi stats by summing the proper leaf rois for each
