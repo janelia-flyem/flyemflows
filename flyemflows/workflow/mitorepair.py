@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 MITO_VOL_FRAC = 0.4
 MITO_EDGE_FRAC = 0.4
+MAX_MITO_FRAGMENT_VOL = 6e6  # Empirically, bodies larger than 6M voxels aren't mitochondria
 
 
 class MitoRepair(Workflow):
@@ -62,6 +63,35 @@ class MitoRepair(Workflow):
             "analysis-scale": {
                 "type": "integer",
                 "default": 2
+            },
+            "use-resource-manager-for-segmentation": {
+                "description": "If True, use the resource manager to throttle segmentation reads.\n"
+                               "Otherwise, it's only used when fetching size info from dvid.\n",
+                "type": "boolean",
+                "default": False,
+            },
+            "dvid-labelmap-size-src": {
+                "description": "Optional. The size of each object is used in the heuristic that identifies mito fragment bodies.\n"
+                               "By default, object sizes are computed from the voxels in each processed chunk individually,\n"
+                               "but if a dvid labelmap instance is provided here, the global sizes will be fetched from dvid (more accurate).\n",
+                "default": {},
+                "properties": {
+                    "server": {
+                        "description": "dvid server",
+                        "type": "string",
+                        "default": ""
+                    },
+                    "uuid": {
+                        "description": "dvid UUID",
+                        "type": "string",
+                        "default": ""
+                    },
+                    "segmentation-name": {
+                        "description": "Name of the segmentation instance",
+                        "type": "string",
+                        "default": ""
+                    }
+                }
             },
             "roi": {
                 "description": "Limit analysis to bricks that intersect the given DVID ROI.\n",
@@ -101,7 +131,19 @@ class MitoRepair(Workflow):
 
     def execute(self):
         options = self.config["mitorepair"]
-        seg_service, mask_service = self.init_services()
+        mgr_config = self.config["resource-manager"]
+        resource_mgr_client = ResourceManagerClient( mgr_config["server"], mgr_config["port"] )
+        seg_service, mask_service = self.init_services(resource_mgr_client)
+
+        labelmap_server = options["dvid-labelmap-size-src"]["server"]
+        labelmap_uuid = options["dvid-labelmap-size-src"]["uuid"]
+        labelmap_name = options["dvid-labelmap-size-src"]["segmentation-name"]
+        if labelmap_server:
+            assert labelmap_server and labelmap_uuid and labelmap_name, \
+                "Invalid labelmap specification"
+            body_seg_dvid_src = (labelmap_server, labelmap_uuid, labelmap_name)
+        else:
+            body_seg_dvid_src = None
 
         # Boxes are determined by the left volume/labels/roi
         chunk_shape = np.array(3*(options["chunk-width-s0"],))
@@ -114,7 +156,9 @@ class MitoRepair(Workflow):
                                                                 mask_service,
                                                                 central_box,
                                                                 options["halo-width-s0"],
-                                                                options["analysis-scale"] )
+                                                                options["analysis-scale"],
+                                                                body_seg_dvid_src,
+                                                                resource_mgr_client=resource_mgr_client )
                 return fragment_table
 
             # Compute block-wise, and drop empty results
@@ -132,21 +176,30 @@ class MitoRepair(Workflow):
                                 .sort_values('body_size_local_vol', ascending=False)
                                 .groupby('body')
                                 .head(1))
+
+        if body_seg_dvid_src:
+            with Timer("Fetching sizes from DVID"):
+                mito_body_sizes = fetch_sizes(*body_seg_dvid_src, filtered_table.index.values, processes=8)
+                hull_body_sizes = fetch_sizes(*body_seg_dvid_src, filtered_table['hull_body'].values, processes=8)
+                filtered_table['body_size'] = mito_body_sizes.values
+                filtered_table['hull_body_size'] = hull_body_sizes.values
+
+        with Timer("Writing filtered results", logger):
+            filtered_table.to_csv('filtered-fragment-table.csv', header=True, index=True)
             with open('filtered-fragment-table.pkl', 'wb') as f:
                 pickle.dump(filtered_table, f)
 
-            filtered_table.to_csv('filtered-fragment-table.csv', header=True, index=True)
-
-    def init_services(self):
+    def init_services(self, resource_mgr_client):
         """
         Initialize the input and output services,
         and fill in 'auto' config values as needed.
         """
-        mgr_config = self.config["resource-manager"]
         seg_config = self.config["segmentation"]
         mask_config = self.config["mito-masks"]
 
-        resource_mgr_client = ResourceManagerClient( mgr_config["server"], mgr_config["port"] )
+        if not self.config["mitorepair"]["use-resource-manager-for-segmentation"]:
+            resource_mgr_client = None
+
         seg_service = VolumeService.create_from_config( seg_config, resource_mgr_client )
         logger.info(f"Bounding box: {seg_service.bounding_box_zyx[:,::-1].tolist()}")
 
@@ -195,7 +248,7 @@ class MitoRepair(Workflow):
 
 
 def mito_body_assignments_for_box(body_seg_svc, mito_class_svc, central_box_s0, halo_s0=128, scale=1,
-                                  body_seg_dvid_src=None, viewer=None, res0=8, hull_scale=0):
+                                  body_seg_dvid_src=None, viewer=None, res0=8, hull_scale=0, resource_mgr_client=None):
     """
     Identify small bodies in the segmentation for whom a
     significant fraction are covered by the mito mask.
@@ -229,7 +282,7 @@ def mito_body_assignments_for_box(body_seg_svc, mito_class_svc, central_box_s0, 
         update_seg_layer(viewer, f'mito_mask_{res}nm', mito_seg, scale, box, res0)
 
     with Timer("Identifying mostly-mito bodies", logger):
-        mito_bodies, mito_bodies_mask, mito_body_ct = identify_mito_bodies(body_seg, mito_binary, box, scale, halo, body_seg_dvid_src, viewer, res0)
+        mito_bodies, mito_bodies_mask, mito_body_ct = identify_mito_bodies(body_seg, mito_binary, box, scale, halo, body_seg_dvid_src, viewer, res0, resource_mgr_client)
         if mito_bodies is None:
             return None
 
@@ -255,7 +308,7 @@ def mito_body_assignments_for_box(body_seg_svc, mito_class_svc, central_box_s0, 
     return final_table
 
 
-def identify_mito_bodies(body_seg, mito_binary, box, scale, halo, body_seg_dvid_src=None, viewer=None, res0=8):
+def identify_mito_bodies(body_seg, mito_binary, box, scale, halo, body_seg_dvid_src=None, viewer=None, res0=8, resource_mgr_client=None):
     # Identify segments that are mostly mito
     ct = contingency_table(body_seg, mito_binary).reset_index().rename(columns={'left': 'body', 'right': 'is_mito'})
     ct = ct.pivot(index='body', columns='is_mito', values='voxel_count').fillna(0).rename(columns={0: 'non_mito', 1: 'mito'})
@@ -290,12 +343,18 @@ def identify_mito_bodies(body_seg, mito_binary, box, scale, halo, body_seg_dvid_
     # fetch their global size, if a dvid source was provided.
     # If not, we'll just use the local size, which is less accurate but
     # faster since we've already got it.
-    if body_seg_dvid_src is not None:
-        local_mito_bodies = ct.query('mito_frac_local >= @MITO_EDGE_FRAC').index
-        body_sizes = fetch_sizes(*body_seg_dvid_src, local_mito_bodies).rename('body_sizes')
-        ct = ct.merge(body_sizes, 'left', on='body')
-    else:
+    if body_seg_dvid_src is None:
         ct['body_size'] = ct['body_size_local']
+    else:
+        local_mito_bodies = ct.query('mito_frac_local >= @MITO_EDGE_FRAC').index
+
+        if resource_mgr_client is None:
+            body_sizes = fetch_sizes(*body_seg_dvid_src, local_mito_bodies).rename('body_size')
+        else:
+            with resource_mgr_client.access_context(body_seg_dvid_src[0], True, 1, 1):
+                body_sizes = fetch_sizes(*body_seg_dvid_src, local_mito_bodies).rename('body_size')
+
+        ct = ct.merge(body_sizes, 'left', on='body')
 
     # Due to downsampling effects, bodies can be larger at scale-1 than at scale-0, especially for tiny volumes.
     ct['mito_frac_global_vol'] = np.minimum(ct.eval('mito/body_size'), 1.0)
