@@ -426,8 +426,10 @@ def identify_mito_bodies(body_seg, mito_binary, box, scale, halo, body_seg_dvid_
     mito_bodies_mask = mask_for_labels(body_seg, mito_bodies)
     update_mask_layer(viewer, 'mito-bodies-mask', mito_bodies_mask, scale, box, res0)
 
-    filtered_ct = filtered_ct.copy()
-    return mito_bodies, mito_bodies_mask, filtered_ct
+    if len(filtered_ct) == 0:
+        return None, None, None
+
+    return mito_bodies, mito_bodies_mask, filtered_ct.copy()
 
 
 def compute_hull_seeds(mito_bodies_mask, mito_binary, body_seg, box, scale, viewer=None, res0=8):
