@@ -69,6 +69,8 @@ def mito_body_assignments_for_box(body_seg_svc, mito_class_svc, central_box_s0, 
 
     with Timer("Identifying mostly-mito bodies", logger):
         mito_bodies, mito_bodies_mask, mito_body_ct = identify_mito_bodies(body_seg, mito_binary, box, scale, halo, body_seg_dvid_src, viewer, res0)
+        if mito_bodies is None:
+            return None
 
     with Timer("Computing hull seeds", logger):
         hull_seeds_df, seed_bodies, hull_seed_mask, hull_seeds_cc = compute_hull_seeds(mito_bodies_mask, mito_binary, body_seg, box, scale, viewer, res0)
@@ -96,6 +98,9 @@ def identify_mito_bodies(body_seg, mito_binary, box, scale, halo, body_seg_dvid_
     # Identify segments that are mostly mito
     ct = contingency_table(body_seg, mito_binary).reset_index().rename(columns={'left': 'body', 'right': 'is_mito'})
     ct = ct.pivot(index='body', columns='is_mito', values='voxel_count').fillna(0).rename(columns={0: 'non_mito', 1: 'mito'})
+    if 'mito' not in ct or 'non_mito' not in ct:
+        # Nothing to do if there aren't any mito voxels
+        return None, None, None
     ct[['mito', 'non_mito']] *= ((2**scale)**3)
 
     ct['body_size_local'] = ct.eval('mito+non_mito')
@@ -249,6 +254,11 @@ def select_hulls_for_mito_bodies(mito_body_ct, mito_bodies_mask, mito_binary, bo
 
     mito_hull_selections = (hull_body_overlap_stats.drop_duplicates('mito_body').set_index('mito_body')['hull_body'])
     mito_body_ct = mito_body_ct.merge(mito_hull_selections, 'left', left_index=True, right_index=True)
+    mito_body_ct['hull_body'] = mito_body_ct['hull_body'].fillna(0)
+
+    dtypes = {col: np.float32 for col in mito_body_ct.columns}
+    dtypes['hull_body'] = np.uint64
+    mito_body_ct = mito_body_ct.astype(dtypes)
 
     if viewer:
         assert mito_hull_selections.index.dtype == mito_hull_selections.values.dtype == np.uint64
