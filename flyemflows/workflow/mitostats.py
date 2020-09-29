@@ -100,9 +100,6 @@ class MitoStats(Workflow):
         boxes = self.init_boxes( seg_service, options["roi"] )
         logger.info(f"Processing {len(boxes)} bricks in total.")
 
-        # Aim for 4 partitions per worker
-        total_cores = sum( self.client.ncores().values() )
-
         with Timer("Processing brick-wise stats", logger):
             # Main computation: A table for each box
             tables = (db.from_sequence(boxes, partition_size=10)
