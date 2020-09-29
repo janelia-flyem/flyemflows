@@ -12,12 +12,13 @@ from skimage.morphology import binary_dilation, ball
 from dvidutils import LabelMapper
 from dvid_resource_manager.client import ResourceManagerClient
 
+from neuprint import Client, default_client as neuprint_default_client, fetch_neurons
 from neuclease.dvid import fetch_roi, fetch_sizes
 from neuclease.util import (Timer, round_box, SparseBlockMask, boxes_from_grid, tqdm_proxy,
-                            contingency_table, edge_mask, mask_for_labels,
+                            iter_batches, contingency_table, edge_mask, mask_for_labels,
                             approximate_hulls_for_segments, apply_mask_for_labels, box_to_slicing)
 
-from ..util import replace_default_entries
+from ..util import replace_default_entries, auto_retry
 from ..volumes import VolumeService, SegmentationVolumeSchema, DvidVolumeService
 from . import Workflow
 
@@ -88,6 +89,20 @@ class MitoRepair(Workflow):
                     },
                     "segmentation-name": {
                         "description": "Name of the segmentation instance",
+                        "type": "string",
+                        "default": ""
+                    }
+                }
+            },
+            "neuprint": {
+                "description": "If provided, the neuprint server will be used to append columns for synapse counts.",
+                "default": {},
+                "properties": {
+                    "server": {
+                        "type": "string",
+                        "default": "",
+                    },
+                    "dataset": {
                         "type": "string",
                         "default": ""
                     }
@@ -184,6 +199,11 @@ class MitoRepair(Workflow):
                 filtered_table['body_size'] = mito_body_sizes.values
                 filtered_table['hull_body_size'] = hull_body_sizes.values
 
+        try:
+            filtered_table = self.append_synapse_columns(filtered_table, options["neuprint"])
+        except Exception as ex:
+            logger.error(f"Was not able to append synapse data from neuprint:\n{ex}")
+
         with Timer("Writing filtered results", logger):
             filtered_table.to_csv('filtered-fragment-table.csv', header=True, index=True)
             with open('filtered-fragment-table.pkl', 'wb') as f:
@@ -245,6 +265,30 @@ class MitoRepair(Workflow):
         boxes[:, 0] = np.maximum(boxes[:, 0], volume_service.bounding_box_zyx[0])
         boxes[:, 1] = np.minimum(boxes[:, 1], volume_service.bounding_box_zyx[1])
         return boxes
+
+    def append_synapse_columns(self, body_table, neuprint_info):
+        server, dataset = neuprint_info["server"], neuprint_info["dataset"]
+        if not server or not dataset:
+            return body_table
+
+        @auto_retry(5, pause_between_tries=3.0, logging_name=__name__)
+        def fetch_synapse_counts(bodies):
+            try:
+                c = neuprint_default_client()
+            except Exception:
+                c = Client(server, dataset)
+
+            ndf, cdf = fetch_neurons(bodies, client=c)
+            return ndf.set_index('bodyId')[['pre', 'post']].rename_axis('body')
+
+        bag = db.from_sequence(iter_batches(body_table.index.values, 1000), npartitions=16)
+        sc_dfs = bag.map(fetch_synapse_counts).compute()
+        sc_df = pd.concat(sc_dfs)
+
+        body_table = body_table.merge(sc_df, 'left', on='body')
+        body_table['pre'] = body_table['pre'].fillna(0.0).astype(int)
+        body_table['post'] = body_table['post'].fillna(0.0).astype(int)
+        return body_table
 
 
 def mito_body_assignments_for_box(body_seg_svc, mito_class_svc, central_box_s0, halo_s0=128, scale=1,
