@@ -373,7 +373,10 @@ def identify_mito_bodies(body_seg, mito_binary, box, scale, halo, body_seg_dvid_
     edge_ct = edge_ct.query('body != 0')
 
     full_ct = ct.merge(edge_ct, 'inner', on='body', suffixes=['_vol', '_edge'])
-    filtered_ct = full_ct.query('mito_frac_global_vol >= @MITO_VOL_FRAC and mito_frac_local_edge >= @MITO_EDGE_FRAC')
+    q = ("body_size < @MAX_MITO_FRAGMENT_VOL"
+         " and mito_frac_global_vol >= @MITO_VOL_FRAC"
+         " and mito_frac_local_edge >= @MITO_EDGE_FRAC")
+    filtered_ct = full_ct.query(q)
 
     mito_bodies = filtered_ct.index
     mito_bodies_mask = mask_for_labels(body_seg, mito_bodies)
