@@ -1,8 +1,6 @@
-import os
 import copy
 import pickle
 import logging
-from textwrap import dedent
 
 import vigra
 import numpy as np
@@ -13,24 +11,187 @@ from skimage.morphology import binary_dilation, ball
 
 from dvidutils import LabelMapper
 from dvid_resource_manager.client import ResourceManagerClient
-from neuclease.util import (Timer, round_box, SparseBlockMask, boxes_from_grid, iter_batches, tqdm_proxy,
-                            ndindex_array, contingency_table, edge_mask, binary_edge_mask, mask_for_labels,
+
+from neuclease.dvid import fetch_roi, fetch_sizes
+from neuclease.util import (Timer, round_box, SparseBlockMask, boxes_from_grid, tqdm_proxy,
+                            contingency_table, edge_mask, mask_for_labels,
                             approximate_hulls_for_segments, apply_mask_for_labels, box_to_slicing)
-from neuclease.dvid import fetch_labelmap_voxels, fetch_roi, fetch_sizes
 
 from ..util import replace_default_entries
-from ..volumes import VolumeService, SegmentationVolumeSchema, DvidVolumeService, ScaledVolumeService
+from ..volumes import VolumeService, SegmentationVolumeSchema, DvidVolumeService
 from . import Workflow
 
 logger = logging.getLogger(__name__)
 
-
-class MitoRepair(Workflow):
-    pass
-
-
 MITO_VOL_FRAC = 0.4
 MITO_EDGE_FRAC = 0.4
+
+
+class MitoRepair(Workflow):
+    """
+    Analyze a neuron segmentation, which may have oversegmentation (fragmentation)
+    on its mitochodria, and compute a set of merges that can be used to "repair" the
+    fragmented neurons.  We use the a mask of the mitochondria to identify which
+    segments in the neuron segmentation are mostly mitochondria and therefore
+    should be merged into a larger surrounding object (a neuron).
+    The object is chosen by computing the convex hulls of the boundary pixels around
+    the mitochondria mask, labeled by the neurons they overap with.
+    Each "mostly mito" body will consider each hull that it overlaps with.
+    The hull which overlaps the most determines the neuron that body will be merged into.
+
+    Since the hull computation is computed chunkwise (with overlapping halos),
+    some mitochondria will be processed more than once.  In those cases, whichever
+    chunk contained more of the mito body voxels than any other chunk is used to
+    determine the merge result.
+    """
+
+    OptionsSchema = {
+        "type": "object",
+        "description": "Settings specific to the MitoRepair workflow",
+        "default": {},
+        "additionalProperties": False,
+        "properties": {
+            "chunk-width-s0": {
+                "type": "integer",
+                "default": 2048
+            },
+            "halo-width-s0": {
+                "type": "integer",
+                "default": 256
+            },
+            "analysis-scale": {
+                "type": "integer",
+                "default": 2
+            },
+            "roi": {
+                "description": "Limit analysis to bricks that intersect the given DVID ROI.\n",
+                "type": "object",
+                "default": {},
+                "properties": {
+                    "server": {
+                        "description": "dvid server for the ROI. If not provided, the input server will be used (if possible).",
+                        "type": "string",
+                        "default": ""
+                    },
+                    "uuid": {
+                        "description": "dvid UUID for the ROI.  If not provided, the input UUID will be used (if possible).",
+                        "type": "string",
+                        "default": ""
+                    },
+                    "name": {
+                        "description": "name of the ROI",
+                        "type": "string",
+                        "default": ""
+                    }
+                }
+            }
+        }
+    }
+
+    Schema = copy.deepcopy(Workflow.schema())
+    Schema["properties"].update({
+        "segmentation": SegmentationVolumeSchema,
+        "mito-masks": SegmentationVolumeSchema,  # It is assumed that mito classes have labels [1,2,3], and [0,4] are "no mito"
+        "mitorepair": OptionsSchema
+    })
+
+    @classmethod
+    def schema(cls):
+        return MitoRepair.Schema
+
+    def execute(self):
+        options = self.config["mitorepair"]
+        seg_service, mask_service = self.init_services()
+
+        # Boxes are determined by the left volume/labels/roi
+        chunk_shape = np.array(3*(options["chunk-width-s0"],))
+        boxes = self.init_boxes(seg_service, options["roi"], chunk_shape)
+        logger.info(f"Processing {len(boxes)} bricks in total.")
+
+        with Timer("Finding merges to repair mito fragmentation in the segmentation", logger):
+            def process_box(central_box):
+                fragment_table = mito_body_assignments_for_box( seg_service,
+                                                                mask_service,
+                                                                central_box,
+                                                                options["halo-width-s0"],
+                                                                options["analysis-scale"] )
+                return fragment_table
+
+            # Compute block-wise, and drop empty results
+            fragment_tables = db.from_sequence(boxes, partition_size=4).map(process_box).compute()
+            fragment_tables = [*filter(lambda t: t is not None, fragment_tables)]
+
+        with Timer("Combining fragment tables", logger):
+            combined_table = pd.concat(fragment_tables)
+            with open('combined-fragment-table.pkl', 'wb') as f:
+                pickle.dump(combined_table, f)
+
+        with Timer("Filtering fragment table", logger):
+            filtered_table = (combined_table[['body_size_local_vol', 'hull_body']]
+                                .query('hull_body != 0')
+                                .sort_values('body_size_local_vol', ascending=False)
+                                .groupby('body')
+                                .head(1))
+            with open('filtered-fragment-table.pkl', 'wb') as f:
+                pickle.dump(filtered_table, f)
+
+            filtered_table.to_csv('filtered-fragment-table.csv', header=True, index=True)
+
+    def init_services(self):
+        """
+        Initialize the input and output services,
+        and fill in 'auto' config values as needed.
+        """
+        mgr_config = self.config["resource-manager"]
+        seg_config = self.config["segmentation"]
+        mask_config = self.config["mito-masks"]
+
+        resource_mgr_client = ResourceManagerClient( mgr_config["server"], mgr_config["port"] )
+        seg_service = VolumeService.create_from_config( seg_config, resource_mgr_client )
+        logger.info(f"Bounding box: {seg_service.bounding_box_zyx[:,::-1].tolist()}")
+
+        replace_default_entries(mask_config["geometry"]["bounding-box"], seg_service.bounding_box_zyx[:, ::-1])
+        mask_service = VolumeService.create_from_config( mask_config, resource_mgr_client )
+
+        return seg_service, mask_service
+
+    def init_boxes(self, volume_service, roi, chunk_shape_s0):
+        """
+        Return a set of bounding boxes to tile the given ROI.
+        Scale 0 of the volume service should correspond to full-res data,
+        which is 32x higher-res than ROI resolution.
+        """
+        if not roi["name"]:
+            boxes = boxes_from_grid(volume_service.bounding_box_zyx, chunk_shape_s0, clipped=True)
+            return np.array([*boxes])
+
+        base_service = volume_service.base_service
+
+        if not roi["server"] or not roi["uuid"]:
+            assert isinstance(base_service, DvidVolumeService), \
+                "Since you aren't using a DVID input source, you must specify the ROI server and uuid."
+
+        roi["server"] = (roi["server"] or volume_service.server)
+        roi["uuid"] = (roi["uuid"] or volume_service.uuid)
+
+        assert not (chunk_shape_s0 % 2**5).any(), \
+            "If using an ROI, select a chunk shape that is divisible by 32"
+
+        seg_box_s0 = volume_service.bounding_box_zyx
+        seg_box_s0 = round_box(seg_box_s0, 2**5)
+        seg_box_s5 = seg_box_s0 // 2**5
+
+        with Timer(f"Fetching mask for ROI '{roi['name']}' ({seg_box_s0[:, ::-1].tolist()})", logger):
+            roi_mask_s5, _ = fetch_roi(roi["server"], roi["uuid"], roi["name"], format='mask', mask_box=seg_box_s5)
+
+        # SBM 'full-res' corresponds to the input service voxels, not necessarily scale-0.
+        sbm = SparseBlockMask(roi_mask_s5, seg_box_s0, 2**5)
+        boxes = sbm.sparse_boxes(chunk_shape_s0)
+
+        # Clip boxes to the true (not rounded) bounding box
+        boxes[:, 0] = np.maximum(boxes[:, 0], volume_service.bounding_box_zyx[0])
+        boxes[:, 1] = np.minimum(boxes[:, 1], volume_service.bounding_box_zyx[1])
+        return boxes
 
 
 def mito_body_assignments_for_box(body_seg_svc, mito_class_svc, central_box_s0, halo_s0=128, scale=1,
@@ -179,7 +340,7 @@ def compute_hull_seeds(mito_bodies_mask, mito_binary, body_seg, box, scale, view
     hull_seeds = np.where(hull_seed_mask, body_seg, np.uint64(0))
     update_seg_layer(viewer, 'hull-seeds', hull_seeds, scale, box)
 
-    hull_seeds_cc = label(hull_seeds, connectivity=3).view(np.uint64)
+    hull_seeds_cc = label(hull_seeds, connectivity=3).astype(np.uint32)
     hull_seeds_df = (pd.DataFrame({'hull_seed_body': hull_seeds[hull_seeds != 0],
                                    'hull_seed_cc': hull_seeds_cc[hull_seeds != 0]})
                         .groupby(['hull_seed_cc'])['hull_seed_body'].agg(['first', 'count'])
@@ -239,7 +400,7 @@ def select_hulls_for_mito_bodies(mito_body_ct, mito_bodies_mask, mito_binary, bo
 
     if len(hull_cc_overlap_stats) == 0:
         logger.warning("Could not find any matches for any mito bodies!")
-        mito_body_ct['hull_body'] = np.nan
+        mito_body_ct['hull_body'] = np.uint64(0)
         return mito_body_ct
 
     hull_cc_overlap_stats = pd.concat(hull_cc_overlap_stats, ignore_index=True)
