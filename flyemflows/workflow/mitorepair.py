@@ -162,7 +162,7 @@ class MitoRepair(Workflow):
                 return fragment_table
 
             # Compute block-wise, and drop empty results
-            fragment_tables = db.from_sequence(boxes, partition_size=4).map(process_box).compute()
+            fragment_tables = db.from_sequence(boxes, partition_size=1).map(process_box).compute()
             fragment_tables = [*filter(lambda t: t is not None, fragment_tables)]
 
         with Timer("Combining fragment tables", logger):
