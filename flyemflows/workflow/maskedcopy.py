@@ -11,7 +11,7 @@ from neuclease.util import Timer, round_box, SparseBlockMask, boxes_from_grid, i
 from neuclease.dvid import fetch_roi
 
 from ..util import replace_default_entries
-from ..volumes import VolumeService, SegmentationVolumeSchema, DvidVolumeService, ScaledVolumeService
+from ..volumes import VolumeService, SegmentationVolumeSchema, DvidVolumeService
 from . import Workflow
 
 logger = logging.getLogger(__name__)
@@ -40,10 +40,31 @@ class MaskedCopy(Workflow):
             "roi": {
                 "description": "Optional. Limit analysis to bricks that intersect the given ROI, \n"
                                "which must come from the same DVID node as the segmentation source, not the mask source.\n"
-                               "Note: This is solely for avoiding unnecessary computation.  Does not affect the \n"
-                               "(Only valid when the input is a DVID source.)",
-                "type": "string",
-                "default": ""
+                               "Note: This is solely for avoiding unnecessary computation. \n"
+                               "      Does not restrict the output to the exact ROI boundary.\n",
+                "type": "object",
+                "default": {},
+                "properties": {
+                    "server": {
+                        "description": "dvid server for the ROI. If not provided, the input server will be used (if possible).",
+                        "type": "string",
+                        "default": ""
+                    },
+                    "uuid": {
+                        "description": "dvid UUID for the ROI.  If not provided, the input UUID will be used (if possible).",
+                        "type": "string",
+                        "default": ""
+                    },
+                    "name": {
+                        "description": "name of the ROI",
+                        "type": "string",
+                        "default": ""
+                    },
+                    "relative-scale": {
+                        "type": "integer",
+                        "default": 5
+                    }
+                }
             },
             "batch-size": {
                 "description": "The result is computed brickwise, in batches of bricks.\n"
@@ -138,40 +159,28 @@ class MaskedCopy(Workflow):
         return input_service, mask_service, output_service
 
     def init_boxes(self, volume_service, roi):
-        if not roi:
+        if not roi["name"]:
             boxes = boxes_from_grid(volume_service.bounding_box_zyx,
                                     volume_service.preferred_message_shape,
                                     clipped=True)
             return np.array([*boxes])
 
-        base_service = volume_service.base_service
-        assert isinstance(base_service, DvidVolumeService), \
-            "Can't specify an ROI unless you're using a dvid input"
-
-        assert isinstance(volume_service, (ScaledVolumeService, DvidVolumeService)), \
-            "The 'roi' option doesn't support adapters other than 'rescale-level'"
-        scale = 0
-        if isinstance(volume_service, ScaledVolumeService):
-            scale = volume_service.scale_delta
-            assert scale <= 5, \
-                "The 'roi' option doesn't support volumes downscaled beyond level 5"
-
-        server, uuid, _seg_instance = base_service.instance_triple
+        server, uuid, roi_name = roi["server"], roi["uuid"], roi["name"]
+        roi_scale = roi["relative-scale"]
 
         brick_shape = volume_service.preferred_message_shape
-        assert not (brick_shape % 2**(5-scale)).any(), \
+        assert not (brick_shape % 2**roi_scale).any(), \
             "If using an ROI, select a brick shape that is divisible by 32"
 
         seg_box = volume_service.bounding_box_zyx
-        seg_box = round_box(seg_box, 2**(5-scale))
-        seg_box_s0 = seg_box * 2**scale
-        seg_box_s5 = seg_box // 2**(5-scale)
+        seg_box = round_box(seg_box, 2**roi_scale)
+        seg_box_s5 = seg_box // 2**roi_scale
 
-        with Timer(f"Fetching mask for ROI '{roi}' ({seg_box_s0[:, ::-1].tolist()})", logger):
-            roi_mask_s5, _ = fetch_roi(server, uuid, roi, format='mask', mask_box=seg_box_s5)
+        with Timer(f"Fetching mask for ROI '{roi_name}' ({seg_box[:, ::-1].tolist()})", logger):
+            roi_mask_s5, _ = fetch_roi(server, uuid, roi_name, format='mask', mask_box=seg_box_s5)
 
         # SBM 'full-res' corresponds to the input service voxels, not necessarily scale-0.
-        sbm = SparseBlockMask(roi_mask_s5, seg_box, 2**(5-scale))
+        sbm = SparseBlockMask(roi_mask_s5, seg_box, 2**roi_scale)
         boxes = sbm.sparse_boxes(brick_shape)
 
         # Clip boxes to the true (not rounded) bounding box
