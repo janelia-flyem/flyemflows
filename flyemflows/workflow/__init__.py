@@ -10,6 +10,7 @@ from .findadjacencies import FindAdjacencies
 from .labelmapcopy import LabelmapCopy
 from .maskedcopy import MaskedCopy
 from .masksegmentation import MaskSegmentation
+from .mitorepair import MitoRepair
 from .mitostats import MitoStats
 from .roistats import RoiStats
 from .samplepoints import SamplePoints
@@ -30,6 +31,7 @@ BUILTIN_WORKFLOWS = [
     LabelmapCopy,
     MaskedCopy,
     MaskSegmentation,
+    MitoRepair,
     MitoStats,
     RoiStats,
     SamplePoints,
