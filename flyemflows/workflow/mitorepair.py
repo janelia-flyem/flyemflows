@@ -12,7 +12,6 @@ from skimage.morphology import binary_dilation, ball
 from dvidutils import LabelMapper
 from dvid_resource_manager.client import ResourceManagerClient
 
-from neuprint import Client, default_client as neuprint_default_client, fetch_neurons
 from neuclease.dvid import fetch_roi, fetch_sizes
 from neuclease.util import (Timer, round_box, SparseBlockMask, boxes_from_grid, tqdm_proxy,
                             iter_batches, contingency_table, edge_mask, mask_for_labels,
@@ -185,29 +184,58 @@ class MitoRepair(Workflow):
             with open('combined-fragment-table.pkl', 'wb') as f:
                 pickle.dump(combined_table, f)
 
-        with Timer("Filtering fragment table", logger):
+        with Timer("Selecting top merge for each mito body", logger):
             filtered_table = (combined_table[['body_size_local_vol', 'hull_body']]
                                 .query('hull_body != 0')
                                 .sort_values('body_size_local_vol', ascending=False)
                                 .groupby('body')
                                 .head(1))
 
-        if body_seg_dvid_src:
-            with Timer("Fetching sizes from DVID"):
-                mito_body_sizes = fetch_sizes(*body_seg_dvid_src, filtered_table.index.values, processes=8)
-                hull_body_sizes = fetch_sizes(*body_seg_dvid_src, filtered_table['hull_body'].values, processes=8)
-                filtered_table['body_size'] = mito_body_sizes.values
-                filtered_table['hull_body_size'] = hull_body_sizes.values
-
         try:
             filtered_table = self.append_synapse_columns(filtered_table, options["neuprint"])
         except Exception as ex:
             logger.error(f"Was not able to append synapse data from neuprint:\n{ex}")
 
-        with Timer("Writing filtered results", logger):
-            filtered_table.to_csv('filtered-fragment-table.csv', header=True, index=True)
-            with open('filtered-fragment-table.pkl', 'wb') as f:
+        if body_seg_dvid_src:
+            with Timer("Fetching sizes from DVID"):
+                hull_body_sizes = fetch_sizes(*body_seg_dvid_src, filtered_table['hull_body'].values, processes=8)
+                filtered_table['hull_body_size'] = hull_body_sizes.values
+        else:
+            # The 'body_size' column is misleading if it wasn't actually fetched from dvid.
+            del filtered_table['body_size']
+
+        with Timer("Writing unfiltered top choices", logger):
+            with open('unfiltered-top-choices-table.pkl', 'wb') as f:
                 pickle.dump(filtered_table, f)
+
+        with Timer("Filtering out ambiguously merged bodies and bodies with synapses", logger):
+            # Some bodies might be identified as a "mito body" in one block and a "hull body" in another.
+            # (In the hemibrain v1.1 dataset, this was the case for 0.06% of all identified mito fragments.)
+            # Such cases typically occur in areas of bad segmentation where our repairs don't have much hope of helping anyway.
+            # Furthermore, there's nothing that prevents the merge decisions (mito -> hull) from being cyclical in such cases.
+            # We could "fix" the issue by coming up with a rule, e.g. force the smaller one to merge into the bigger one,
+            # and then transitively merge until we get to a non-mito body, but that seems too complicated for such a
+            # tiny fraction of cases.
+            # So, just drop those rows.
+            hull_bodies = filtered_table['hull_body'].unique()
+            conflict_bodies = filtered_table.index.intersection(hull_bodies).unique()
+            conflict_bodies
+            filtered_table = filtered_table.query('body not in @conflict_bodies')
+
+            # We don't want to change the connectome. Drop mito bodies with synapses.
+            if 'pre' in filtered_table.columns:
+                filtered_table = filtered_table.query('pre == 0 and post == 0')
+
+        with Timer("Writing final results", logger):
+            filtered_table.to_csv('final-fragment-table.csv', header=True, index=True)
+            with open('final-fragment-table.pkl', 'wb') as f:
+                pickle.dump(filtered_table, f)
+
+            if 'pre' in filtered_table.columns:
+                # Also save in the format that can be loaded by a LabelmappedVolumeService
+                (filtered_table[['body', 'hull_body']]
+                    .rename(columns={'body': 'orig', 'hull_body': 'new'})
+                    .to_csv('final-remapping.csv', index=False, header=True))
 
     def init_services(self, resource_mgr_client):
         """
@@ -271,6 +299,7 @@ class MitoRepair(Workflow):
         if not server or not dataset:
             return body_table
 
+        from neuprint import Client, default_client as neuprint_default_client, fetch_neurons
         @auto_retry(5, pause_between_tries=3.0, logging_name=__name__)
         def fetch_synapse_counts(bodies):
             try:
