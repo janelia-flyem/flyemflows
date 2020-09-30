@@ -194,11 +194,9 @@ class ZarrVolumeService(VolumeServiceWriter):
                   f"to be a multiple of the chunk shape ({chunk_shape[::-1]})")
             logger.warning(msg)
 
-        if chunk_shape[0] == chunk_shape[1] == chunk_shape[2]:
-            block_width = int(chunk_shape[0])
-        else:
-            # The notion of 'block-width' doesn't really make sense if the chunks aren't cubes.
-            block_width = -1
+        # The notion of 'block-width' doesn't really make sense if the chunks aren't cubes,
+        # but we'll assume the user has chosen something reasonable and just use the minimum chunk dimension.
+        block_width = min(chunk_shape)
 
         global_offset = np.array(volume_config["zarr"]["global-offset"][::-1])
         auto_bb = np.array([(0,0,0), self.zarr_dataset(0).shape])
