@@ -9,6 +9,7 @@ from functools import partial
 import h5py
 import numpy as np
 import pandas as pd
+from confiddler import flow_style
 
 from neuclease.util import (Timer, Grid, slabs_from_box, block_stats_for_volume, BLOCK_STATS_DTYPES,
                             mask_for_labels, box_intersection, extract_subvol, SparseBlockMask)
@@ -72,8 +73,21 @@ class CopySegmentation(Workflow):
             "compute-block-statistics": {
                 "description": "Whether or not to compute block statistics (from the scale 0 data).\n"
                                "Usually you'll need the statistics file to load labelindexes after copying the voxels,\n"
-                               "but in some cases you might not need them (e.g. adding pyramids after ingesting only scale 0).\n",
-                "type": "boolean",
+                               "but in some cases you might not need them (e.g. adding pyramids after ingesting only scale 0).\n"
+                               "By default, the block shape will be chosen according to the output volume,\n"
+                               "but you can provide a custom shape here.\n",
+                "oneOf": [
+                    {
+                        "type": "boolean"
+                    },
+                    {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "default": flow_style([-1,-1,-1])
+                    }
+                ],
                 "default": True
             },
             "pyramid-depth": {
@@ -611,7 +625,10 @@ class CopySegmentation(Workflow):
 
         if options["compute-block-statistics"]:
             with Timer(f"Slab {slab_index}: Computing slab block statistics", logger):
-                block_shape = 3*[self.output_service.base_service.block_width]
+                if options["compute-block-statistics"] is True:
+                    block_shape = 3*[self.output_service.base_service.block_width]
+                else:
+                    block_shape = options["compute-block-statistics"]
 
                 def block_stats_for_brick(brick):
                     vol = brick.volume
