@@ -236,23 +236,23 @@ def _process_box(seg_service, mask_service, box):
 
     # Add coordinate columns to compute centroids
     # Use the narrowest dtype possible
-    raster_dtype = [*filter(lambda t: np.iinfo(t).max >= box[1].max(), [np.int8, np.int16, np.int32, np.int64])][0]
+    raster_dtype = [*filter(lambda t: np.iinfo(t).max >= box[1].max(),
+                            [np.int8, np.int16, np.int32, np.int64])][0]
     raster_coords = ndindex_array(*(box[1] - box[0]), dtype=raster_dtype)
     raster_coords += box[0]
-    unraveled_df['z'] = raster_dtype(0)
-    unraveled_df['y'] = raster_dtype(0)
-    unraveled_df['x'] = raster_dtype(0)
-    unraveled_df[['z', 'y', 'x']] = raster_coords
+    unraveled_df = unraveled_df.assign(z=raster_coords[:, 0],
+                                       y=raster_coords[:, 1],
+                                       x=raster_coords[:, 2])
 
     # Drop non-mito-voxels
     unraveled_df = unraveled_df.iloc[(seg_vol != 0).reshape(-1)]
 
     table = (unraveled_df[['mito_id', 'mito_class', 'voxels']]
                 .pivot_table(index='mito_id',  # noqa
-                            columns='mito_class',
-                            values='voxels',
-                            aggfunc='sum',
-                            fill_value=0))
+                             columns='mito_class',
+                             values='voxels',
+                             aggfunc='sum',
+                             fill_value=0))
 
     table.columns = [f"class_{c}" for c in table.columns]
     table['total_size'] = table.sum(axis=1).astype(np.int32)
