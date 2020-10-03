@@ -62,6 +62,7 @@ correct_centroids.py -s 1 -p 32 centroid-correction-config.yaml scale_0_stats_df
 # As a cluster job:
 bsub -n 32 -a sharedscratch -o correct-stats.log python correct_centroids.py -s 1 -p 32 centroid-correction-config.yaml scale_0_stats_df.pkl
 """
+from flyemflows.volumes.adapters.scaled_volume_service import ScaledVolumeService
 import sys
 import pickle
 import argparse
@@ -72,7 +73,7 @@ logger = logging.getLogger(__name__)
 
 
 def config_schema():
-    from flyemflows.volumes import VolumeService, SegmentationVolumeSchema, DvidSegmentationVolumeSchema, DvidVolumeService, ScaledVolumeService
+    from flyemflows.volumes import SegmentationVolumeSchema, DvidSegmentationVolumeSchema
 
     ConfigSchema = {
         "type": "object",
@@ -81,8 +82,12 @@ def config_schema():
         "additionalProperties": False,
         "properties": {
             "mito-sparsevol-source": {
-                **DvidSegmentationVolumeSchema,
-                "description": "Where to look for mito sparsevols, for correcting centroids. Must be a dvid source."
+                "oneOf": [
+                    DvidSegmentationVolumeSchema,
+                    {"type": "null"}
+                ],
+                "description": "Where to look for mito sparsevols, for correcting centroids. Must be a dvid source.",
+                "default": None
             },
             "mito-point-source": {
                 "oneOf": [
@@ -98,13 +103,13 @@ def config_schema():
     }
     return ConfigSchema
 
+
 def correct_centroids(config, stats_df, check_scale=0, verify=False, threads=0, processes=8):
     import numpy as np
     import pandas as pd
 
-    from neuclease.util import tqdm_proxy, compute_parallel, Timer
-    from neuclease.dvid import fetch_labels_batched
-    from flyemflows.volumes import VolumeService, DvidVolumeService
+    from neuclease.util import compute_parallel, Timer
+    from flyemflows.volumes import VolumeService
 
     with Timer("Pre-sorting points by block", logger):
         stats_df['bz'] = stats_df['by'] = stats_df['bx'] = np.int32(0)
@@ -112,63 +117,109 @@ def correct_centroids(config, stats_df, check_scale=0, verify=False, threads=0, 
         stats_df.sort_values(['bz', 'by', 'bx'], inplace=True)
         stats_df.drop(columns=['bz', 'by', 'bx'], inplace=True)
 
-    sparsevol_source = VolumeService.create_from_config(config['mito-sparsevol-source'])
-    if config['mito-point-source'] is None:
+    if config['mito-sparsevol-source'] is not None:
+        sparsevol_source = VolumeService.create_from_config(config['mito-sparsevol-source'])
         point_source = sparsevol_source
     else:
+        sparsevol_source = None
+        point_source = None
+
+    if config['mito-point-source']:
         point_source = VolumeService.create_from_config(config['mito-point-source'])
 
-    if isinstance(point_source, DvidVolumeService):
-        stats_df['centroid_label'] = fetch_labels_batched(*point_source.instance_triple,
-                                                          stats_df[[*'zyx']] // (2**check_scale),
-                                                          supervoxels=point_source.supervoxels,
-                                                          scale=check_scale,
-                                                          batch_size=1000,
-                                                          threads=threads,
-                                                          processes=processes)
-    else:
-        import multiprocessing as mp
-        import dask
-        from dask.diagnostics import ProgressBar
+    assert point_source or sparsevol_source, \
+        "You must provide either a point-source or sparsevol-source."
 
-        if threads:
-            pool = mp.pool.ThreadPool(threads)
-        else:
-            pool = mp.pool.Pool(processes)
+    stats_df['centroid_label'] = sample_labels(point_source, stats_df, check_scale, threads, processes)
 
-        dask.config.set(scheduler='processes')
-        with pool, dask.config.set(pool=pool), ProgressBar():
-            centroids = stats_df[[*'zyx']] // (2**check_scale)
-            stats_df['centroid_label'] = point_source.sample_labels( centroids, scale=check_scale )
-
-    mismatched_mitos = stats_df.query('centroid_label != mito_id').index
+    mismatched_mitos = stats_df.query('centroid_label != mito_id')
 
     logger.info(f"Correcting {len(mismatched_mitos)} mismatched mito centroids")
-    _find_mito = partial(find_mito, *sparsevol_source.instance_triple)
-    mitos_and_coords = compute_parallel(_find_mito, mismatched_mitos, ordered=False, threads=threads, processes=processes)
+
+    if sparsevol_source:
+        _find_mito = partial(find_mito_from_sparsevol, *sparsevol_source.instance_triple)
+        mitos_and_coords = compute_parallel(_find_mito, mismatched_mitos.index, ordered=False, threads=threads, processes=processes)
+    else:
+        _find_mito = partial(find_mito_from_seg, point_source, check_scale)
+        mismatched_rows = mismatched_mitos.reset_index()[['mito_id', *'zyx']].astype(np.int64).values
+        mitos_and_coords = compute_parallel(_find_mito, mismatched_rows, starmap=True, ordered=False, threads=threads, processes=processes)
+
     corrected_df = pd.DataFrame(mitos_and_coords, columns=['mito_id', *'zyx']).set_index('mito_id')
     stats_df.loc[corrected_df.index, [*'zyx']] = corrected_df[[*'zyx']]
+
+    stats_df['centroid_type'] = 'exact'
     stats_df.loc[corrected_df.index, 'centroid_type'] = 'adjusted'
 
     # Sanity check: they should all be correct now!
     if verify:
-        new_centroids = stats_df.loc[mismatched_mitos, [*'zyx']].values
-        new_labels = fetch_labels_batched(*sparsevol_source.instance_triple,
-                                          new_centroids,
-                                          supervoxels=True,
-                                          threads=threads,
-                                          processes=processes)
-
-        if (new_labels != mismatched_mitos).any():
+        new_labels = sample_labels(point_source, stats_df.loc[mismatched_mitos.index], check_scale, threads, processes)
+        if (new_labels != mismatched_mitos.index).any():
             logger.error("Some mitos remained mismstached!")
 
     return stats_df
 
 
-def find_mito(server, uuid, instance, mito_id):
+def sample_labels(point_source, stats_df, check_scale, threads, processes):
+    from neuclease.dvid import fetch_labels_batched
+    from flyemflows.volumes import DvidVolumeService
+
+    if isinstance(point_source, DvidVolumeService):
+        return fetch_labels_batched(*point_source.instance_triple,
+                                    stats_df[[*'zyx']] // (2**check_scale),
+                                    supervoxels=point_source.supervoxels,
+                                    scale=check_scale,
+                                    batch_size=1000,
+                                    threads=threads,
+                                    processes=processes)
+
+    import multiprocessing as mp
+    import dask
+    from dask.diagnostics import ProgressBar
+
+    if threads:
+        pool = mp.pool.ThreadPool(threads)
+    else:
+        pool = mp.pool.Pool(processes)
+
+    dask.config.set(scheduler='processes')
+    with pool, dask.config.set(pool=pool), ProgressBar():
+        centroids = stats_df[[*'zyx']] // (2**check_scale)
+        labels = point_source.sample_labels( centroids, scale=check_scale )
+
+    return labels
+
+
+def find_mito_from_sparsevol(server, uuid, instance, mito_id):
     from neuclease.dvid import generate_sample_coordinate
     coord = generate_sample_coordinate(server, uuid, instance, mito_id, supervoxels=True)
     return (mito_id, *coord)
+
+
+def find_mito_from_seg(point_source, check_scale, mito_id, z, y, x):
+    """
+    Fetch a volume around the given point,
+    and find the closest voxel that matches mito_id.
+    Return the coordinate, or (0,0,0) if the subvolume does not contain mito_id at all.
+    """
+    import numpy as np
+
+    for R in [50, 100, 200, 400]:
+        p = np.array([z, y, x])
+
+        p //= 2**check_scale
+        R //= 2**check_scale
+
+        subvol = point_source.get_subvolume([p-R, p+R+1], check_scale)
+        c = np.argwhere(subvol == mito_id)
+        c -= R
+        if len(c) > 0:
+            d = np.linalg.norm(c, axis=1)
+            p2 = p + c[np.argmin(d)]
+            p2 *= 2**check_scale
+            return (mito_id, *p2)
+
+    # Give up
+    return (mito_id, 0, 0, 0)
 
 
 def main():
