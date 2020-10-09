@@ -1,6 +1,7 @@
 import os
 import copy
 import logging
+from itertools import combinations
 
 import vigra
 import numpy as np
@@ -575,8 +576,8 @@ def _find_closest_approaches(volume, closest_scale, subset_groups):
         group_labels = pd.unique(group_df['label'])
         if len(group_labels) == 1:
             continue
-        elif len(group_labels) == 2:
-            subset_edges.append( sorted(group_labels) )
+        elif len(group_labels) <= 5:
+            subset_edges.extend([*combinations(sorted(group_labels), 2)])
         else:
             # Rather than computing pairwise distances between all labels,
             # Figure out which labels are close to each other by filling the
