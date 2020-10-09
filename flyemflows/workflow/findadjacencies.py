@@ -600,7 +600,10 @@ def _find_closest_approaches(volume, closest_scale, subset_groups):
     result_rows = []
     for (label_a, label_b) in subset_edges.values:
         coord_a, coord_b, distance = approximate_closest_approach(volume, label_a, label_b, closest_scale)
-        result_rows.append((label_a, label_b, *coord_a, *coord_b, distance))
+
+        # FIXME: Why is this check necessary? Both label_a and label_b should be present...
+        if not np.isinf(distance):
+            result_rows.append((label_a, label_b, *coord_a, *coord_b, distance))
     
     if len(result_rows) == 0:
         return None
