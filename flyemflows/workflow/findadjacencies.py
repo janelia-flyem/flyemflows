@@ -264,6 +264,10 @@ class FindAdjacencies(Workflow):
             # the results of one execution vs another, for debugging.
             final_edges_df.sort_values(list(final_edges_df.columns), inplace=True)
 
+        # The reason this assertion holds is that the subset_groups table contains a group_cc
+        # column, and that column is used to avoid looking for "closest approach" edges between
+        # nodes that have already been found to be connected via direct adjacencies.
+        # See _find_closest_approaches() for details.
         assert len(best_adjacent_edges_df.merge(best_nonadjacent_edges_df, 'inner', ['label_a', 'label_b'])) == 0, \
             "The sets of adjacent and non-adjacent edges were supposed to be completely disjoint."
 
@@ -351,17 +355,17 @@ def append_group_ccs(edges_df, subset_groups, max_distance=None):
     For the given edges_df, assign a group to each edge
     (duplicating edges if they belong to multiple groups),
     and return the cc id as a new column 'group_cc'.
-    
+
     The CC operation is performed on all groups at once,
     using disjoint sets of node IDs for every group.
     Thus, the CC ids for each group do NOT start at 1.
     Rather, the values in group_cc are arbitrary and
     not even consecutive.
-    
+
     max_distance:
         If provided, exclude edges that exceed this distance from
         the CC computation (but include them in the resulting dataframe).
-        For such excluded edges, group_cc == -1. 
+        For such excluded edges, group_cc == -1.
     """
     with Timer("Computing group_cc", logger):
         edges_df = append_group_col(edges_df, subset_groups)
@@ -392,15 +396,15 @@ def append_group_ccs(edges_df, subset_groups, max_distance=None):
         # Compute CC on the entire edge set, yielding a unique id for every CC in each group
         group_cc = 1 + connected_components_nonconsecutive(thresholded_edges, subset_groups['node_id'].values)
         subset_groups['group_cc'] = group_cc.astype(np.int32)
-        
+
         # Append group_cc to every row.
         # All edges we actually used will have the same group_cc for node_id_a/node_id_b,
         # so just use node_id_a as the lookup.
         edges_df = edges_df.merge(subset_groups[['node_id', 'group_cc']], 'left', left_on='node_id_a', right_on='node_id')
         edges_df = edges_df.drop(['node_id_a', 'node_id_b', 'node_id'], axis=1)
-    
-        # But edges that were NOT used might be part of two different components.
-        # group_cc has no valid value for those rows.  Set to -1.
+
+        # But edges that were NOT used in the CC computation might span between different components.
+        # For those rows, group_cc has no valid value.  Set group_cc to -1.
         edges_df['group_cc'] = edges_df['group_cc'].astype(np.int32)
         edges_df.loc[edges_df['distance'] > max_distance, 'group_cc'] = np.int32(-1)
         return edges_df, subset_groups
@@ -521,11 +525,32 @@ def _find_closest_approaches(volume, closest_scale, subset_groups):
     Given a volume and one or more groups of labels,
     find intra-group "edges" (label pairs) for objects in the given volume that are
     close to one another, but don't actually touch.
-    
+
+    Note:
+        The subset_groups argument must contain a 'group_cc' column,
+        which identifies nodes for which an edge has already been found
+        during the "direct adjacencies" step of this workflow.
+        This allows us to avoid looking for edges that have already been found,
+        and also avoid looking at edges that aren't necessary to join a node with
+        the rest of its group.
+
+        Instead, we focus on the closest approaches between nodes that span
+        from one component in a group to another component in that group.
+
+        For example, if a particular group has three components [1,2,3], [4,5], [6],
+        then we will only look for closest approaches between the following pairs of nodes:
+        [1,4], [1,5], [1,6], [2,4], [2,5], [2,6], [4,6], [5,6]
+        (We won't examine [1,2], [1,3], [2,3], [4,5], since they are known to belong
+        to the same group already.)
+
+        This saves computation, but omits some close-but-not-touching edges between nodes
+        in the same group, just because some other path consisting of direct adjacencies
+        can be found between those two points.
+
     Args:
         volume:
             3D label volume, np.uint32
-            
+
         closest_scale:
             If closest_scale > 0, then the "closest" points will be computed after
             downsampling the mask for each object at the given scale.
@@ -536,7 +561,8 @@ def _find_closest_approaches(volume, closest_scale, subset_groups):
         subset_groups:
             DataFrame with columns [label, group, group_cc].
             Each grouped subset subset of labels is considered independently.
-            Furthermore, we do not look for edges within the same group_cc
+            Furthermore, we do not look for edges within the same group_cc,
+            as explained above.
 
     Returns:
         DataFrame with columns:
