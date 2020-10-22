@@ -164,7 +164,8 @@ class FindAdjacencies(Workflow):
         subset_edges.drop_duplicates(inplace=True)
 
         subset_groups = load_label_groups(options["subset-label-groups"])
-        
+        assert subset_groups.duplicated().sum() == 0
+
         is_supervoxels = ( isinstance(volume_service.base_service, DvidVolumeService)
                            and volume_service.base_service.supervoxels )
         subset_labels = load_body_list(options["subset-labels"], is_supervoxels)
@@ -305,32 +306,43 @@ class FindAdjacencies(Workflow):
 def append_group_col(edges_df, subset_groups):
     """
     For the given list of edges, append a 'group' ID to each row.
+    An edge belongs to a group if the group contains both of its endpoints.
     If an edge belongs to multiple groups, the edge is duplicated so
     it can be listed with multiple group values.
-    
-    Note: Each [label_a,label_b] pair of the input will be used only once
-          (but will be duplicated into multiple groups if necessary),
-          even if duplicate edge pairs have differing values in the other columns.
-          That is, don't pass in rows with identical [label_a, label_b] columns
-          but have different values in the other columns.
+    Edges whose endpoints do not have any groups in common are omitted from the output.
+
+    Duplicate label pairs are permitted, in which case they will also appear duplicated
+    in the output (with the other columns preserved).  As described above, they will be
+    doubly-duplicated if the edge belongs to multiple groups.
+    This is useful if the same label pair appears multiple times, but with different
+    auxilliary columns (e.g. two labels are adjacent at multiple sites).
+
+    Note:
+        There is a test for this function in test_findadjacencies.py
     """
     subset_groups = subset_groups[['label', 'group']]
-    edges_df = edges_df.drop_duplicates(['label_a', 'label_b'])
-    
-    # Assign label_a groups, (duplicating edges as necessary if label_a belongs to multiple groups) 
-    edges_a_df = edges_df.merge(subset_groups, 'left', left_on='label_a', right_on='label').drop('label', axis=1)
 
-    # Assign label_b groups, (duplicating edges as necessary if label_b belongs to multiple groups) 
-    edges_b_df = edges_df[['label_a', 'label_b']].merge(subset_groups, 'left', left_on='label_b', right_on='label').drop('label', axis=1)
+    # Tag rows with a unique ID, which we'll use in the final inner-merge below
+    # to avoid double-duplications in the case of duplicated label pairs in which
+    # one or more of the labels is involved in multiple groups.
+    edges_df['row'] = np.arange(len(edges_df), dtype=int)
+
+    # Assign label_a groups, (duplicating edges as necessary if label_a belongs to multiple groups)
+    edges_a_df = edges_df.merge(subset_groups.rename(columns={'label': 'label_a'}, copy=False), 'left', on='label_a')
+
+    # Assign label_b groups, (duplicating edges as necessary if label_b belongs to multiple groups)
+    edges_b_df = edges_df[['label_a', 'label_b', 'row']].merge(subset_groups.rename(columns={'label': 'label_b'}, copy=False), 'left', on='label_b')
 
     # Keep rows that have matching groups on both sides
-    edges_df = edges_a_df.merge(edges_b_df, 'inner', ['label_a', 'label_b', 'group'])
-    
+    edges_df = edges_a_df.merge(edges_b_df, 'inner', ['label_a', 'label_b', 'row', 'group'])
+
     # Put group first, and sort by group
     cols = edges_df.columns.tolist()
     cols.remove('group')
     cols.insert(0, 'group')
     edges_df = edges_df[cols]
+    del edges_df['row']
+
     return edges_df
 
 
@@ -362,16 +374,14 @@ def append_group_ccs(edges_df, subset_groups, max_distance=None):
         #
         # Note: Assigning node IDs this way assumes subset-requirement == 2
         subset_groups = subset_groups[['label', 'group']].copy()
+        assert subset_groups.duplicated().sum() == 0
         subset_groups['node_id'] = subset_groups.index.astype(np.uint32)
-        
+
         # Append columns for [node_id_a, node_id_b]
-        edges_df = (edges_df.merge( subset_groups, 'left',
-                                    left_on=['label_a', 'group'], right_on=['label', 'group'])
-                    .drop('label', axis=1))
-        edges_df = (edges_df.merge( subset_groups, 'left',
-                                    left_on=['label_b', 'group'], right_on=['label', 'group'],
-                                    suffixes=['_a', '_b'])
-                   .drop('label', axis=1))
+        sg_a = subset_groups.rename(columns={'label': 'label_a'}, copy=False)
+        sg_b = subset_groups.rename(columns={'label': 'label_b'}, copy=False)
+        edges_df = edges_df.merge(sg_a, 'left', on=['label_a', 'group'])
+        edges_df = edges_df.merge(sg_b, 'left', on=['label_b', 'group'], suffixes=['_a', '_b'])
 
         # Drop edges that are too distant to consider for CC
         if max_distance is None:

@@ -14,6 +14,7 @@ from ruamel.yaml import YAML
 from neuclease.dvid import create_labelmap_instance, post_labelmap_voxels
 from flyemflows.bin.launchflow import launch_flow
 from flyemflows.util import upsample
+from flyemflows.workflow.findadjacencies import append_group_col
 
 yaml = YAML()
 yaml.default_flow_style = False
@@ -451,6 +452,46 @@ def _impl_findadjacencies_different_dvid_blocks_sparse_edges(template_dir, confi
     assert (1,6) in label_pairs
 
 
+def test_append_group_col():
+    edges = [[1, 2, 'a'], # duplicated in the output (1 and 2 both belong to the same two groups)
+             [1, 2, 'b'], # duplicated in the output (1 and 2 both belong to the same two groups)
+             [1, 3, 'c'],
+             [1, 4, 'd'], # omitted from output (no groups in common)
+             [2, 3, 'e'], # Both [2,3] edges must appear in the output, with the same group but preserved 'info' columns.
+             [2, 3, 'f'], 
+             [3, 4, 'g']] # omitted from output (no groups in common)
+
+    groups = [[1, 10], [2, 10],
+              [1, 20], [2, 20], [3, 20],
+              [1, 30],
+              [4, 40] ]
+
+    expected = [[1, 2, 'a', 10],
+                [1, 2, 'a', 20],
+                [1, 2, 'b', 10],
+                [1, 2, 'b', 20],
+                [1, 3, 'c', 20],
+                [2, 3, 'e', 20],
+                [2, 3, 'f', 20]]
+
+    edges_df = pd.DataFrame(edges, columns=['label_a', 'label_b', 'info'])
+    groups_df = pd.DataFrame(groups, columns=['label', 'group'])
+
+    expected_df = (pd.DataFrame(expected, columns=['label_a', 'label_b', 'info', 'group'])
+                     .sort_values(['label_a', 'label_b', 'info', 'group'])
+                     .reset_index(drop=True))[['group', 'label_a', 'label_b', 'info']]
+
+    result_df = (append_group_col(edges_df, groups_df)
+                    .sort_values(['label_a', 'label_b', 'info', 'group'])
+                    .reset_index(drop=True))
+
+    print("")
+    print(expected_df)
+    print("")
+    print(result_df)
+    assert (result_df == expected_df).all().all()
+
+
 if __name__ == "__main__":
     #from neuclease import configure_default_logging
     #configure_default_logging()
@@ -458,6 +499,7 @@ if __name__ == "__main__":
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_findadjacencies']
     #args += ['-x']
+    #args += ['-k append_group_col']
     #args += ['-k', 'findadjacencies_from_dvid_sparse_groups'
     #         ' or findadjacencies_different_dvid_blocks_sparse_labels'
     #         ' or findadjacencies_from_dvid_sparse_edges'
