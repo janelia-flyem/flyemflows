@@ -23,6 +23,7 @@ import time
 import getpass
 
 import dask
+import dask.config
 import dask.bag as db
 from distributed import Client
 
@@ -64,19 +65,19 @@ def init_cluster(num_workers, wait_for_all_workers=True):
 
 def main():
     USER = getpass.getuser()
-    
-    # See example-dask-config.yaml for explanations.
-    dask.config.set({'jobqueue':
-                        {'lsf':
-                          {'cores': 1,
-                           'memory': '15GB',
-                           'walltime': '01:00',
-                           'log-directory': 'dask-logs',
-                           'local-directory': f'/scratch/{USER}',
-                           'use-stdin': True    # Implementation detail regarding how bsub is called by dask-jobqueue.
-                                                # Under Janelia's LSF configuration, this must be set to 'True'.
 
-                    }}})
+    # See example-dask-config.yaml for explanations.
+    dask.config.update(dask.config.config,
+                       {'jobqueue':
+                          {'lsf':
+                            {'cores': 1,
+                             'memory': '15GB',
+                             'walltime': '01:00',
+                             'log-directory': 'dask-logs',
+                             'local-directory': f'/scratch/{USER}',
+                             'use-stdin': True    # Implementation detail regarding how bsub is called by dask-jobqueue.
+                                                  # Under Janelia's LSF configuration, this must be set to 'True'.
+                       }}})
     
     client = init_cluster(2)
     
