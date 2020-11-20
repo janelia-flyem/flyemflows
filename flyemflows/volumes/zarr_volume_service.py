@@ -90,9 +90,10 @@ ZarrServiceSchema = \
             "description": "Zarr supports an assortment of 'store' types, and unfortunately it's\n"
                            "impossible to infer the type of store used from the zarr metadata.\n"
                            "We must specify which type of store to use when opening the volume.\n"
-                           "In general, you should use NestedDirectoryStore if your volume is large.\n",
+                           "In general, you should use NestedDirectoryStore if your volume is large.\n"
+                           "You can also use N5Store if you're reading from a zarr-compatible N5 volume.\n",
             "type": "string",
-            "enum": ["DirectoryStore", "NestedDirectoryStore"],
+            "enum": ["DirectoryStore", "NestedDirectoryStore", "N5Store"],
             "default": "NestedDirectoryStore"
         },
         "global-offset": {
@@ -166,7 +167,8 @@ class ZarrVolumeService(VolumeServiceWriter):
 
         store_cfg = volume_config["zarr"]["store-type"]
         self._store_cls = { 'DirectoryStore': zarr.storage.DirectoryStore,
-                            'NestedDirectoryStore': zarr.storage.NestedDirectoryStore
+                            'NestedDirectoryStore': zarr.storage.NestedDirectoryStore,
+                            'N5Store': zarr.storage.N5Store
                           }[store_cfg]
 
         self._zarr_file = None
