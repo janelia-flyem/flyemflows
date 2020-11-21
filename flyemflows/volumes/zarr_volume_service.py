@@ -91,9 +91,9 @@ ZarrServiceSchema = \
                            "impossible to infer the type of store used from the zarr metadata.\n"
                            "We must specify which type of store to use when opening the volume.\n"
                            "In general, you should use NestedDirectoryStore if your volume is large.\n"
-                           "You can also use N5Store if you're reading from a zarr-compatible N5 volume.\n",
+                           'Choices: ["DirectoryStore", "NestedDirectoryStore", "N5Store", "ZipStore", "DBMStore", "LMDBStore", "SQLiteStore", "FSStore"]',
             "type": "string",
-            "enum": ["DirectoryStore", "NestedDirectoryStore", "N5Store"],
+            "enum": ["DirectoryStore", "NestedDirectoryStore", "N5Store", "ZipStore", "DBMStore", "LMDBStore", "SQLiteStore", "FSStore"],
             "default": "NestedDirectoryStore"
         },
         "global-offset": {
@@ -149,6 +149,7 @@ ZarrVolumeSchema = \
     }
 }
 
+
 class ZarrVolumeService(VolumeServiceWriter):
 
     def __init__(self, volume_config):
@@ -165,12 +166,7 @@ class ZarrVolumeService(VolumeServiceWriter):
             self._dataset_name = self._dataset_name[1:]
         volume_config["zarr"]["dataset"] = self._dataset_name
 
-        store_cfg = volume_config["zarr"]["store-type"]
-        self._store_cls = { 'DirectoryStore': zarr.storage.DirectoryStore,
-                            'NestedDirectoryStore': zarr.storage.NestedDirectoryStore,
-                            'N5Store': zarr.storage.N5Store
-                          }[store_cfg]
-
+        self._store_cls = getattr(zarr, volume_config["zarr"]["store-type"])
         self._zarr_file = None
         self._zarr_datasets = {}
 

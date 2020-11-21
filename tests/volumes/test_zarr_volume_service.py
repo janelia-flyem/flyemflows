@@ -9,7 +9,8 @@ from neuclease.util import box_to_slicing
 
 from flyemflows.volumes import ZarrVolumeService
 
-@pytest.fixture(scope="module")
+
+@pytest.fixture()
 def volume_setup():
     tmpdir = tempfile.mkdtemp()
     path = f"{tmpdir}/test_zarr_service_testvol.zarr"
@@ -120,4 +121,6 @@ def test_write(volume_setup):
 
 
 if __name__ == "__main__":
-    pytest.main(['-s', '--tb=native', '--pyargs', 'tests.volumes.test_zarr_volume_service'])
+    args = ['-s', '--tb=native', '--pyargs', 'tests.volumes.test_zarr_volume_service']
+    #args += ['-k', 'write']
+    pytest.main(args)
