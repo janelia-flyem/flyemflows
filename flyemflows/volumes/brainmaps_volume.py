@@ -91,6 +91,11 @@ class BrainMapsVolume:
 
         if not self.skip_checks:
             volume_list = fetch_json(self.http, f'{BRAINMAPS_BASE_URL}/volumes')
+            try:
+                vol_list = volume_list['volumeId']
+            except KeyError:
+                raise RuntimeError("Failed to fetch volume list.  Are you using the right project and credentials?")
+                
             if f'{project}:{dataset}:{volume_id}' not in volume_list['volumeId']:
                 raise RuntimeError(f"BrainMaps volume does not exist on server: {project}:{dataset}:{volume_id}")
     
