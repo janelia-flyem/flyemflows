@@ -375,6 +375,16 @@ class ConnectedComponents(Workflow):
         # Extract halos.        
         # Note: No need to extract halos on all sides: outer-lower will overlap
         #       with inner-upper, which is good enough for computing CC.
+        #
+        # FIXME:
+        #   For pure connected components, there's really no need for overlap at all, actually.
+        #   It would be more efficient to use NO HALO, and simply match inner-lower to inner-upper,
+        #   but adjusting the physical coordinates of one side or the other to facilitate the merge below.
+        #   However, that change will mean that we won't be able to re-use this code to 'stitch'
+        #   independently generated segmentation blocks, for which the rules for "linking" objects may
+        #   depend on various filters (e.g. object size, overlap size, etc.).  (See TODO below.)
+        #   But since we don't actually support that feature right now, there's not a great justification
+        #   for keeping the code in a state that is "closer to" the implementation that would support that.
         outer_halos = extract_halos(cc_bricks, input_wall.grid, 'outer', 'lower')
         inner_halos = extract_halos(cc_bricks, input_wall.grid, 'inner', 'upper')
 
