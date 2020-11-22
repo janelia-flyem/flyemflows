@@ -55,11 +55,11 @@ def setup_labelmap_test():
 
     expected_vol = RAW_VOLUME_DATA + 1000
 
-    return RAW_VOLUME_DATA, expected_vol, labelmap_config, full_from_h5, h5_reader
+    return RAW_VOLUME_DATA, expected_vol, labelmap_config, full_from_h5, h5_reader, test_dir
 
 
 def test_api(setup_labelmap_test):
-    _raw_volume, _expected_vol, labelmap_config, _full_from_h5, h5_reader = setup_labelmap_test
+    _raw_volume, _expected_vol, labelmap_config, _full_from_h5, h5_reader, test_dir = setup_labelmap_test
     mapped_reader = LabelmappedVolumeService(h5_reader, labelmap_config)
     assert mapped_reader.base_service == h5_reader
     assert len(mapped_reader.service_chain) == 2
@@ -68,8 +68,33 @@ def test_api(setup_labelmap_test):
 
 
 def test_read(setup_labelmap_test):
-    _raw_volume, expected_vol, labelmap_config, _full_from_h5, h5_reader = setup_labelmap_test
+    _raw_volume, expected_vol, labelmap_config, _full_from_h5, h5_reader, test_dir = setup_labelmap_test
     mapped_reader = LabelmappedVolumeService(h5_reader, labelmap_config)
+
+    assert (mapped_reader.bounding_box_zyx == h5_reader.bounding_box_zyx).all()
+    assert (mapped_reader.preferred_message_shape == h5_reader.preferred_message_shape).all()
+    assert mapped_reader.block_width == h5_reader.block_width
+    assert mapped_reader.dtype == h5_reader.dtype
+
+    full_mapped = mapped_reader.get_subvolume(mapped_reader.bounding_box_zyx)
+    assert (full_mapped == expected_vol).all()
+    assert full_mapped.flags.c_contiguous
+
+
+def test_read_with_zero_default(setup_labelmap_test):
+    raw_volume, expected_vol, _labelmap_config, _full_from_h5, h5_reader, test_dir = setup_labelmap_test
+
+    mapping_path = f'{test_dir}/incomplete-mapping.csv'
+    mapping = pd.DataFrame({'orig': np.arange(90), 'body': np.arange(90) + 1000})
+    mapping.to_csv(mapping_path, index=False, header=True)
+    labelmap_config = {
+        "file": mapping_path,
+        "file-type": "label-to-body",
+        "missing-value-mode": "zero"
+    }
+
+    mapped_reader = LabelmappedVolumeService(h5_reader, labelmap_config)
+    expected_vol = np.where(raw_volume < 90, expected_vol, 0)
 
     assert (mapped_reader.bounding_box_zyx == h5_reader.bounding_box_zyx).all()
     assert (mapped_reader.preferred_message_shape == h5_reader.preferred_message_shape).all()
@@ -87,7 +112,7 @@ def test_write(setup_labelmap_test):
 
 
 def test_pickle(setup_labelmap_test):
-    _raw_volume, expected_vol, labelmap_config, _full_from_h5, h5_reader = setup_labelmap_test
+    _raw_volume, expected_vol, labelmap_config, _full_from_h5, h5_reader, test_dir = setup_labelmap_test
     mapped_reader = LabelmappedVolumeService(h5_reader, labelmap_config)
     p = pickle.dumps(mapped_reader)
     unpickled_reader = pickle.loads(p)

@@ -52,6 +52,8 @@ class LabelmappedVolumeService(VolumeServiceWriter):
         self.apply_when_reading = labelmap_config["apply-when"] in ("reading", "reading-and-writing")
         self.apply_when_writing = labelmap_config["apply-when"] in ("writing", "reading-and-writing")
 
+        self.missing_value_mode = labelmap_config["missing-value-mode"]
+
     def __getstate__(self):
         if self._compressed_mapping_pairs is None:
             # Load the labelmapping and then compress 
@@ -122,7 +124,15 @@ class LabelmappedVolumeService(VolumeServiceWriter):
             #       (It yields incorrect results)
             #       Check to see if this is still a problem in the latest version of xtensor-python.
             volume = np.asarray(volume, order='C')
-            self.mapper.apply_inplace(volume, allow_unmapped=True)
+
+            if self.missing_value_mode == "identity":
+                self.mapper.apply_inplace(volume, allow_unmapped=True)
+            elif self.missing_value_mode == "error":
+                self.mapper.apply_inplace(volume, allow_unmapped=False)
+            elif self.missing_value_mode == "zero":
+                volume = self.mapper.apply_with_default(volume)
+            else:
+                raise AssertionError("Unknown missing-value-mode")
 
         return volume
 
@@ -131,6 +141,14 @@ class LabelmappedVolumeService(VolumeServiceWriter):
             # Copy first to avoid remapping user's input volume
             # (which they might want to reuse)
             subvolume = subvolume.copy(order='C')
-            self.mapper.apply_inplace(subvolume, allow_unmapped=True)        
+
+            if self.missing_value_mode == "identity":
+                self.mapper.apply_inplace(subvolume, allow_unmapped=True)
+            elif self.missing_value_mode == "error":
+                self.mapper.apply_inplace(subvolume, allow_unmapped=False)
+            elif self.missing_value_mode == "zero":
+                subvolume = self.mapper.apply_with_default(subvolume)
+            else:
+                raise AssertionError("Unknown missing-value-mode")
 
         self.original_volume_service.write_subvolume(subvolume, offset_zyx, scale)

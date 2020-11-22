@@ -59,6 +59,12 @@ LabelMapSchema = \
             "type": "string",
             "enum": ["reading", "writing", "reading-and-writing"],
             "default": "reading-and-writing"
+        },
+        "missing-value-mode": {
+            "description": "What to do if a value is encountered which is not present in the mapping (even value 0).",
+            "type": "string",
+            "enum": ["zero", "identity", "error"],
+            "default": "identity"
         }
     }
 }
