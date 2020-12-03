@@ -1052,7 +1052,7 @@ class CreateMeshes(Workflow):
                 final_decimation = min( post_decimation, max_vertices / len(mesh.vertices_zyx) )
 
             if final_decimation != 1.0:
-                mesh.simplify(final_decimation, in_memory=True)
+                mesh.simplify(final_decimation, in_memory=False)  # Running into deadlocks with in_memory=True
 
             if not compute_normals:
                 mesh.drop_normals()
@@ -1338,8 +1338,7 @@ def generate_mesh(sv, body, mask, mask_box, smoothing, decimation, max_vertices,
 
     # Don't bother decimating really tiny meshes -- something usually goes wrong anyway.
     if decimation != 1.0 and len(mesh.vertices_zyx) > 10:
-        # TODO: Implement a timeout here for the in-memory case (use multiprocessing)?
-        mesh.simplify(decimation, in_memory=True)
+        mesh.simplify(decimation, in_memory=False)  # Running into deadlocks with in_memory=True
 
     if (rescale_factor != 1.0).any():
         mesh.vertices_zyx[:] *= rescale_factor
