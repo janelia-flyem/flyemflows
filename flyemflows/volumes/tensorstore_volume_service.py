@@ -126,7 +126,12 @@ TensorStoreServiceSchema = {
     # "additionalProperties": False, # Can't use this in conjunction with 'oneOf' schema feature
     "properties": {
         "spec": TensorStoreSpecSchema,
-        "context": TensorStoreContextSchema
+        "context": TensorStoreContextSchema,
+        "reinitialize-via": {
+            "type": "string",
+            "enum": ["unpickle", "reopen"],
+            "default": "unpickle"
+        }
     }
 }
 
@@ -165,10 +170,10 @@ class TensorStoreVolumeServiceReader(VolumeServiceReader):
 
         try:
             # Strip 'gs://' if the user provided it.
-            bucket = volume_config['spec']['kvstore']['bucket']
+            bucket = volume_config['tensorstore']['spec']['kvstore']['bucket']
             if bucket.startswith('gs://'):
                 bucket = bucket[len('gs://'):]
-                volume_config['spec']['kvstore']['bucket'] = bucket
+                volume_config['tensorstore']['spec']['kvstore']['bucket'] = bucket
         except KeyError:
             pass
 
@@ -202,6 +207,7 @@ class TensorStoreVolumeServiceReader(VolumeServiceReader):
         self._resource_manager_client = resource_manager_client
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
         self._available_scales = available_scales
+        self._reinitialize_via = volume_config["tensorstore"]["reinitialize-via"]
 
         # Overwrite config entries that we might have modified
         volume_config["geometry"]["block-width"] = self._block_width
@@ -230,6 +236,7 @@ class TensorStoreVolumeServiceReader(VolumeServiceReader):
         # Apparently unpickling can fail intermittently due to network issues, so we
         # pickle/unpickle it explicitly so we can control the process and retry if necessary.
         d['_stores'] = pickle.dumps(d['_stores'])
+
         return d
 
     @auto_retry(3, pause_between_tries=5.0, logging_name=__name__)
@@ -243,7 +250,11 @@ class TensorStoreVolumeServiceReader(VolumeServiceReader):
         #     Error reading "gs://vnc-v3-seg/rc4_wsexp/info":
         #     CURL error[16] Error in the HTTP2 framing layer
         #
-        d['_stores'] = pickle.loads(d['_stores'])
+        if self._reinitialize_via == "reopen":
+            d['_stores'] = {}
+        else:
+            d['_stores'] = pickle.loads(d['_stores'])
+
         self.__dict__ = d
 
     @property
