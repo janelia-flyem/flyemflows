@@ -175,7 +175,7 @@ class StitchedMeshes(Workflow):
             if options["stitch"]:
                 mesh.stitch_adjacent_faces(drop_unused_vertices=True, drop_duplicate_faces=True)
             mesh.laplacian_smooth(options["smoothing-iterations"])
-            mesh.simplify(options["decimation-fraction"], in_memory=True)
+            mesh.simplify_openmesh(options["decimation-fraction"])
             return mesh
 
         in_flight = 0

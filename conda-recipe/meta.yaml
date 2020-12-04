@@ -30,7 +30,7 @@ requirements:
     - fabric
 
     # FlyEM mesh library
-    - vol2mesh
+    - vol2mesh >=0.1.post5
 
     # Simple python-only RAG data structure.
     - ilastikrag

@@ -191,7 +191,7 @@ class SparseMeshes(Workflow):
                     fraction = min(fraction, 1.0)
     
                 try:
-                    mesh.simplify(fraction, in_memory=True)
+                    mesh.simplify_openmesh(fraction)
                 except:
                     return (body, scale, num_voxels, 0.0, len(mesh.vertices_zyx), timer.seconds, 'error-decimation')
                 
