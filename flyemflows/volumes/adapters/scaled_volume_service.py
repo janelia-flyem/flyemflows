@@ -187,7 +187,7 @@ class ScaledVolumeService(VolumeServiceWriter):
         
         But in general, workflows should only be writing into
         scale 0 if they are using a scaled volume service.
-        Other pyramid levels should be comuted afterwards.
+        Other pyramid levels should be computed afterwards.
         """
         offset_zyx = np.asarray(offset_zyx)
         offset_zyx = (offset_zyx * 2**self.scale_delta).astype(int)

@@ -52,7 +52,7 @@ def main():
     parser.add_argument('--check-mismatches', action='store_true',
                         help='If given, every LabelIndex will be compared with the existing LabelIndex on the server, and only the mismatching ones will be sent.')
     parser.add_argument('--agglomeration-mapping', '-m', required=False,
-                        help='Either a UUID to pull the mapping from, or a CSV file with two columns, mapping supervoxels to agglomerated bodies. Any missing entries implicitly identity-mapped.')
+                        help='Either a UUID to pull the mapping from, or a CSV file (or .npy file) with two columns, mapping supervoxels to agglomerated bodies. Any missing entries implicitly identity-mapped.')
     parser.add_argument('--operation', default='indexes', choices=['indexes', 'mappings', 'both', 'sort-only'],
                         help='Whether to load the LabelIndices, MappingOps, or both. If sort-only, sort/save the stats and exit.')
     parser.add_argument('--subset-labels', required=False,
