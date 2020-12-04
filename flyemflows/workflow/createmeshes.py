@@ -600,7 +600,8 @@ class CreateMeshes(Workflow):
             brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.client, target_partition_size_voxels, halo, sbm, compression='lz4_2x')
 
         # Convert to dask.DataFrame, including logical scan-order position as the DataFrame index.
-        bricks_ddf = brickwall.as_ddf(bricks_are_sorted=True)[['brick_index', 'lz0', 'ly0', 'lx0', 'brick']]
+        with Timer("Loading bricks into dask DataFrame", logger):
+            bricks_ddf = brickwall.as_ddf(bricks_are_sorted=True)[['brick_index', 'lz0', 'ly0', 'lx0', 'brick']]
         return bricks_ddf, subset_labels
 
 
