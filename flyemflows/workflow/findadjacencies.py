@@ -489,6 +489,7 @@ def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requ
 
     # Construct RAG -- finds all edges in the volume, on a per-pixel basis.
     remapped_volume = mapper.apply_with_default(brick.volume, 0)
+    brick.compress()
     remapped_subset_groups = subset_groups.copy()
     remapped_subset_groups['label'] = mapper.apply(subset_groups['label'].values)
 
