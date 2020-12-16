@@ -153,6 +153,25 @@ class VolumeService(metaclass=ABCMeta):
             if key in volume_config and hasattr(volume_config[key], 'from_default') and volume_config[key].from_default:
                 del volume_config[key]
 
+    @classmethod
+    def contains_nondefault_service_config(cls, volume_config):
+        """
+        The validate_and_inject_defaults() function will insert default
+        settings for all possible service configs, which makes it tricky to figure out
+        if any of the settings have been written by the user, or if the config has been
+        left untouched by the user.
+
+        Fortunately, that function places a special hint 'from_default' on the config
+        dict to make it easy to figure out which configs were completely default-generated.
+
+        This function returns True if the user has added any settings at all to the config,
+        or returns False if the config consists solely of default settings.
+        """
+        for key in VolumeService.SUPPORTED_SERVICES:
+            if key in volume_config and not (hasattr(volume_config[key], 'from_default') and volume_config[key].from_default):
+                return True
+        return False
+
 
 class VolumeServiceReader(VolumeService):
 
