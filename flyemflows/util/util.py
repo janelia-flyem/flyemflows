@@ -225,6 +225,8 @@ def find_processes(search_string):
                 procs.append(p)
         except psutil.AccessDenied:
             pass
+        except psutil.ZombieProcess:
+            pass
     return procs
 
 
