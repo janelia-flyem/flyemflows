@@ -299,7 +299,7 @@ class MitoRepair(Workflow):
         if not server or not dataset:
             return body_table
 
-        from neuprint import Client, default_client as neuprint_default_client, fetch_neurons
+        from neuprint import Client, default_client as neuprint_default_client, fetch_neurons, NeuronCriteria as NC
         @auto_retry(5, pause_between_tries=3.0, logging_name=__name__)
         def fetch_synapse_counts(bodies):
             try:
@@ -307,7 +307,7 @@ class MitoRepair(Workflow):
             except Exception:
                 c = Client(server, dataset)
 
-            ndf, cdf = fetch_neurons(bodies, client=c)
+            ndf, cdf = fetch_neurons(NC(bodyId=bodies, label='Segment'), client=c)
             return ndf.set_index('bodyId')[['pre', 'post']].rename_axis('body')
 
         bag = db.from_sequence(iter_batches(body_table.index.values, 1000), npartitions=16)
