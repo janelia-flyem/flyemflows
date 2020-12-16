@@ -8,10 +8,11 @@ from confiddler import load_config
 import neuclease
 from neuclease.util import Timer
 
+from ...util.cluster_context import ClusterContext
 from ...util.dask_util import run_on_each_worker
 
 from .base_schema import BaseSchema
-from .contexts import environment_context, LocalResourceManager, WorkerDaemons, WorkflowClusterContext
+from .contexts import environment_context, LocalResourceManager, WorkerDaemons
 
 logger = logging.getLogger(__name__)
 
@@ -126,11 +127,10 @@ class Workflow(object):
         self.config = config
         neuclease.dvid.DEFAULT_APPNAME = self.config['workflow-name']
         self.num_workers = num_workers
-        
-        # Initialized in run(), specifically by the WorkflowClusterContext
+
+        # Initialized in run()
         self.cluster = None
         self.client = None
-
 
     def __del__(self):
         # If the cluster is still alive (a debugging feature),
@@ -142,7 +142,6 @@ class Workflow(object):
             self.cluster.close()
             self.cluster = None
 
-
     def execute(self):
         if type(self) is Workflow:
             # The Workflow class itself is sometimes "executed" during unit tests,
@@ -151,7 +150,6 @@ class Workflow(object):
         else:
             # Subclasses must implement execute() themselves.
             raise NotImplementedError
-
     
     def run(self, kill_cluster=True):
         """
@@ -163,11 +161,19 @@ class Workflow(object):
         # The execute() function is run within these nested contexts.
         # See contexts.py
         workflow_name = self.config['workflow-name']
-        with Timer(f"Running {workflow_name} with {self.num_workers} workers", logger), \
-             LocalResourceManager(self.config["resource-manager"]), \
-             WorkflowClusterContext(self, True, not kill_cluster), \
-             environment_context(self.config["environment-variables"], self), \
-             WorkerDaemons(self):
+        cluster_type = self.config["cluster-type"]
+        max_wait = self.config["cluster-max-wait"]
+
+        with \
+        Timer(f"Running {workflow_name} with {self.num_workers} workers", logger), \
+        LocalResourceManager(self.config["resource-manager"]), \
+        ClusterContext(cluster_type, self.num_workers, True, max_wait, not kill_cluster) as cc:
+            self.client = cc.client
+            self.cluster = cc.client and cc.client.cluster
+
+            with \
+            environment_context(self.config["environment-variables"], self), \
+            WorkerDaemons(self):
                 self.execute()
 
 

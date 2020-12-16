@@ -9,6 +9,7 @@ from collections import defaultdict
 
 import dask
 import dask.bag
+import dask.config
 import dask.dataframe
 from dask.bag import Bag
 from distributed.utils import parse_bytes
@@ -16,6 +17,9 @@ from distributed.client import futures_of
 
 from confiddler import dump_config
 from neuclease.util import Timer
+
+from .dask_schema import DaskConfigSchema
+from confiddler import load_config, dump_config, validate
 
 from . import extract_ip_from_link
 
@@ -111,7 +115,49 @@ def dump_dask_config(path):
         del config['jobqueue']
         config['jobqueue'] = { 'lsf': lsf }
     dump_config(config, path)
-    
+
+
+def load_and_overwrite_dask_config(cluster_type, dask_config_path=None, overwrite=False):
+    """
+    Load dask config, inject defaults for (selected) missing entries,
+    and optionally overwrite in-place.
+    """
+    if dask_config_path is None and 'DASK_CONFIG' in os.environ:
+        dask_config_path = os.environ["DASK_CONFIG"]
+    dask_config_path = dask_config_path or 'dask-config.yaml'
+
+    dask_config_path = os.path.abspath(dask_config_path)
+    if os.path.exists(dask_config_path):
+        # Check for completely empty dask config file
+        from ruamel.yaml import YAML
+        yaml = YAML()
+        config = yaml.load(open(dask_config_path, 'r'))
+        if not config:
+            dask_config = {}
+            validate(dask_config, DaskConfigSchema, inject_defaults=True)
+        else:
+            dask_config = load_config(dask_config_path, DaskConfigSchema)
+    else:
+        dask_config = {}
+        validate(dask_config, DaskConfigSchema, inject_defaults=True)
+
+    # Don't pollute the config file with extra jobqueue parameters we aren't using
+    if "jobqueue" in dask_config:
+        for key in list(dask_config["jobqueue"].keys()):
+            if key != cluster_type:
+                del dask_config["jobqueue"][key]
+
+        if len(dask_config["jobqueue"]) == 0:
+            del dask_config["jobqueue"]
+
+    if overwrite:
+        dump_config(dask_config, dask_config_path)
+
+    # This environment variable is recognized by dask itself
+    os.environ["DASK_CONFIG"] = dask_config_path
+    dask.config.paths.append(dask_config_path)
+    dask.config.refresh()
+
 
 def run_on_each_worker(func, client=None, once_per_machine=False, return_hostnames=True):
     """
@@ -312,6 +358,7 @@ class DebugClient:
             self._ncores = 1
         else:
             self._ncores = multiprocessing.cpu_count()
+        self.cluster = None
     
     def ncores(self):
         return {'driver': self._ncores}

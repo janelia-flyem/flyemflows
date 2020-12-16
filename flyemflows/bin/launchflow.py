@@ -33,16 +33,14 @@ import argparse
 import subprocess
 from datetime import datetime
 
-import dask.config
 
 import confiddler.json as json
-from confiddler import load_config, dump_config, dump_default_config, validate
+from confiddler import dump_config, dump_default_config
 
 from neuclease import configure_default_logging
 import flyemflows
 from flyemflows.util import tee_streams, email_on_exit
 from flyemflows.workflow import Workflow, BUILTIN_WORKFLOWS
-from flyemflows.workflow.base.dask_schema import DaskConfigSchema
 
 logger = logging.getLogger(__name__)
 
@@ -201,10 +199,8 @@ def launch_flow(template_dir, num_workers, kill_cluster=True, _custom_execute_fn
     with email_on_exit(config_data["exit-email"], config_data["workflow-name"], execution_dir, logpath):
         with tee_streams(logpath):
             logger.info(f"Teeing output to {logpath}")
-    
-            _load_and_overwrite_dask_config(execution_dir, config_data["cluster-type"])
             _log_flyemflows_version()
-            
+
             # On NFS, sometimes it takes a while for it to flush the file cache to disk,
             # which means your terminal doesn't see the new directory for a minute or two.
             # That's slightly annoying, so let's call sync right away to force the flush.
@@ -214,7 +210,7 @@ def launch_flow(template_dir, num_workers, kill_cluster=True, _custom_execute_fn
             #       Unless I can sort that out (or figure out how to sync ONLY the execution directory),
             #       it's best not to execute this sync.
             #os.system('sync')
-            
+
             workflow_inst = _run_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster, _custom_execute_fn)
             return execution_dir, workflow_inst
 
@@ -232,40 +228,6 @@ def _log_flyemflows_version():
         r = subprocess.run('git describe', env=env, shell=True, check=True, stdout=subprocess.PIPE)
         git_rev = r.stdout.decode('utf-8').strip()
         logger.info(f"Running flyemflows from git repo at version: {git_rev}")
-
-
-def _load_and_overwrite_dask_config(execution_dir, cluster_type):
-    # Load dask config, inject defaults for (selected) missing entries, and overwrite in-place.
-    dask_config_path = os.path.abspath(f'{execution_dir}/dask-config.yaml')
-    if os.path.exists(dask_config_path):
-        # Check for completely empty dask config file
-        from ruamel.yaml import YAML
-        yaml = YAML()
-        config = yaml.load(open(dask_config_path, 'r'))
-        if not config:
-            dask_config = {}
-            validate(dask_config, DaskConfigSchema, inject_defaults=True)
-        else:
-            dask_config = load_config(dask_config_path, DaskConfigSchema)
-    else:
-        dask_config = {}
-        validate(dask_config, DaskConfigSchema, inject_defaults=True)
-
-    # Don't pollute the config file with extra jobqueue parameters we aren't using
-    if "jobqueue" in dask_config:
-        for key in list(dask_config["jobqueue"].keys()):
-            if key != cluster_type:
-                del dask_config["jobqueue"][key]
-    
-        if len(dask_config["jobqueue"]) == 0:
-            del dask_config["jobqueue"]
-    
-    dump_config(dask_config, dask_config_path)
-
-    # This environment variable is recognized by dask itself
-    os.environ["DASK_CONFIG"] = dask_config_path
-    dask.config.paths.append(dask_config_path)
-    dask.config.refresh()
 
 
 def _run_workflow(workflow_cls, execution_dir, config_data, num_workers, kill_cluster=True, _custom_execute_fn=None):

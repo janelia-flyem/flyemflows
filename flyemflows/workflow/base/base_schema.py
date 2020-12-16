@@ -1,5 +1,6 @@
 from dvid_resource_manager.server import DEFAULT_CONFIG as DEFAULT_RESOURCE_MANAGER_CONFIG
-from .dask_schema import JobQueueSchema
+from ...util.dask_schema import JobQueueSchema
+from ...util.cluster_context import JOBQUEUE_CLUSTERS
 
 EnvironmentVariablesSchema = \
 {
@@ -118,7 +119,6 @@ WorkerInitSchema = \
     }
 }
 
-JOBQUEUE_CLUSTERS = ["lsf", "sge", "slurm"]
 assert set(JobQueueSchema["properties"].keys()) == set(JOBQUEUE_CLUSTERS)
 
 BaseSchema = \
