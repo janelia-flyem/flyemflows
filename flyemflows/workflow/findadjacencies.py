@@ -39,25 +39,68 @@ class FindAdjacencies(Workflow):
     Workflow to find all adjacent bodies in a segmentation volume,
     and output a coordinate for each that lies along the adjacency
     boundary, and somewhat near the centroid of the boundary.
-    
+
     Additionally, this workflow can find near-adjacent "edges",
     for specified groups of labels.  In that case, the emitted coordinates
     are guaranteed to reside in the labels of interest, and reside close to
     the points of "closest approach" between the two listed bodies within
     the brick in which the bodies were analyzed.
-    
+
     Note: This workflow performs well on medium-sized volumes,
           or on large volumes when filtering the set of edges using either
           the restrict-bodies or restrict-edges settings in the config.
           It will not perform well on an unfiltered hemibrain-sized volume,
           which would result in billions of edges.
-    
-    TODO: For very large label subsets, the time required to select the sparse
+
+    TODO: For VERY large (10M-100M) label subsets, the time required to select the sparse
           block set is really long (and requires a lot of RAM on the driver).
           There should be a config option to simply skip the label-based sparse,
           block determination, but maybe instead allow the user to specify an ROI
           (avoid downloading the whole bounding-box).
+
+
+    More notes about the "find-closest" stage
+    =========================================
+
+    First, this workflow finds the actually adjacent label pairs (i.e. touching objects).
+    But if the objects in a group cannot be linked together into a single connected
+    component via the touching adjacencies alone, it may be desirable to "try harder",
+    and search for "almost-touching" adjacencies that might link all objects in a group
+    together, into a single connected component.  It is NOT our goal to find ALL
+    "almost-touching" pairs in the group. The goal is merely to find "enough" links that
+    all objects in a group can be SOMEHOW linked into a single connected component.
+
+    For instance, consider the following segmentation, in which the user has listed
+    labels [1,2,3,4,5] as belonging to the same group, despite the fact that they
+    don't all touch:
+
+       11111111
+       11  222   4444
+          33333   555
+
+    After the first stage, the following exact (touching) adjacencies will be found:
+
+        [1,2], [2,3], [4,5]
+
+    With only those edges, the group contains two components: {1,2,3} and {4,5}.
+    If the 'find-closest' feature is requested, then a second stage of analysis is performed,
+    searching for some way to link the two components of the group. The only potential edges
+    to consider are the ones that span from one component to another:
+
+        [1,4], [1,5], [2,4], [2,5], [3,4], [3,5]
+
+    So, no attempt is made to find "almost touching" edges for nodes that already reside in the
+    same component. Hence, the pair [1,3] is not considered in the second stage. Although those
+    two objects might come really close to each other (maybe even closer than the pairs we ARE
+    considering), that link wouldn't help us reduce the number of connected components, so it
+    is ignored.
+
+    Furthermore, not all of the potential "almost touching" edges will necessarily be found.
+    Heuristics are used to find at least one of them, but no attempt is made to find ALL of them.
+    Again, the goal is just to find enough links to unify all of the objects into a single component
+    (one component per group), if possible.
     """
+
     FindAdjacenciesOptionsSchema = \
     {
         "type": "object",
