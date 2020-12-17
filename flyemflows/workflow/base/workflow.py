@@ -164,6 +164,11 @@ class Workflow(object):
         cluster_type = self.config["cluster-type"]
         max_wait = self.config["cluster-max-wait"]
 
+        # If you're trying to debug a C++ Python extension with AddressSanitizer,
+        # uncomment this function call.
+        # See developer-examples/ASAN_NOTES.txt for details.
+        # self._preload_asan_mac()
+
         with \
         Timer(f"Running {workflow_name} with {self.num_workers} workers", logger), \
         LocalResourceManager(self.config["resource-manager"]), \
@@ -206,4 +211,11 @@ class Workflow(object):
             return run_on_each_worker(func, None, once_per_machine, return_hostnames)
         else:
             return run_on_each_worker(func, self.client, once_per_machine, return_hostnames)
-    
+
+    @staticmethod
+    def _preload_asan_mac():
+        # See developer-examples/ASAN_NOTES.txt for details.
+        CONDA_PREFIX = os.environ["CONDA_PREFIX"]
+        asan_lib = f'{CONDA_PREFIX}/lib/clang/11.0.0/lib/darwin/libclang_rt.asan_osx_dynamic.dylib'
+        assert os.path.exists(asan_lib)
+        os.environ['DYLD_INSERT_LIBRARIES'] = asan_lib

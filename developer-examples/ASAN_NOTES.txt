@@ -1,0 +1,59 @@
+Notes for using AddressSanitizer to validate Python extensions in a multiprocessing context
+===========================================================================================
+
+It is sometimes useful to debug python extensions with the clang/gcc AddressSanitizer feature.
+Doing so with a dask local-cluster requires an extra step.
+
+1. Build your python extension with the appropriate compiler and linker flags to enable address sanitizer.
+   The flags are slightly different on Mac and Linux:
+
+        CFLAGS="${CFLAGS} -fsanitize=address"
+        CXXFLAGS="${CXXFLAGS} -fsanitize=address"
+        LDFLAGS="${LDFLAGS} -fsanitize=address"
+
+        if [[ $(uname) == "Darwin" ]]; then
+            CFLAGS="${CFLAGS} -shared-libasan"
+            CXXFLAGS="${CXXFLAGS} -shared-libasan"
+            LDFLAGS="${LDFLAGS} -shared-libasan"
+        fi
+
+2. Install your special build to your conda environment.
+   You should probably tag the conda recipe with a special build string.
+   On Mac, you will also need to install clangxx_osx-64, even at RUNTIME.
+   (That's the package that provides the asan dylibs.)
+
+4. Launch python with DYLD_INSERT_LIBRARIES or LD_PRELOAD:
+
+        if [[ $(uname) == "Darwin" ]]; then
+            export DYLD_INSERT_LIBRARIES=${PREFIX}/lib/clang/*/lib/darwin/libclang_rt.asan_osx_dynamic.dylib
+        else
+            export LD_PRELOAD=${PREFIX}/lib/libasan.so.5
+        fi
+
+    The man page for DYLD_INSERT_LIBRARIES claims that it doesn't work if System Integrity Protection
+    (SIP) is enabled, but that's not true.  SIP applies only to certain directories.  Conda environments
+    are generally not in those protected directories.
+
+5. When testing a workload that uses multiprocessing (such as a dask local-cluster) on mac,
+   you may need to set that environment variable AGAIN.
+
+   On Mac, that environment variable is cleared after the executable loads the inserted libraries.
+   To make sure the child libraries are ALSO launched using DYLD_INSERT_LIBRARIES,
+   add it to the environment within your main process (the dask Client process):
+
+        CONDA_PREFIX = os.environ["CONDA_PREFIX"]
+        asan_lib = f'{CONDA_PREFIX}/lib/clang/11.0.0/lib/darwin/libclang_rt.asan_osx_dynamic.dylib'
+        assert os.path.exists(asan_lib)
+        os.environ['DYLD_INSERT_LIBRARIES'] = asan_lib
+
+    If you neglect to do that, or something goes wrong, you'll get an error message like this:
+
+        ==66865==ERROR: Interceptors are not working. This may be because AddressSanitizer is loaded too late (e.g. via dlopen). Please launch the executable with:
+        DYLD_INSERT_LIBRARIES=/opt/miniconda/envs/libdvid-asan/lib/clang/11.0.0/lib/darwin/libclang_rt.asan_osx_dynamic.dylib
+        "interceptors not installed" && 0
+        Fatal Python error: Aborted
+
+    ...followed by thread tracebacks.
+
+    Note that it is NOT sufficient to use dask's worker 'preload' configuration
+    to modify os.environ in the child process. By the time that's applied, it's too late.
