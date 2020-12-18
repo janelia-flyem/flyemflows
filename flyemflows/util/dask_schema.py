@@ -11,7 +11,7 @@ LsfJobSchema = \
                            "The 'workers' (processes) in each job will share these cores amongst them.",
             "type": "integer",
             "minimum": 1,
-            "default": 16
+            "default": 1
         },
         "ncpus": {
             "description": "How many CPUs to reserve for each 'job'.\n"
