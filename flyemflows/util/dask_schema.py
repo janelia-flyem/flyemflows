@@ -50,6 +50,14 @@ LsfJobSchema = \
             "type": "integer",
             "default": 0
         },
+        "interface": {
+            "description": "Network interface to use like eth0 or ib0",
+            "oneOf": [
+                {"type": "string"},
+                {"type": "null"}
+            ],
+            "default": None
+        },
         "use-stdin": {
             "description": "Implementation detail regarding how bsub is called by dask-jobqueue.\n"
                            "Under Janelia's LSF configuration, this must be set to 'True'.",
