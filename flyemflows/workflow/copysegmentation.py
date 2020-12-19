@@ -173,17 +173,17 @@ class CopySegmentation(Workflow):
                 "default": ""
             },
             "input-mask-labels": {
+                **BodyListSchema,
                 "description": "If provided, only voxels under the given input labels in the output will be modified.\n"
                                "Others will remain untouched.\n",
-                **BodyListSchema
             },
             "output-mask-labels": {
+                **BodyListSchema,
                 "description": "If provided, only voxels under the given labels in the output will be modified.\n"
                                "Others will remain untouched.\n"
                                "Note: At the time of this writing, the output mask is NOT used to enable sparse-fetching from DVID.\n"
                                "      Only the input mask is used for that, so if you're using an output mask without an input mask,\n"
                                "      you'll still fetch the entire input volume, even if most of it will be written unchanged!\n",
-                **BodyListSchema
             },
             "skip-masking-step": {
                 "description": "When using an input mask, normally the entire output block must be fetched so it can be combined with the input.\n"

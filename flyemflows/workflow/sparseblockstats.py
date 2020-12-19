@@ -40,8 +40,8 @@ class SparseBlockstats(Workflow):
                 "default": "block-statistics.h5"
             },
             "mask-labels": {
-                "description": "Only blocks which contain the given labels from the mask-input will be processed.\n",
-                **BodyListSchema
+                **BodyListSchema,
+                "description": "Only blocks which contain the given labels from the mask-input will be processed.\n"
             }
         }
     }

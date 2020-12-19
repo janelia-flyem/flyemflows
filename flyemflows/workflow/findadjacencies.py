@@ -120,9 +120,9 @@ class FindAdjacencies(Workflow):
             },
             "subset-label-groups": LabelGroupSchema,
             "subset-labels": {
+                **BodyListSchema,
                 "description": "If provided, this list will be used to limit the set adjacencies returned.\n"
                                "See 'subset-labels-requirement'\n",
-                **BodyListSchema
             },
             "subset-labels-requirement": {
                 "description": "When using subset-labels, use this setting to specify whether\n"

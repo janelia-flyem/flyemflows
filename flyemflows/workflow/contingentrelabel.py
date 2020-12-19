@@ -44,9 +44,9 @@ class ContingentRelabel(Workflow):
                 "default": ""
             },
             "subset-labels": {
+                **BodyListSchema,
                 "description": "If provided, only the listed labels will be analyzed.\n"
                                "Other labels will be left untouched in the results.\n",
-                **BodyListSchema,
             },
             "skip-sparse-fetch": {
                 "description": "If True, do not attempt to fetch the sparsevol-coarse for the given subset-labels.\n"

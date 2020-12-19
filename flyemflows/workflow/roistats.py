@@ -64,7 +64,7 @@ class RoiStats(Workflow):
                 "description": "Specify a list of labels to analyze.\n"
                                "If the input is a DVID source, the downloaded segmentation\n"
                                "will be limited to the bricks that contain these labels.\n"
-                               "Otherwise, it will be limited to bricks that intersect the listed ROIs.\n"
+                               "Otherwise, it will be limited to bricks that intersect the listed ROIs.\n",
             },
             "batch-size": {
                 "description": "Bricks of segmentation will be processed in batches. This specifies the batch size.",
