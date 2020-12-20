@@ -248,23 +248,6 @@ DistributedSchema = \
     "additionalProperties": True,
     "default": {},
     "properties": {
-        "scheduler": {
-            "type": "object",
-            "default": {},
-            "properties": {
-                "preload": {
-                    "description": "See https://docs.dask.org/en/latest/setup/custom-startup.html",
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "default": ["distributed.config"]  # Make sure logging config is loaded.
-                },
-                "preload-argv": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "default": []
-                }
-            }
-        },
         "worker": {
             "type": "object",
             "default": {},
@@ -273,7 +256,40 @@ DistributedSchema = \
                     "description": "See https://docs.dask.org/en/latest/setup/custom-startup.html",
                     "type": "array",
                     "items": {"type": "string"},
-                    "default": ["distributed.config"]  # Make sure logging config is loaded.
+                    "default": [
+                        "distributed.config"  # Make sure logging config is loaded.
+                    ]
+                },
+                "preload-argv": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "default": []
+                },
+                "memory": {
+                    "description": "Memory management settings. These can cause trouble and create \n"
+                                   "failures that are difficult to diagnose, so we disable them by default.\n",
+                    "type": "object",
+                    "default": {},
+                    "properties": {
+                        "target":    {"type": "number", "default": 0.0},  # noqa
+                        "spill":     {"type": "number", "default": 0.0},  # noqa
+                        "pause":     {"type": "number", "default": 0.0},  # noqa
+                        "terminate": {"type": "number", "default": 0.0},  # noqa
+                    }
+                }
+            }
+        },
+        "scheduler": {
+            "type": "object",
+            "default": {},
+            "properties": {
+                "preload": {
+                    "description": "See https://docs.dask.org/en/latest/setup/custom-startup.html",
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "default": [
+                        "distributed.config"  # Make sure logging config is loaded.
+                    ]
                 },
                 "preload-argv": {
                     "type": "array",
@@ -290,7 +306,9 @@ DistributedSchema = \
                     "description": "See https://docs.dask.org/en/latest/setup/custom-startup.html",
                     "type": "array",
                     "items": {"type": "string"},
-                    "default": ["distributed.config"]  # Make sure logging config is loaded.
+                    "default": [
+                        "distributed.config"  # Make sure logging config is loaded.
+                    ]
                 },
                 "preload-argv": {
                     "type": "array",
