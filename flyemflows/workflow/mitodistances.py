@@ -121,7 +121,6 @@ class MitoDistances(Workflow):
     def execute(self):
         # Late import (neuprint is not a default dependency in flyemflows)
         from neuprint import Client, fetch_synapses, SynapseCriteria as SC, NeuronCriteria as NC
-
         options = self.config["mitodistances"]
         output_dir = self.config["output-directory"]
         body_svc, mito_svc = self.init_services()
@@ -133,7 +132,10 @@ class MitoDistances(Workflow):
             return Client(options['neuprint']['server'], options['neuprint']['dataset'])
         c = create_client()
 
+        # Resource manager context must be initialized before resource manager client
+        # (to overwrite config values as needed)
         neuprint_mgr_config = self.config["neuprint-resource-manager"]
+        neuprint_mgr_server_context = LocalResourceManager(neuprint_mgr_config)
         neuprint_mgr_client = ResourceManagerClient( neuprint_mgr_config["server"], neuprint_mgr_config["port"] )
 
         sc = SC(**options['synapse-criteria'], client=c)
@@ -164,7 +166,7 @@ class MitoDistances(Workflow):
         psize = min(10, len(bodies) // (5*self.num_workers))
         psize = max(1, psize)
 
-        with LocalResourceManager(neuprint_mgr_config):
+        with neuprint_mgr_server_context:
             db.from_sequence(bodies, partition_size=psize).map(process_and_save).compute()
 
     def init_services(self):
