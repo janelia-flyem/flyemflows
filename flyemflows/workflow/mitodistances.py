@@ -155,8 +155,6 @@ class MitoDistances(Workflow):
         os.makedirs(output_dir, exist_ok=True)
 
         def process_and_save(body):
-            import warnings
-            warnings.filterwarnings("error")
             with open(f"body-logs/{body}.log", "w") as f:
                 with stdout_redirected(f):
                     tbars = _fetch_synapses(body)
