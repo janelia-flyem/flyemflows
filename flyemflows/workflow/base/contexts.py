@@ -27,6 +27,7 @@ from os.path import splitext, basename
 import dask
 from distributed import Client, LocalCluster, get_worker
 
+from confiddler import validate
 from neuclease import configure_default_logging
 from neuclease.util import Timer
 import confiddler.json as json
@@ -34,7 +35,7 @@ import confiddler.json as json
 from ...util import get_localhost_ip_address, kill_if_running, extract_ip_from_link, construct_ganglia_link
 from ...util.lsf import construct_rtm_url, get_job_submit_time
 from ...util.dask_util import update_jobqueue_config_with_defaults, dump_dask_config, DebugClient
-from .base_schema import JOBQUEUE_CLUSTERS
+from .base_schema import JOBQUEUE_CLUSTERS, ResourceManagerSchema
 
 logger = logging.getLogger(__name__)
 USER = getpass.getuser()
@@ -91,6 +92,7 @@ class LocalResourceManager:
     """
     
     def __init__(self, resource_manager_config):
+        validate(resource_manager_config, ResourceManagerSchema, inject_defaults=True)
         self.resource_manager_config = resource_manager_config
         self.resource_server_process = None
 

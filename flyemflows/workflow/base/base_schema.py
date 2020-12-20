@@ -71,7 +71,25 @@ ResourceManagerSchema = \
         "config": {
             "type": "object",
             "default": DEFAULT_RESOURCE_MANAGER_CONFIG,
-            "additionalProperties": True
+            "additionalProperties": True,
+            "properties": {
+                "read_reqs": {
+                    "type": "integer",
+                    "default": DEFAULT_RESOURCE_MANAGER_CONFIG["read_reqs"]
+                },
+                "read_data": {
+                    "type": "number",
+                    "default": DEFAULT_RESOURCE_MANAGER_CONFIG["read_data"]
+                },
+                "write_reqs": {
+                    "type": "integer",
+                    "default": DEFAULT_RESOURCE_MANAGER_CONFIG["write_reqs"]
+                },
+                "write_data": {
+                    "type": "number",
+                    "default": DEFAULT_RESOURCE_MANAGER_CONFIG["write_data"]
+                }
+            }
         }
     }
 }
