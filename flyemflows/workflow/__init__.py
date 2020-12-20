@@ -10,6 +10,7 @@ from .findadjacencies import FindAdjacencies
 from .labelmapcopy import LabelmapCopy
 from .maskedcopy import MaskedCopy
 from .masksegmentation import MaskSegmentation
+from .mitodistances import MitoDistances
 from .mitorepair import MitoRepair
 from .mitostats import MitoStats
 from .roistats import RoiStats
@@ -20,7 +21,7 @@ from .stitchedmeshes import StitchedMeshes
 
 
 BUILTIN_WORKFLOWS = [
-    Workflow, # Base class, used for unit testing only
+    Workflow,  # Base class, used for unit testing only
     ConnectedComponents,
     ContingencyTable,
     ContingentRelabel,
@@ -31,6 +32,7 @@ BUILTIN_WORKFLOWS = [
     LabelmapCopy,
     MaskedCopy,
     MaskSegmentation,
+    MitoDistances,
     MitoRepair,
     MitoStats,
     RoiStats,
