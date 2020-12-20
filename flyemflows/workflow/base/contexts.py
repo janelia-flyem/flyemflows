@@ -96,30 +96,16 @@ class LocalResourceManager:
         self.resource_manager_config = resource_manager_config
         self.resource_server_process = None
 
-    def __enter__(self):
-        """
-        Initialize the resource server config members and, if necessary,
-        start the resource server process on the driver node.
-        
-        If the resource server is started locally, the "resource-server"
-        setting is OVERWRITTEN in the config data with the driver IP.
-        
-        Returns:
-            The resource server Popen object (if started), or None
-        """
         cfg = self.resource_manager_config
-        
         server = cfg["server"]
         port = cfg["port"]
 
-        if server == "":
-            return None
-        
-        if port == 0:
-            msg = f"You specified a resource server ({server}), but no port"
-            raise RuntimeError(msg)
-        
-        if server != "driver":
+        self.launch_on_driver = (server == "driver")
+
+        if self.launch_on_driver:
+            # Overwrite workflow config data so workers see our IP address.
+            cfg["server"] = driver_ip_addr
+        else:
             # confiddler adds an attribute 'from_default' to indicate that the section
             # was missing from the user's config and provided from default values.
             if not hasattr(cfg["config"], 'from_default'):
@@ -127,6 +113,31 @@ class LocalResourceManager:
                        "Remove the resource-manager 'config' section from your config file.\n"
                        "(If the resource manager server is already running on a different machine, configure it there.)\n")
                 raise RuntimeError(msg)
+
+        if server and port == 0:
+            msg = f"You specified a resource server ({server}), but no port"
+            raise RuntimeError(msg)
+
+    def __enter__(self):
+        """
+        Initialize the resource server config members and, if necessary,
+        start the resource server process on the driver node.
+
+        If the resource server is started locally, the "resource-server"
+        setting is OVERWRITTEN in the config data with the driver IP.
+
+        Returns:
+            The resource server Popen object (if started), or None
+        """
+        cfg = self.resource_manager_config
+
+        server = cfg["server"]
+        port = cfg["port"]
+
+        if server == "":
+            return None
+
+        if not self.launch_on_driver:
             return None
 
         if cfg["config"]:
@@ -138,12 +149,9 @@ class LocalResourceManager:
             config_arg = f'--config-file={server_config_path}'
         else:
             config_arg = ''
-        
-        # Overwrite workflow config data so workers see our IP address.
-        cfg["server"] = server = driver_ip_addr
 
         logger.info(f"Starting resource manager on the driver ({driver_ip_addr}:{port}, a.k.a {socket.gethostname()}:{port})")
-        
+
         python = sys.executable
         cmd = f"{python} {sys.prefix}/bin/dvid_resource_manager {port} {config_arg}"
         self.resource_server_process = subprocess.Popen(cmd, stderr=subprocess.STDOUT, shell=True)
