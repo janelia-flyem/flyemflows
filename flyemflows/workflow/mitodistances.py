@@ -150,7 +150,6 @@ class MitoDistances(Workflow):
         skip_flags = [os.path.exists(f'{output_dir}/{body}.csv') for body in bodies]
         bodies_df = pd.DataFrame({'body': bodies, 'should_skip': skip_flags})
         bodies = bodies_df.query('not should_skip')['body'].values
-        logger.info(f"Processing {len(bodies)}, skipping {bodies_df['should_skip'].sum()}")
 
         dilation = options["dilation-radius"]
         os.makedirs('body-logs')
@@ -167,6 +166,7 @@ class MitoDistances(Workflow):
         psize = max(1, psize)
 
         with neuprint_mgr_server_context:
+            logger.info(f"Processing {len(bodies)}, skipping {bodies_df['should_skip'].sum()}")
             db.from_sequence(bodies, partition_size=psize).map(process_and_save).compute()
 
     def init_services(self):
