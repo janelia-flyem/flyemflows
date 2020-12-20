@@ -9,7 +9,6 @@ from collections import defaultdict
 import dask
 from distributed import Client, LocalCluster
 
-from neuclease import configure_default_logging
 from neuclease.util import Timer
 
 from . import extract_ip_from_link, construct_ganglia_link
@@ -195,32 +194,6 @@ class ClusterContext:
             if self.wait_for_workers and self.cluster_type == "lsf":
                 self._write_worker_graph_urls('graph-links.txt')
 
-            if self.wait_for_workers:
-                self._initialize_worker_logging()
-            else:
-                logger.warning("Not configuring worker logging!")
-
-    def _initialize_worker_logging(self):
-        """
-        Configure the logging module on the worker nodes.
-
-        FIXME:
-            Ideally, this should be done via the distributed config,
-            using the "new style" logging configuration option.
-            (See distributed/config.py)
-            But I seem to recall some deficiency with that approach last
-            time I tried it, and I'm too lazy to try again right now.
-        """
-        def _configure_worker_logging():
-            configure_default_logging()
-
-            # Levels copied from defaults in distributed/config.py
-            logging.getLogger('distributed.client').setLevel(logging.WARNING)
-            logging.getLogger('bokeh').setLevel(logging.ERROR)
-            logging.getLogger('tornado').setLevel(logging.CRITICAL)
-            logging.getLogger('tornado.application').setLevel(logging.ERROR)
-
-        run_on_each_worker(_configure_worker_logging, self.client, True, False)
 
     def _write_driver_graph_urls(self):
         """

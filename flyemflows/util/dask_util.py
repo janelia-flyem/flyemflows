@@ -12,6 +12,8 @@ import dask.bag
 import dask.config
 import dask.dataframe
 from dask.bag import Bag
+
+import distributed.config
 from distributed.utils import parse_bytes
 from distributed.client import futures_of
 
@@ -121,6 +123,8 @@ def load_and_overwrite_dask_config(cluster_type, dask_config_path=None, overwrit
     """
     Load dask config, inject defaults for (selected) missing entries,
     and optionally overwrite in-place.
+
+    Note: Also re-initializes the distributed logging configuration.
     """
     if dask_config_path is None and 'DASK_CONFIG' in os.environ:
         dask_config_path = os.environ["DASK_CONFIG"]
@@ -157,6 +161,10 @@ def load_and_overwrite_dask_config(cluster_type, dask_config_path=None, overwrit
     os.environ["DASK_CONFIG"] = dask_config_path
     dask.config.paths.append(dask_config_path)
     dask.config.refresh()
+
+    # Must be imported this way due to aliased name 'config' in distributed.__init__
+    from distributed.config import initialize_logging
+    initialize_logging(dask.config.config)
 
 
 def run_on_each_worker(func, client=None, once_per_machine=False, return_hostnames=True):

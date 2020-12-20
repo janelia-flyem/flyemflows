@@ -38,7 +38,7 @@ LsfJobSchema = \
                            "increase this setting accordingly.\n"
                            "Specified as a string with a suffix for units, e.g. 4GB\n",
             "type": "string",
-            "default": "15GB" # On the Janelia cluster, each slot gets 15 GB by default. 
+            "default": "15GB"  # On the Janelia cluster, each slot gets 15 GB by default.
         },
         "mem": {
             "description": "How much memory to reserve from LSF for each 'job'.\n"
@@ -129,7 +129,7 @@ SgeJobSchema = \
                            "increase this setting accordingly.\n"
                            "Specified as a string with a suffix for units, e.g. 4GB\n",
             "type": "string",
-            "default": "15GB" # On the Janelia cluster, each slot gets 15 GB by default. 
+            "default": "15GB"  # On the Janelia cluster, each slot gets 15 GB by default.
         },
         "processes": {
             "description": "How many processes ('workers') per 'job'.\n"
@@ -188,7 +188,7 @@ SlurmJobSchema = \
                            "increase this setting accordingly.\n"
                            "Specified as a string with a suffix for units, e.g. 4GB\n",
             "type": "string",
-            "default": "15GB" # On the Janelia cluster, each slot gets 15 GB by default. 
+            "default": "15GB"  # On the Janelia cluster, each slot gets 15 GB by default.
         },
         "processes": {
             "description": "How many processes ('workers') per 'job'.\n"
@@ -248,15 +248,163 @@ DistributedSchema = \
     "additionalProperties": True,
     "default": {},
     "properties": {
+        "scheduler": {
+            "type": "object",
+            "default": {},
+            "properties": {
+                "preload": {
+                    "description": "See https://docs.dask.org/en/latest/setup/custom-startup.html",
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "default": ["distributed.config"]  # Make sure logging config is loaded.
+                },
+                "preload-argv": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "default": []
+                }
+            }
+        },
+        "worker": {
+            "type": "object",
+            "default": {},
+            "properties": {
+                "preload": {
+                    "description": "See https://docs.dask.org/en/latest/setup/custom-startup.html",
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "default": ["distributed.config"]  # Make sure logging config is loaded.
+                },
+                "preload-argv": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "default": []
+                }
+            }
+        },
+        "nanny": {
+            "type": "object",
+            "default": {},
+            "properties": {
+                "preload": {
+                    "description": "See https://docs.dask.org/en/latest/setup/custom-startup.html",
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "default": ["distributed.config"]  # Make sure logging config is loaded.
+                },
+                "preload-argv": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "default": []
+                }
+            }
+        },
         "admin": {
             "description": "dask.distributed 'admin' config section.",
-            "type": "object",
             "additionalProperties": True,
             "default": {},
             "properties": {
                 'log-format': {
+                    "description": "In the distributed.config code, this is referred to as part of the 'old-style'\n"
+                                   "logging configuration, but it seems to be used unconditionally within\n"
+                                   "the Worker (node.py), so I'm confused.",
                     'type': 'string',
                     'default': '[%(asctime)s] %(levelname)s %(message)s'
+                }
+            }
+        },
+        "logging": {
+            "description": "dask.distributed 'new-style' logging config just uses the standard Python configuration dictionary schema.\n"
+                           "See distributed.config.initialize_logging(), and the Python docs:\n"
+                           "https://docs.python.org/3/library/logging.config.html#configuration-dictionary-schema\n",
+            "type": "object",
+
+            # For readability, here's the default configuration we use all in one place.
+            # Each of these properties' schemas are also listed below, to enable default
+            # value injection in case the user supplies one or more custom entries.
+            "default": {
+                "version": 1,
+                "disable_existing_loggers": False,
+                "formatters": {
+                    "timestamped": {
+                        "format": "[%(asctime)s] %(levelname)s %(message)s"
+                    }
+                },
+                "handlers": {
+                    "console": {
+                        "level": "DEBUG",
+                        "class": "logging.StreamHandler",
+                        "stream": "ext://sys.stdout",
+                        "formatter": "timestamped",
+                    }
+                },
+                "root": {
+                    "handlers": ["console"],
+                    "level": "INFO"
+                },
+                "loggers": {
+                    "distributed.client": {"level": "WARNING"},
+                    "bokeh": {"level": "ERROR"},
+                    "tornado": {"level": "CRITICAL"},
+                    "tornado.application": {"level": "ERROR"},
+                }
+            },
+
+            # List each property's schema independently to ensure their default values are
+            # injected into the config, even if the user has supplied some of their
+            # own logging options.
+            "properties": {
+                "version": {
+                    "type": "integer",
+                    "default": 1
+                },
+                "disable_existing_loggers": {
+                    "description": "For reasons that are baffling to me, Python's logging.config.dictConfig()\n"
+                                   "sets logger.disabled = True for all existing loggers unless you explicitly tell it not to.\n",
+                    "type": "boolean",
+                    "default": False
+                },
+                "formatters": {
+                    "type": "object",
+                    "default": {},
+                    "properties": {
+                        "timestamped": {
+                            "default": {
+                                "format": "[%(asctime)s] %(levelname)s %(message)s"
+                            }
+                        }
+                    }
+                }
+            },
+            "handlers": {
+                "type": "object",
+                "default": {},
+                "properties": {
+                    "console": {
+                        "type": "object",
+                        "default": {
+                            "level": "DEBUG",
+                            "class": "logging.StreamHandler",
+                            "stream": "ext://sys.stdout",
+                            "formatter": "timestamped",
+                        }
+                    }
+                }
+            },
+            "root": {
+                "type": "object",
+                "default": {
+                    "handlers": ['console'],
+                    "level": "INFO"
+                }
+            },
+            "loggers": {
+                "type": "object",
+                "default": {
+                    "distributed.client": {"level": "WARNING"},
+                    "bokeh": {"level": "ERROR"},
+                    "tornado": {"level": "CRITICAL"},
+                    "tornado.application": {"level": "ERROR"},
                 }
             }
         }
@@ -271,8 +419,7 @@ DaskConfigSchema = \
     "additionalProperties": True,
     "default": {},
     "properties": {
-        "distributed": DistributedSchema,
-        "jobqueue": JobQueueSchema
+        "jobqueue": JobQueueSchema,
+        "distributed": DistributedSchema
     }
 }
-

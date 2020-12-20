@@ -24,18 +24,13 @@ import subprocess
 from contextlib import contextmanager
 from os.path import splitext, basename
 
-import dask
-from distributed import Client, LocalCluster, get_worker
+from distributed import get_worker
 
 from confiddler import validate
-from neuclease import configure_default_logging
-from neuclease.util import Timer
 import confiddler.json as json
 
-from ...util import get_localhost_ip_address, kill_if_running, extract_ip_from_link, construct_ganglia_link
-from ...util.lsf import construct_rtm_url, get_job_submit_time
-from ...util.dask_util import update_jobqueue_config_with_defaults, dump_dask_config, DebugClient
-from .base_schema import JOBQUEUE_CLUSTERS, ResourceManagerSchema
+from ...util import get_localhost_ip_address, kill_if_running
+from .base_schema import ResourceManagerSchema
 
 logger = logging.getLogger(__name__)
 USER = getpass.getuser()
@@ -43,16 +38,17 @@ USER = getpass.getuser()
 # driver_ip_addr = '127.0.0.1'
 driver_ip_addr = get_localhost_ip_address()
 
+
 @contextmanager
 def environment_context(update_dict, workflow=None):
     """
     Context manager.
     Update the environment variables specified in the given dict
     when the context is entered, and restore the old environment when the context exits.
-    
+
     If workflow is given, the environment all of the workflow's cluster's workers
     will be updated, too, but their environment won't be cleaned up.
-    
+
     Note:
         You can modify these or other environment variables while the context is active,
         those modifications will be lost when this context manager exits.
@@ -70,27 +66,27 @@ def environment_context(update_dict, workflow=None):
         os.environ.clear()
         os.environ.update(old_env)
 
-        
+
 class LocalResourceManager:
     """
     Context manager.
-    
+
     Based on a workflow's 'resource-manager' config section,
     launch a dvid_resource_manager process on the local machine,
     and shut it down upon exit.
-    
+
     If the 'server' section is not 'driver', then this context manager does nothing.
-    
+
     Note:
         If a resource manager is started, the 'server' configuration
         setting will be overwritten with the local IP address.
-    
+
     Usage:
-    
+
         with LocalResourceManager(workflow.config['resource-manager']):
             # ...workflow executes here...
     """
-    
+
     def __init__(self, resource_manager_config):
         validate(resource_manager_config, ResourceManagerSchema, inject_defaults=True)
         self.resource_manager_config = resource_manager_config
@@ -157,7 +153,6 @@ class LocalResourceManager:
         self.resource_server_process = subprocess.Popen(cmd, stderr=subprocess.STDOUT, shell=True)
         return self.resource_server_process
 
-
     def __exit__(self, *args):
         if self.resource_server_process is None:
             return
@@ -168,7 +163,7 @@ class LocalResourceManager:
             self.resource_server_process.wait(10.0)
         except subprocess.TimeoutExpired:
             kill_if_running(self.resource_server_process.pid, 10.0)
-        
+
         sys.stderr.flush()
 
 
@@ -177,14 +172,13 @@ class WorkerDaemons:
     Context manager.
     Runs an 'initialization script' or background process on every worker
     (like a daemon, but we'll clean it up when the workflow exits).
-    
+
     See the documentation in the 'worker-initialization' schema for details.
     """
     def __init__(self, workflow_instance):
         self.workflow = workflow_instance
         self.worker_init_pids = {}
         self.driver_init_pid = None
-    
 
     def __enter__(self):
         """
@@ -203,7 +197,7 @@ class WorkerDaemons:
         os.makedirs(init_options["log-dir"], exist_ok=True)
 
         launch_delay = init_options["launch-delay"]
-        
+
         def launch_init_script():
             script_name = splitext(basename(init_options["script-path"]))[0]
             log_dir = init_options["log-dir"]
@@ -231,7 +225,7 @@ class WorkerDaemons:
                 return None
 
             return p.pid
-        
+
         worker_init_pids = self.workflow.run_on_each_worker( launch_init_script,
                                                              init_options["only-once-per-machine"],
                                                              return_hostnames=False)
@@ -241,7 +235,7 @@ class WorkerDaemons:
             if self.workflow.config["cluster-type"] not in ("lsf", "sge"):
                 warnings.warn("Warning: You are using a local-cluster, yet your worker initialization specified 'also-run-on-driver'.")
             driver_init_pid = launch_init_script()
-        
+
         if launch_delay > 0:
             logger.info(f"Pausing after launching worker initialization scripts ({launch_delay} seconds).")
             time.sleep(launch_delay)
@@ -249,23 +243,23 @@ class WorkerDaemons:
         self.worker_init_pids = worker_init_pids
         self.driver_init_pid = driver_init_pid
 
-
     def __exit__(self, *args):
         """
         Kill any initialization processes (as launched from _run_worker_initializations)
         that might still running on the workers and/or the driver.
-        
+
         If they don't respond to SIGTERM, they'll be force-killed with SIGKILL after 10 seconds.
         """
         launch_delay = self.workflow.config["worker-initialization"]["launch-delay"]
         once_per_machine = self.workflow.config["worker-initialization"]["only-once-per-machine"]
-        
+
         if launch_delay == -1:
             # Nothing to do:
             # We already waited for the the init scripts to complete.
             return
-        
+
         worker_init_pids = self.worker_init_pids
+
         def kill_init_proc():
             try:
                 worker_addr = get_worker().address
@@ -273,15 +267,14 @@ class WorkerDaemons:
                 # Special case for synchronous cluster.
                 # See run_on_each_worker
                 worker_addr = 'tcp://127.0.0.1'
-            
+
             try:
                 pid_to_kill = worker_init_pids[worker_addr]
             except KeyError:
                 return None
             else:
                 return kill_if_running(pid_to_kill, 10.0)
-                
-        
+
         if any(self.worker_init_pids.values()):
             worker_statuses = self.workflow.run_on_each_worker(kill_init_proc, once_per_machine, True)
             for k,_v in filter(lambda k_v: k_v[1] is None, worker_statuses.items()):
@@ -290,7 +283,6 @@ class WorkerDaemons:
                 logger.info(f"Worker {k}: initialization script had to be forcefully killed.")
         else:
             logger.info("No worker init processes to kill")
-            
 
         if self.driver_init_pid:
             kill_if_running(self.driver_init_pid, 10.0)
@@ -298,5 +290,3 @@ class WorkerDaemons:
             logger.info("No driver init process to kill")
 
         sys.stderr.flush()
-
-
