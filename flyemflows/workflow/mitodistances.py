@@ -1,5 +1,6 @@
 import os
 import copy
+import pickle
 import logging
 
 import pandas as pd
@@ -107,7 +108,7 @@ class MitoDistances(Workflow):
         "mito-seg": SegmentationVolumeSchema,
 
         "output-directory": {
-            "description": "Where to write the output CSV files.\n"
+            "description": "Where to write the output files. Each output is written twice: In CSV format and pickle format.\n"
                            "The computation will skip any bodies which seem to already have results in this directory!\n",
             "type": "string",
             "default": "point-distances"
@@ -166,6 +167,8 @@ class MitoDistances(Workflow):
                     tbars = _fetch_synapses(body)
                     processed_tbars = measure_tbar_mito_distances(body_svc, mito_svc, body, tbars=tbars, valid_mitos=valid_mitos, dilation_radius_s0=dilation)
                     processed_tbars.to_csv(f'{output_dir}/{body}.csv', header=True, index=False)
+                    with open(f'{output_dir}/{body}.pkl', 'wb') as f:
+                        pickle.dump(processed_tbars, f)
 
         psize = min(10, len(bodies) // (5*self.num_workers))
         psize = max(1, psize)
