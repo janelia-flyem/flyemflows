@@ -5,8 +5,9 @@ import logging
 import pandas as pd
 import dask.bag as db
 
-
 from dvid_resource_manager.client import ResourceManagerClient
+
+from neuclease.dvid import fetch_annotation_label, fetch_supervoxels
 from neuclease.misc.measure_tbar_mito_distances import measure_tbar_mito_distances
 
 from ..volumes import VolumeService, SegmentationVolumeSchema, DvidVolumeService
@@ -35,7 +36,7 @@ class MitoDistances(Workflow):
         "default": {},
         "additionalProperties": False,
         "properties": {
-            # TODO: Option for arbitrary points, provided via CSV, rather than using neuprint.
+            # TODO: Option for arbitrary points, provided via CSV, rather than using dvid to fetch all synapses
             # TODO: Allow non-default SearchConfig lists
             "bodies": {
                 **BodyListSchema,
@@ -43,33 +44,34 @@ class MitoDistances(Workflow):
                                "Note: The computation will skip any bodies which seem\n"
                                "      to already have results in the output directory!\n"
             },
-            "neuprint": {
+            "mito-labelmap": {
+                "description": "Specify a mito labelmap instance which can be used to fetch the mito IDs for each body.",
+                "type": "object",
+                "required": ["server", "uuid", "instance"],
+                "additionalProperties": False,
+                "default": {},
+                "properties": {
+                    "server": { "type": "string", "default": ""},
+                    "uuid": { "type": "string", "default": ""},
+                    "instance": { "type": "string", "default": ""}
+                }
+            },
+            "synapse-criteria": {
                 "type": "object",
                 "additionalProperties": False,
                 "default": {},
                 "properties": {
                     "server": {
                         "type": "string",
-                        # no default
+                        "default": ""
                     },
-                    "dataset": {
+                    "uuid": {
                         "type": "string",
-                        # no default
-                    }
-                },
-            },
-            "synapse-criteria": {
-                "description": "Keyword arguments to use when fetching the list of synapse points from neuprint.\n"
-                               "See neuprint.SynapseCriteria for argument options. Provide then here as json fields.\n"
-                               "Note that the default values chosen here are not necessarily the same defaults that neuprint uses.\n",
-                "type": "object",
-                "additionalProperties": False,
-                "default": {},
-                "properties": {
-                    "rois": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "default": []
+                        "default": ""
+                    },
+                    "instance": {
+                        "type": "string",
+                        "default": ""
                     },
                     "type": {
                         "oneOf": [
@@ -81,10 +83,6 @@ class MitoDistances(Workflow):
                     "confidence": {
                         "type": "number",
                         "default": 0.0
-                    },
-                    "primary_only": {
-                        "type": "boolean",
-                        "default": True,
                     }
                 }
             },
@@ -99,12 +97,15 @@ class MitoDistances(Workflow):
 
     Schema = copy.deepcopy(Workflow.schema())
     Schema["properties"].update({
-        "neuprint-resource-manager": {
+        "dvid-access-manager": {
             **ResourceManagerSchema,
-            "description": "Resource manager settings to use for throttling neuprint access.\n"
+            "description": "Resource manager settings to use for throttling "
+                           "access to the dvid server(s) used for fetching "
+                           "synapses and mito supervoxel IDs.\n"
         },
         "body-seg": SegmentationVolumeSchema,
         "mito-seg": SegmentationVolumeSchema,
+
         "output-directory": {
             "description": "Where to write the output CSV files.\n"
                            "The computation will skip any bodies which seem to already have results in this directory!\n",
@@ -119,32 +120,31 @@ class MitoDistances(Workflow):
         return MitoDistances.Schema
 
     def execute(self):
-        # Late import (neuprint is not a default dependency in flyemflows)
-        from neuprint import Client, fetch_synapses, SynapseCriteria as SC, NeuronCriteria as NC
         options = self.config["mitodistances"]
         output_dir = self.config["output-directory"]
         body_svc, mito_svc = self.init_services()
 
-        logger.info(f"Using {options['neuprint']['server']} / {options['neuprint']['dataset']}")
-
-        @auto_retry(3)
-        def create_client():
-            return Client(options['neuprint']['server'], options['neuprint']['dataset'])
-        c = create_client()
-
         # Resource manager context must be initialized before resource manager client
         # (to overwrite config values as needed)
-        neuprint_mgr_config = self.config["neuprint-resource-manager"]
-        neuprint_mgr_server_context = LocalResourceManager(neuprint_mgr_config)
-        neuprint_mgr_client = ResourceManagerClient( neuprint_mgr_config["server"], neuprint_mgr_config["port"] )
+        dvid_mgr_config = self.config["dvid-access-manager"]
+        dvid_mgr_context = LocalResourceManager(dvid_mgr_config)
+        dvid_mgr_client = ResourceManagerClient( dvid_mgr_config["server"], dvid_mgr_config["port"] )
 
-        sc = SC(**options['synapse-criteria'], client=c)
+        syn_server, syn_uuid, syn_instance = (options['synapse-criteria'][k] for k in ('server', 'uuid', 'instance'))
+        syn_conf = float(options['synapse-criteria']['confidence'])
+        syn_types = ['PreSyn', 'PostSyn']
+        if options['synapse-criteria']['type'] == 'pre':
+            syn_types = ['PreSyn']
+        elif options['synapse-criteria']['type'] == 'post':
+            syn_types = ['PostSyn']
 
         @auto_retry(3)
         def _fetch_synapses(body):
-            nc = NC(bodyId=body, label='Segment', client=c)
-            with neuprint_mgr_client.access_context(options['neuprint']['server'], True, 1, 1):
-                return fetch_synapses(nc, sc, client=c)
+            with dvid_mgr_client.access_context(syn_server, True, 1, 1):
+                syn_df = fetch_annotation_label(syn_server, syn_uuid, syn_instance, body, format='pandas')
+                syn_types, syn_conf
+                syn_df = syn_df.query('kind in @syn_types and conf >= @syn_conf').copy()
+                return syn_df
 
         bodies = load_body_list(options["bodies"], False)
         skip_flags = [os.path.exists(f'{output_dir}/{body}.csv') for body in bodies]
@@ -155,17 +155,22 @@ class MitoDistances(Workflow):
         os.makedirs('body-logs')
         os.makedirs(output_dir, exist_ok=True)
 
+        mito_server, mito_uuid, mito_instance = (options['mito-labelmap'][k] for k in ('server', 'uuid', 'instance'))
+
         def process_and_save(body):
+            with dvid_mgr_client.access_context(mito_server, True, 1, 1):
+                valid_mitos = fetch_supervoxels(mito_server, mito_uuid, mito_instance, body)
+
             with open(f"body-logs/{body}.log", "w") as f:
                 with stdout_redirected(f):
                     tbars = _fetch_synapses(body)
-                    processed_tbars = measure_tbar_mito_distances(body_svc, mito_svc, body, tbars=tbars, dilation_radius_s0=dilation)
+                    processed_tbars = measure_tbar_mito_distances(body_svc, mito_svc, body, tbars=tbars, valid_mitos=valid_mitos, dilation_radius_s0=dilation)
                     processed_tbars.to_csv(f'{output_dir}/{body}.csv', header=True, index=False)
 
         psize = min(10, len(bodies) // (5*self.num_workers))
         psize = max(1, psize)
 
-        with neuprint_mgr_server_context:
+        with dvid_mgr_context:
             logger.info(f"Processing {len(bodies)}, skipping {bodies_df['should_skip'].sum()}")
             db.from_sequence(bodies, partition_size=psize).map(process_and_save).compute()
 
@@ -185,7 +190,7 @@ class MitoDistances(Workflow):
 
         if isinstance(body_svc.base_service, DvidVolumeService):
             assert not body_svc.base_service.supervoxels, \
-                "body segmentation source must NOT be a supervoxel souce. (Neuprint isn't aware of supervoxels...)"
+                "body segmentation source shouldn't be a supervoxel source."
 
         if isinstance(mito_svc.base_service, DvidVolumeService):
             assert body_svc.base_service.supervoxels, \
