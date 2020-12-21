@@ -5,6 +5,7 @@ import logging
 
 import pandas as pd
 import dask.bag as db
+from requests.exceptions import HTTPError
 
 from dvid_resource_manager.client import ResourceManagerClient
 
@@ -143,6 +144,8 @@ class MitoDistances(Workflow):
         def _fetch_synapses(body):
             with dvid_mgr_client.access_context(syn_server, True, 1, 1):
                 syn_df = fetch_annotation_label(syn_server, syn_uuid, syn_instance, body, format='pandas')
+                if len(syn_df) == 0:
+                    return syn_df
                 syn_types, syn_conf
                 syn_df = syn_df.query('kind in @syn_types and conf >= @syn_conf').copy()
                 return syn_df
@@ -160,22 +163,33 @@ class MitoDistances(Workflow):
 
         def process_and_save(body):
             with dvid_mgr_client.access_context(mito_server, True, 1, 1):
-                valid_mitos = fetch_supervoxels(mito_server, mito_uuid, mito_instance, body)
+                try:
+                    valid_mitos = fetch_supervoxels(mito_server, mito_uuid, mito_instance, body)
+                except HTTPError:
+                    return (body, 0, 'error-mito-supervoxels')
 
             with open(f"body-logs/{body}.log", "w") as f:
                 with stdout_redirected(f):
                     tbars = _fetch_synapses(body)
+                    if len(tbars) == 0:
+                        return (body, 0, 'no-synapses')
                     processed_tbars = measure_tbar_mito_distances(body_svc, mito_svc, body, tbars=tbars, valid_mitos=valid_mitos, dilation_radius_s0=dilation)
                     processed_tbars.to_csv(f'{output_dir}/{body}.csv', header=True, index=False)
                     with open(f'{output_dir}/{body}.pkl', 'wb') as f:
                         pickle.dump(processed_tbars, f)
+            return (body, len(tbars), 'success')
 
         psize = min(10, len(bodies) // (5*self.num_workers))
         psize = max(1, psize)
 
         with dvid_mgr_context:
             logger.info(f"Processing {len(bodies)}, skipping {bodies_df['should_skip'].sum()}")
-            db.from_sequence(bodies, partition_size=psize).map(process_and_save).compute()
+            results = db.from_sequence(bodies, partition_size=psize).map(process_and_save).compute()
+
+        results = pd.DataFrame(results, columns=['body', 'synapses', 'status'])
+        results.to_csv('results-summary.csv', header=True, index=False)
+        num_errors = len(results.query('status == "error"'))
+        logger.info(f"Done. Encountered {num_errors} errors")
 
     def init_services(self):
         """
