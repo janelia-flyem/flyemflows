@@ -153,7 +153,8 @@ class MitoDistances(Workflow):
         bodies = load_body_list(options["bodies"], False)
         skip_flags = [os.path.exists(f'{output_dir}/{body}.csv') for body in bodies]
         bodies_df = pd.DataFrame({'body': bodies, 'should_skip': skip_flags})
-        bodies = bodies_df.query('not should_skip')['body'].values
+        bodies = bodies_df.query('not should_skip')['body']
+        bodies = bodies.sample(frac=1.0).values  # Shuffle better load balance
 
         dilation = options["dilation-radius"]
         os.makedirs('body-logs')
@@ -166,12 +167,14 @@ class MitoDistances(Workflow):
                 try:
                     valid_mitos = fetch_supervoxels(mito_server, mito_uuid, mito_instance, body)
                 except HTTPError:
+                    logging.getLogger(__name__).error(f"Body {body}: Failed to fetch mito supervoxels")
                     return (body, 0, 'error-mito-supervoxels')
 
             with open(f"body-logs/{body}.log", "w") as f:
                 with stdout_redirected(f):
                     tbars = _fetch_synapses(body)
                     if len(tbars) == 0:
+                        logging.getLogger(__name__).warning(f"Body {body}: No synapses found")
                         return (body, 0, 'no-synapses')
                     processed_tbars = measure_tbar_mito_distances(body_svc, mito_svc, body, tbars=tbars, valid_mitos=valid_mitos, dilation_radius_s0=dilation)
                     processed_tbars.to_csv(f'{output_dir}/{body}.csv', header=True, index=False)
@@ -179,12 +182,9 @@ class MitoDistances(Workflow):
                         pickle.dump(processed_tbars, f)
             return (body, len(tbars), 'success')
 
-        psize = min(10, len(bodies) // (5*self.num_workers))
-        psize = max(1, psize)
-
         with dvid_mgr_context:
             logger.info(f"Processing {len(bodies)}, skipping {bodies_df['should_skip'].sum()}")
-            results = db.from_sequence(bodies, partition_size=psize).map(process_and_save).compute()
+            results = db.from_sequence(bodies, npartitions=10_000).map(process_and_save).compute()
 
         results = pd.DataFrame(results, columns=['body', 'synapses', 'status'])
         results.to_csv('results-summary.csv', header=True, index=False)
