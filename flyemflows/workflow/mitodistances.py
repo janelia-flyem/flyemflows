@@ -4,16 +4,17 @@ import pickle
 import logging
 
 import pandas as pd
-import dask.bag as db
+import distributed
 from requests.exceptions import HTTPError
 
 from dvid_resource_manager.client import ResourceManagerClient
 
+from neuclease.util import Timer, tqdm_proxy
 from neuclease.dvid import fetch_annotation_label, fetch_supervoxels
-from neuclease.misc.measure_tbar_mito_distances import measure_tbar_mito_distances
+from neuclease.misc.measure_tbar_mito_distances import initialize_results, measure_tbar_mito_distances
 
 from ..volumes import VolumeService, SegmentationVolumeSchema, DvidVolumeService
-from ..util import stdout_redirected, auto_retry
+from ..util import stdout_redirected, as_completed_synchronous
 from .util.config_helpers import BodyListSchema, load_body_list
 from .base.contexts import LocalResourceManager
 from .base.base_schema import ResourceManagerSchema
@@ -140,21 +141,18 @@ class MitoDistances(Workflow):
         elif options['synapse-criteria']['type'] == 'post':
             syn_types = ['PostSyn']
 
-        @auto_retry(3)
-        def _fetch_synapses(body):
-            with dvid_mgr_client.access_context(syn_server, True, 1, 1):
-                syn_df = fetch_annotation_label(syn_server, syn_uuid, syn_instance, body, format='pandas')
-                if len(syn_df) == 0:
-                    return syn_df
-                syn_types, syn_conf
-                syn_df = syn_df.query('kind in @syn_types and conf >= @syn_conf').copy()
-                return syn_df
-
         bodies = load_body_list(options["bodies"], False)
         skip_flags = [os.path.exists(f'{output_dir}/{body}.csv') for body in bodies]
         bodies_df = pd.DataFrame({'body': bodies, 'should_skip': skip_flags})
         bodies = bodies_df.query('not should_skip')['body']
-        bodies = bodies.sample(frac=1.0).values  # Shuffle better load balance
+
+        # Shuffle for better load balance
+        # TODO: Would be better to sort by synapse count, and put large bodies first,
+        #       assigned to partitions in round-robin style.
+        #       Then work stealing will be more effective at knocking out the smaller jobs at the end.
+        #       This requires knowing all the body sizes, though.
+        #       Perhaps mito count would be a decent proxy for synapse count, and it's readily available.
+        bodies = bodies.sample(frac=1.0).values
 
         dilation = options["dilation-radius"]
         os.makedirs('body-logs')
@@ -162,34 +160,76 @@ class MitoDistances(Workflow):
 
         mito_server, mito_uuid, mito_instance = (options['mito-labelmap'][k] for k in ('server', 'uuid', 'instance'))
 
-        def process_and_save(body):
+        def _fetch_synapses(body):
+            with dvid_mgr_client.access_context(syn_server, True, 1, 1):
+                syn_df = fetch_annotation_label(syn_server, syn_uuid, syn_instance, body, format='pandas')
+                if len(syn_df) == 0:
+                    return syn_df
+                syn_types, syn_conf
+                syn_df = syn_df.query('kind in @syn_types and conf >= @syn_conf').copy()
+                return syn_df[[*'zyx', 'kind', 'conf']]
+
+        def _fetch_mito_ids(body):
             with dvid_mgr_client.access_context(mito_server, True, 1, 1):
                 try:
-                    valid_mitos = fetch_supervoxels(mito_server, mito_uuid, mito_instance, body)
+                    return fetch_supervoxels(mito_server, mito_uuid, mito_instance, body)
                 except HTTPError:
-                    logging.getLogger(__name__).error(f"Body {body}: Failed to fetch mito supervoxels")
-                    return (body, 0, 'error-mito-supervoxels')
+                    return []
 
-            with open(f"body-logs/{body}.log", "w") as f:
-                with stdout_redirected(f):
-                    tbars = _fetch_synapses(body)
-                    if len(tbars) == 0:
-                        logging.getLogger(__name__).warning(f"Body {body}: No synapses found")
-                        return (body, 0, 'no-synapses')
-                    processed_tbars = measure_tbar_mito_distances(body_svc, mito_svc, body, tbars=tbars, valid_mitos=valid_mitos, dilation_radius_s0=dilation)
-                    processed_tbars.to_csv(f'{output_dir}/{body}.csv', header=True, index=False)
-                    with open(f'{output_dir}/{body}.pkl', 'wb') as f:
-                        pickle.dump(processed_tbars, f)
-            return (body, len(tbars), 'success')
+        def process_and_save(body):
+            tbars = _fetch_synapses(body)
+            valid_mitos = _fetch_mito_ids(body)
 
+            # TODO:
+            #   Does the stdout_redirected() mechanism work correctly in the context of multiprocessing?
+            #   If not, I should probably just use a custom logging handler instead.
+            with open(f"body-logs/{body}.log", "w") as f, stdout_redirected(f), Timer() as timer:
+                processed_tbars = []
+                if len(tbars) == 0:
+                    logging.getLogger(__name__).warning(f"Body {body}: No synapses found")
+
+                if len(valid_mitos) == 0:
+                    logging.getLogger(__name__).warning(f"Body {body}: Failed to fetch mito supervoxels")
+                    processed_tbars = initialize_results(body, tbars)
+
+                if len(valid_mitos) and len(tbars):
+                    processed_tbars = measure_tbar_mito_distances(
+                        body_svc, mito_svc, body, tbars=tbars, valid_mitos=valid_mitos, dilation_radius_s0=dilation)
+
+            if len(processed_tbars) > 0:
+                processed_tbars.to_csv(f'{output_dir}/{body}.csv', header=True, index=False)
+                with open(f'{output_dir}/{body}.pkl', 'wb') as f:
+                    pickle.dump(processed_tbars, f)
+
+            if len(tbars) == 0:
+                return (body, 0, 'no-synapses', timer.seconds)
+
+            if len(valid_mitos) == 0:
+                return (body, len(processed_tbars), 'no-mitos', timer.seconds)
+
+            return (body, len(tbars), 'success', timer.seconds)
+
+        logger.info(f"Processing {len(bodies)}, skipping {bodies_df['should_skip'].sum()}")
         with dvid_mgr_context:
-            logger.info(f"Processing {len(bodies)}, skipping {bodies_df['should_skip'].sum()}")
-            results = db.from_sequence(bodies, npartitions=10_000).map(process_and_save).compute()
+            batch_size = max(1, len(bodies) // 10_000)
+            futures = self.client.map(process_and_save, bodies, batch_size=batch_size)
 
-        results = pd.DataFrame(results, columns=['body', 'synapses', 'status'])
-        results.to_csv('results-summary.csv', header=True, index=False)
-        num_errors = len(results.query('status == "error"'))
-        logger.info(f"Done. Encountered {num_errors} errors")
+            # Support synchronous testing with a fake 'as_completed' object
+            if hasattr(self.client, 'DEBUG'):
+                ac = as_completed_synchronous(futures, with_results=True)
+            else:
+                ac = distributed.as_completed(futures, with_results=True)
+
+            try:
+                results = []
+                for f, r in tqdm_proxy(ac, total=len(futures)):
+                    results.append(r)
+            finally:
+                results = pd.DataFrame(results, columns=['body', 'synapses', 'status', 'processing_time'])
+                results.to_csv('results-summary.csv', header=True, index=False)
+                num_errors = len(results.query('status == "error"'))
+                if num_errors:
+                    logger.warning(f"Encountered {num_errors} errors. See results-summary.csv")
 
     def init_services(self):
         """

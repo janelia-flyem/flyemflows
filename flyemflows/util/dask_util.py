@@ -339,19 +339,35 @@ class as_completed_synchronous:
     """
     For testing.
     A quick-n-dirty fake implementation of distributed.as_completed
-    for use with the synchronous scheduler
+    for use with the synchronous scheduler.
     """
-    def __init__(self):
-        self.futures = []
-    
+    def __init__(self, futures=None, loop=None, with_results=False, raise_errors=True):
+        self.futures = futures or []
+        self.with_results = with_results
+        self.raise_errors = raise_errors
+
     def add(self, f):
         self.futures.append(f)
-    
+
+    # Note: distributed.as_completed does not support __len__
+
+    def __iter__(self):
+        return self
+
     def __next__(self):
-        if self.futures:
-            return self.futures.pop(0)
-        else:
-            raise StopIteration()
+        if not self.futures:
+            raise StopIteration
+
+        f = self.futures.pop(0)
+        if not self.with_results:
+            return f
+
+        try:
+            return (f, f.result())
+        except:
+            if not self.raise_errors:
+                return (f, None)
+            raise
 
 
 class DebugClient:
@@ -377,6 +393,27 @@ class DebugClient:
     def scatter(self, data, *_):
         return FakeFuture(data)
     
+    def map(self, func, *iterables, key=None, workers=None, retries=None, resources=None,
+            priority=0, allow_other_workers=False, fifo_timeout="100 ms", actor=False,
+            actors=False, pure=None, batch_size=None,
+            **kwargs):
+        """
+        Synchronous implementation of Client.map()
+        https://docs.dask.org/en/latest/futures.html#distributed.Client.map
+
+        In this version, all keyword arguments are ignored except 'key' and 'kwargs'.
+        """
+        futures = []
+        for args in zip(*iterables):
+            try:
+                result = func(*args, **kwargs)
+            except Exception as ex:
+                f = FakeFuture(None, key, ex)
+            else:
+                f = FakeFuture(result, key)
+            futures.append(f)
+        return futures
+
     def compute(self, task):
         try:
             result = task.compute()
