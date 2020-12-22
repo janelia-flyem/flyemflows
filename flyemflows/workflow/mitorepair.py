@@ -44,6 +44,11 @@ class MitoRepair(Workflow):
     some mitochondria will be processed more than once.  In those cases, whichever
     chunk contained more of the mito body voxels than any other chunk is used to
     determine the merge result.
+
+    TODO:
+        - Glia regions have particularly bad neuron & mito segmentation.
+          We should avoid merging small "mostly mito" bodies into real neurons if
+          they are located within the glia.  Use the voxel-classes layer to check.
     """
 
     OptionsSchema = {
