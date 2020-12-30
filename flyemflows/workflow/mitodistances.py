@@ -14,7 +14,7 @@ from neuclease.dvid import fetch_annotation_label, fetch_supervoxels
 from neuclease.misc.measure_tbar_mito_distances import initialize_results, measure_tbar_mito_distances
 
 from ..volumes import VolumeService, SegmentationVolumeSchema, DvidVolumeService
-from ..util import stdout_redirected, as_completed_synchronous
+from ..util import stdout_redirected, as_completed_synchronous, auto_retry
 from .util.config_helpers import BodyListSchema, load_body_list
 from .base.contexts import LocalResourceManager
 from .base.base_schema import ResourceManagerSchema
@@ -153,6 +153,7 @@ class MitoDistances(Workflow):
 
         mito_server, mito_uuid, mito_instance = (options['mito-labelmap'][k] for k in ('server', 'uuid', 'instance'))
 
+        @auto_retry(3)
         def _fetch_synapses(body):
             with dvid_mgr_client.access_context(syn_server, True, 1, 1):
                 syn_df = fetch_annotation_label(syn_server, syn_uuid, syn_instance, body, format='pandas')
@@ -162,6 +163,7 @@ class MitoDistances(Workflow):
                 syn_df = syn_df.query('kind in @syn_types and conf >= @syn_conf').copy()
                 return syn_df[[*'zyx', 'kind', 'conf']]
 
+        @auto_retry(3)
         def _fetch_mito_ids(body):
             with dvid_mgr_client.access_context(mito_server, True, 1, 1):
                 try:
