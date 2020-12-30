@@ -88,13 +88,7 @@ class MitoDistances(Workflow):
                         "default": 0.0
                     }
                 }
-            },
-            "dilation-radius": {
-                "description": "The body mask can be dilated before the shortest path search begins.\n"
-                               "Specify the dilation radius here, in scale-0 voxel units.\n",
-                "type": "number",
-                "default": 0
-            },
+            }
         }
     }
 
@@ -154,7 +148,6 @@ class MitoDistances(Workflow):
         #       Perhaps mito count would be a decent proxy for synapse count, and it's readily available.
         bodies = bodies.sample(frac=1.0).values
 
-        dilation = options["dilation-radius"]
         os.makedirs('body-logs')
         os.makedirs(output_dir, exist_ok=True)
 
@@ -194,7 +187,7 @@ class MitoDistances(Workflow):
 
                 if len(valid_mitos) and len(tbars):
                     processed_tbars = measure_tbar_mito_distances(
-                        body_svc, mito_svc, body, tbars=tbars, valid_mitos=valid_mitos, dilation_radius_s0=dilation)
+                        body_svc, mito_svc, body, tbars=tbars, valid_mitos=valid_mitos)
 
             if len(processed_tbars) > 0:
                 processed_tbars.to_csv(f'{output_dir}/{body}.csv', header=True, index=False)
@@ -211,7 +204,7 @@ class MitoDistances(Workflow):
 
         logger.info(f"Processing {len(bodies)}, skipping {bodies_df['should_skip'].sum()}")
         with dvid_mgr_context:
-            batch_size = max(1, len(bodies) // 10_000)
+            batch_size = max(1, len(bodies) // 30_000)
             futures = self.client.map(process_and_save, bodies, batch_size=batch_size)
 
             # Support synchronous testing with a fake 'as_completed' object
