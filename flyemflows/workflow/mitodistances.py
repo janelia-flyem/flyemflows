@@ -204,7 +204,7 @@ class MitoDistances(Workflow):
 
         logger.info(f"Processing {len(bodies)}, skipping {bodies_df['should_skip'].sum()}")
         with dvid_mgr_context:
-            batch_size = max(1, len(bodies) // 30_000)
+            batch_size = max(1, len(bodies) // 10_000)
             futures = self.client.map(process_and_save, bodies, batch_size=batch_size)
 
             # Support synchronous testing with a fake 'as_completed' object
