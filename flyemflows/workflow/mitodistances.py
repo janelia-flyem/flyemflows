@@ -9,7 +9,7 @@ from requests.exceptions import HTTPError
 
 from dvid_resource_manager.client import ResourceManagerClient
 
-from neuclease.util import Timer, tqdm_proxy
+from neuclease.util import Timer, tqdm_proxy, iter_batches
 from neuclease.dvid import fetch_annotation_label, fetch_supervoxels
 from neuclease.misc.measure_tbar_mito_distances import initialize_results, measure_tbar_mito_distances
 
@@ -205,9 +205,13 @@ class MitoDistances(Workflow):
             return (body, len(tbars), 'success', timer.seconds)
 
         logger.info(f"Processing {len(bodies)}, skipping {bodies_df['should_skip'].sum()}")
+
+        def process_batch(bodies):
+            return [*map(process_and_save, bodies)]
+
         with dvid_mgr_context:
             batch_size = max(1, len(bodies) // 10_000)
-            futures = self.client.map(process_and_save, bodies, batch_size=batch_size)
+            futures = self.client.map(process_batch, iter_batches(bodies, batch_size))
 
             # Support synchronous testing with a fake 'as_completed' object
             if hasattr(self.client, 'DEBUG'):
@@ -218,7 +222,7 @@ class MitoDistances(Workflow):
             try:
                 results = []
                 for f, r in tqdm_proxy(ac, total=len(futures)):
-                    results.append(r)
+                    results.extend(r)
             finally:
                 results = pd.DataFrame(results, columns=['body', 'synapses', 'status', 'processing_time'])
                 results.to_csv('results-summary.csv', header=True, index=False)
