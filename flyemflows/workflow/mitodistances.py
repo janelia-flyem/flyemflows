@@ -140,13 +140,13 @@ class MitoDistances(Workflow):
         bodies_df = pd.DataFrame({'body': bodies, 'should_skip': skip_flags})
         bodies = bodies_df.query('not should_skip')['body']
 
-        # Shuffle for better load balance
+        # Shuffle for better load balance?
         # TODO: Would be better to sort by synapse count, and put large bodies first,
         #       assigned to partitions in round-robin style.
         #       Then work stealing will be more effective at knocking out the smaller jobs at the end.
         #       This requires knowing all the body sizes, though.
         #       Perhaps mito count would be a decent proxy for synapse count, and it's readily available.
-        bodies = bodies.sample(frac=1.0).values
+        #bodies = bodies.sample(frac=1.0).values
 
         os.makedirs('body-logs')
         os.makedirs(output_dir, exist_ok=True)
