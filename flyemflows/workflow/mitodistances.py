@@ -161,7 +161,7 @@ class MitoDistances(Workflow):
                     return syn_df
                 syn_types, syn_conf
                 syn_df = syn_df.query('kind in @syn_types and conf >= @syn_conf').copy()
-                return syn_df[[*'zyx', 'kind', 'conf']]
+                return syn_df[[*'xyz', 'kind', 'conf']].sort_values([*'xyz']).reset_index(drop=True)
 
         @auto_retry(3)
         def _fetch_mito_ids(body):
