@@ -448,7 +448,7 @@ class CreateMeshes(Workflow):
                    "it doesn't exist on the output server.")
             raise RuntimeError(msg)
 
-        create_tarsupervoxel_instance(server, uuid, instance, sync_instance, output_fmt, tags=["type=meshes"])
+        create_tarsupervoxel_instance(server, uuid, instance, sync_instance, output_fmt)
 
 
     def input_is_labelmap(self):
