@@ -23,11 +23,12 @@ logger = logging.getLogger(__name__)
 
 class DecimateMeshes(Workflow):
     """
-    Download pre-existing meshes from a dvid tarsupervoxels instance, and decimate them.
+    TODO: A better name for this workflow would be CombineSVMeshes or something like that.
+
+    Download pre-existing meshes from a dvid tarsupervoxels instance,
+    combine them into a body meshes, and decimate the body meshes.
 
     Basically a clusterized wrapper around neuclease.bin.decimate_existing_mesh
-
-    TODO: Save mesh stats to a csv file.
     """
     DvidTarsupervoxelsInstanceSchema = \
     {

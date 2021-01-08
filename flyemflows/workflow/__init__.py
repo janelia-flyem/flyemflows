@@ -18,6 +18,7 @@ from .samplepoints import SamplePoints
 from .sparseblockstats import SparseBlockstats
 from .sparsemeshes import SparseMeshes
 from .stitchedmeshes import StitchedMeshes
+from .svdecimate import SVDecimate
 
 
 BUILTIN_WORKFLOWS = [
@@ -27,6 +28,7 @@ BUILTIN_WORKFLOWS = [
     ContingentRelabel,
     CopyGrayscale,
     CopySegmentation,
+    CreateMeshes,
     DecimateMeshes,
     FindAdjacencies,
     LabelmapCopy,
@@ -40,5 +42,5 @@ BUILTIN_WORKFLOWS = [
     SparseBlockstats,
     SparseMeshes,
     StitchedMeshes,
-    CreateMeshes
+    SVDecimate,
 ]
