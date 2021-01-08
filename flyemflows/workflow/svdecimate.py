@@ -258,16 +258,29 @@ class SVDecimate(Workflow):
             total_body_vertices = sum([len(m.vertices_zyx) for m in sv_meshes.values()])
             decimation = min(1.0, max_body_vertices / total_body_vertices)
 
-            _process_sv = partial(process_sv, decimation, decimation_lib, max_sv_vertices, output_format)
-            if num_procs <= 1:
-                output_table = [*starmap(_process_sv, sv_meshes.items())]
-            else:
-                output_table = compute_parallel(_process_sv, sv_meshes.items(), starmap=True, processes=num_procs, ordered=False, show_progress=False)
+            try:
+                _process_sv = partial(process_sv, decimation, decimation_lib, max_sv_vertices, output_format)
+                if num_procs <= 1:
+                    output_table = [*starmap(_process_sv, sv_meshes.items())]
+                else:
+                    output_table = compute_parallel(_process_sv, sv_meshes.items(), starmap=True, processes=num_procs, ordered=False, show_progress=False)
 
-            cols = ['sv', 'orig_vertices', 'final_vertices', 'final_decimation', 'effective_decimation', 'mesh_bytes']
-            output_df = pd.DataFrame(output_table, columns=cols)
-            write_sv_meshes(output_df, output_config, output_format, resource_mgr_client)
-            output_df['body'] = body_id
+                cols = ['sv', 'orig_vertices', 'final_vertices', 'final_decimation', 'effective_decimation', 'mesh_bytes']
+                output_df = pd.DataFrame(output_table, columns=cols)
+                output_df['body'] = body_id
+                output_df['error'] = ""
+                write_sv_meshes(output_df, output_config, output_format, resource_mgr_client)
+            except Exception as ex:
+                svs = [*sv_meshes.keys()]
+                orig_vertices = [len(m.vertices_zyx) for m in sv_meshes.values()]
+                output_df = pd.DataFrame({'sv': svs, 'orig_vertices': orig_vertices})
+                output_df['final_vertices'] = -1
+                output_df['final_decimation'] = -1
+                output_df['effective_decimation'] = -1
+                output_df['mesh_bytes'] = -1
+                output_df['body'] = body_id
+                output_df['error'] = str(ex)
+
             return output_df.drop(columns=['mesh_bytes'])
 
         futures = self.client.map(process_body, bodies)
@@ -282,6 +295,10 @@ class SVDecimate(Workflow):
             stats = []
             for f, r in tqdm_proxy(ac, total=len(futures)):
                 stats.append(r)
+                if (r['error'] != "").any():
+                    body = r['body'].iloc[0]
+                    logger.warning(f"Body {body} failed!")
+
         finally:
             stats_df = pd.concat(stats)
             stats_df.to_csv('mesh-stats.csv', index=False, header=True)
