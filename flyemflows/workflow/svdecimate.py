@@ -155,6 +155,11 @@ class SVDecimate(Workflow):
                 "maximum": 1.0,  # 1.0 == disable
                 "default": 0.1
             },
+            "decimation-library": {
+                "type": "string",
+                "enum": ["openmesh", "fq-in-memory", "fq-via-disk"],
+                "default": "openmesh"
+            },
             "max-sv-vertices": {
                 "description": "Ensure that meshes have no more vertices than specified by this setting.\n"
                                "That is, decrease the decimation fraction if necessary bring the mesh vertex count below this number.\n",
@@ -238,6 +243,7 @@ class SVDecimate(Workflow):
         if np.array(options["rescale"] == 1.0).all() and output_format == "ngmesh" and input_format != "ngmesh":
             logger.warning("*** You are converting to ngmesh format, but you have not specified a rescale parameter! ***")
 
+        decimation_lib = options["decimation-library"]
         max_sv_vertices = options["max-sv-vertices"]
         max_body_vertices = options["max-body-vertices"]
         num_procs = options["processes-per-body"]
@@ -252,7 +258,7 @@ class SVDecimate(Workflow):
             total_body_vertices = sum([len(m.vertices_zyx) for m in sv_meshes.values()])
             decimation = min(1.0, max_body_vertices / total_body_vertices)
 
-            _process_sv = partial(process_sv, decimation, max_sv_vertices, output_format)
+            _process_sv = partial(process_sv, decimation, decimation_lib, max_sv_vertices, output_format)
             if num_procs <= 1:
                 output_table = [*starmap(_process_sv, sv_meshes.items())]
             else:
@@ -393,12 +399,21 @@ class SVDecimate(Workflow):
         create_tarsupervoxel_instance(server, uuid, instance, sync_instance, options["format"])
 
 
-def process_sv(decimation, max_sv_vertices, output_format, sv: int, mesh: Mesh):
+def process_sv(decimation, decimation_lib, max_sv_vertices, output_format, sv: int, mesh: Mesh):
     orig_vertices = len(mesh.vertices_zyx)
     if orig_vertices == 0:
-        return 0, 0, mesh
-    final_decimation = min(decimation, max_sv_vertices / len(mesh.vertices_zyx))
-    mesh.simplify_openmesh(final_decimation)
+        final_decimation = 1.0
+    else:
+        final_decimation = min(decimation, max_sv_vertices / len(mesh.vertices_zyx))
+        if decimation_lib == "openmesh":
+            mesh.simplify_openmesh(final_decimation)
+        elif decimation_lib == "fq-in-memory":
+            mesh.simplify(decimation, True)
+        elif decimation_lib == "fq-via-disk":
+            mesh.simplify(decimation, False)
+        else:
+            raise AssertionError()
+
     final_vertices = len(mesh.vertices_zyx)
     effective_decimation = final_vertices / orig_vertices
     mesh_bytes = mesh.serialize(fmt=output_format)
