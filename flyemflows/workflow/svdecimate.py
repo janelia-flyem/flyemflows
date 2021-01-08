@@ -5,21 +5,22 @@ import logging
 from itertools import starmap
 from functools import partial
 
+import distributed
 import dask.config
-import dask.bag
 import numpy as np
 import pandas as pd
 
 from confiddler import flow_style
 from dvid_resource_manager.client import ResourceManagerClient
 
-from neuclease.util import Timer, compute_parallel
+from neuclease.util import Timer, compute_parallel, tqdm_proxy
 from neuclease.dvid import (resolve_ref, fetch_instance_info, fetch_tarfile,
                             create_instance, create_tarsupervoxel_instance, fetch_repo_instances,
                             is_locked, fetch_server_info, post_load, post_keyvalues)
 
 from vol2mesh.mesh import Mesh
 
+from ..util import as_completed_synchronous
 from .util import BodyListSchema, load_body_list
 from . import Workflow
 
@@ -263,15 +264,23 @@ class SVDecimate(Workflow):
             output_df['body'] = body_id
             return output_df.drop(columns=['mesh_bytes'])
 
-        bodies_bag = dask.bag.from_sequence(bodies, partition_size=1)
+        futures = self.client.map(process_body, bodies)
 
-        with Timer(f"Processing {len(bodies)} bodies", logger):
-            stats = bodies_bag.map(process_body).compute()
+        # Support synchronous testing with a fake 'as_completed' object
+        if hasattr(self.client, 'DEBUG'):
+            ac = as_completed_synchronous(futures, with_results=True)
+        else:
+            ac = distributed.as_completed(futures, with_results=True)
 
-        stats_df = pd.concat(stats)
-        stats_df.to_csv('mesh-stats.csv', index=False, header=True)
-        with open('mesh-stats.pkl', 'wb') as f:
-            pickle.dump(stats_df, f)
+        try:
+            stats = []
+            for f, r in tqdm_proxy(ac, total=len(futures)):
+                stats.append(r)
+        finally:
+            stats_df = pd.concat(stats)
+            stats_df.to_csv('mesh-stats.csv', index=False, header=True)
+            with open('mesh-stats.pkl', 'wb') as f:
+                pickle.dump(stats_df, f)
 
     def _sanitize_config(self):
         # Convert input/output CSV to absolute paths
