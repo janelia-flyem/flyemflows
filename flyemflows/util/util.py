@@ -13,7 +13,7 @@ from collections.abc import Iterable
 from email.mime.text import MIMEText
 from ctypes.util import find_library
 from contextlib import contextmanager
-from subprocess import Popen, PIPE, TimeoutExpired
+from subprocess import Popen, PIPE, TimeoutExpired, run as subprocess_run
 
 import vigra
 import psutil
@@ -414,28 +414,43 @@ def email_on_exit(email_config, workflow_name, execution_dir, logpath):
             body = (headline +
                     f"Duration: {timer.timedelta}\n"
                     f"Execution directory: {execution_dir}\n")
-            
+
             if jobname:
                 body += f"Job name: {jobname}\n"
-            
+
             if error_str:
                 body += f"Error: {error_str}\n"
-    
+
             if email_config["include-log"]:
-                # Sync in the hope that the log will flush to disk
-                # Note: Currently raised exceptions haven't been printed yet, so they aren't yet in the log file.
-                os.system("sync")
-                time.sleep(2.0)
-                
+                # Sync first, in the hope that the log will flush to disk before we read it.
+                # Note:
+                #    Currently raised exceptions haven't been printed yet,
+                #    so they aren't yet in the log file in your email.
+                #    They'll only be present in the on-disk logfile.
+                try:
+                    # This can hang, apparently.
+                    # Hangs like this might be fairly damaging, unfortunately.
+                    # According to Ken:
+                    #   >If sync is trying to write a file down to disk that was deleted,
+                    #   >it can hang like that. Unfortunately, the node will have to be
+                    #   >power cycled to deal with this situation.
+                    #
+                    # Let's hope that's not common.
+                    # We'll just timeout the ordinary way and hope for the best.
+                    subprocess_run("sync", timeout=10.0)
+                    time.sleep(2.0)
+                except TimeoutExpired:
+                    logger.warning("Timed out while waiting for filesystem sync")
+
                 body += "\nLOG (possibly truncated):\n\n"
                 with open(f'{logpath}', 'r') as log:
                     body += log.read()
-    
+
             msg = MIMEText(body)
             msg['Subject'] = f'Workflow exited: {result}'
             msg['From'] = f'flyemflows <{user}@{host}>'
             msg['To'] = ','.join(addresses)
-    
+
             try:
                 s = smtplib.SMTP('mail.hhmi.org')
                 s.sendmail(msg['From'], addresses, msg.as_string())
