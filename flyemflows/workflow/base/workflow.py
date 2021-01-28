@@ -129,18 +129,13 @@ class Workflow(object):
         self.num_workers = num_workers
 
         # Initialized in run()
-        self.cluster = None
-        self.client = None
+        self.cc = None
 
     def __del__(self):
         # If the cluster is still alive (a debugging feature),
         # kill it now.
-        if self.client:
-            self.client.close()
-            self.client = None
-        if self.cluster:
-            self.cluster.close()
-            self.cluster = None
+        if self.cc:
+            self.cc.cleanup()
 
     def execute(self):
         if type(self) is Workflow:
@@ -172,18 +167,13 @@ class Workflow(object):
         with \
         Timer(f"Running {workflow_name} with {self.num_workers} workers", logger), \
         LocalResourceManager(self.config["resource-manager"]), \
-        ClusterContext(cluster_type, self.num_workers, True, max_wait, not kill_cluster) as cc:
-            self.client = cc.client
-            self.cluster = cc.client and cc.client.cluster
-
-            with \
-            environment_context(self.config["environment-variables"], self), \
-            WorkerDaemons(self):
-                self.execute()
-
+        ClusterContext(cluster_type, self.num_workers, True, max_wait, not kill_cluster) as self.cc, \
+        environment_context(self.config["environment-variables"], self), \
+        WorkerDaemons(self):
+            self.execute()
 
     def total_cores(self):
-        return sum( self.client.ncores().values() )
+        return sum( self.cc.client.ncores().values() )
 
 
     def run_on_each_worker(self, func, once_per_machine=False, return_hostnames=True):
@@ -210,7 +200,8 @@ class Workflow(object):
         if self.config["cluster-type"] in ("synchronous", "processes"):
             return run_on_each_worker(func, None, once_per_machine, return_hostnames)
         else:
-            return run_on_each_worker(func, self.client, once_per_machine, return_hostnames)
+            client = self.cc and self.cc.client
+            return run_on_each_worker(func, client, once_per_machine, return_hostnames)
 
     @staticmethod
     def _preload_asan_mac():

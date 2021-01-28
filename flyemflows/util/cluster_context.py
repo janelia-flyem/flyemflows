@@ -79,9 +79,15 @@ class ClusterContext:
         """
         Close the client and cluster.
         """
-        if self.client and self.client.cluster:
+        cluster = self.client and self.client.cluster
+
+        if self.client:
+            self.client.close()
+            self.client = None
+
+        if cluster:
             try:
-                self.client.cluster.close()
+                cluster.close(timeout=60.0)
             except RuntimeError as ex:
                 ## For some reason, sometimes the cluster can't be closed due to some
                 ## problem with 'bkill', which fails with an error that looks like the following.
@@ -109,10 +115,6 @@ class ClusterContext:
                 if result.returncode != 0:
                     logger.error("Second attempt to kill the cluster failed!")
                     raise
-
-        if self.client:
-            self.client.close()
-            self.client = None
 
     def _init_dask(self):
         """

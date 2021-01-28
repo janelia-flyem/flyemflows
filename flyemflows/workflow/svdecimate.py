@@ -417,24 +417,27 @@ class SVDecimate(Workflow):
 
 
 def process_sv(decimation, decimation_lib, max_sv_vertices, output_format, sv: int, mesh: Mesh):
-    orig_vertices = len(mesh.vertices_zyx)
-    if orig_vertices == 0:
-        final_decimation = 1.0
-    else:
-        final_decimation = min(decimation, max_sv_vertices / len(mesh.vertices_zyx))
-        if decimation_lib == "openmesh":
-            mesh.simplify_openmesh(final_decimation)
-        elif decimation_lib == "fq-in-memory":
-            mesh.simplify(decimation, True)
-        elif decimation_lib == "fq-via-disk":
-            mesh.simplify(decimation, False)
+    try:
+        orig_vertices = len(mesh.vertices_zyx)
+        if orig_vertices == 0:
+            final_decimation = 1.0
         else:
-            raise AssertionError()
+            final_decimation = min(decimation, max_sv_vertices / len(mesh.vertices_zyx))
+            if decimation_lib == "openmesh":
+                mesh.simplify_openmesh(final_decimation)
+            elif decimation_lib == "fq-in-memory":
+                mesh.simplify(decimation, True)
+            elif decimation_lib == "fq-via-disk":
+                mesh.simplify(decimation, False)
+            else:
+                raise AssertionError()
 
-    final_vertices = len(mesh.vertices_zyx)
-    effective_decimation = final_vertices / orig_vertices
-    mesh_bytes = mesh.serialize(fmt=output_format)
-    return sv, orig_vertices, final_vertices, final_decimation, effective_decimation, mesh_bytes
+        final_vertices = len(mesh.vertices_zyx)
+        effective_decimation = final_vertices / orig_vertices
+        mesh_bytes = mesh.serialize(fmt=output_format)
+        return sv, orig_vertices, final_vertices, final_decimation, effective_decimation, mesh_bytes
+    except Exception as ex:
+        raise RuntimeError(f"Failed processing SV {sv}: {type(ex)}") from ex
 
 
 def write_sv_meshes(output_df, output_cfg, output_format, resource_mgr_client):
