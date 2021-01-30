@@ -131,6 +131,10 @@ class Workflow(object):
         # Initialized in run()
         self.cc = None
 
+    @property
+    def client(self):
+        return self.cc and self.cc.client
+
     def __del__(self):
         # If the cluster is still alive (a debugging feature),
         # kill it now.
