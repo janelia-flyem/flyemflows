@@ -250,7 +250,7 @@ class TensorStoreVolumeServiceReader(VolumeServiceReader):
         #     Error reading "gs://vnc-v3-seg/rc4_wsexp/info":
         #     CURL error[16] Error in the HTTP2 framing layer
         #
-        if self._reinitialize_via == "reopen":
+        if d['_reinitialize_via'] == "reopen":
             d['_stores'] = {}
         else:
             d['_stores'] = pickle.loads(d['_stores'])
