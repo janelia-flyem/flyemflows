@@ -151,13 +151,50 @@ TensorStoreVolumeSchema = \
 
 class TensorStoreVolumeServiceReader(VolumeServiceReader):
     """
-    A wrapper around the TensorStore API to
-    implement the VolumeServiceReader API.
+    A wrapper around the TensorStore API to implement the VolumeServiceReader API.
     """
 
     @classmethod
-    def default_config(cls):
-        return emit_defaults(TensorStoreVolumeSchema)
+    def default_config(cls, ng_src_url=None):
+        """
+        Return the default config for a TensorStoreVolumeReader.
+        If you provide a source url, the bucket and path components will be configured.
+        Otherwise, you must overwrite those entries yourself before using the config.
+
+        Example url:
+
+            precomputed://gs://neuroglancer-janelia-flyem-hemibrain/v1.2/segmentation
+        """
+        cfg = emit_defaults(TensorStoreVolumeSchema)
+        if ng_src_url:
+            # Example:
+            # precomputed://gs://neuroglancer-janelia-flyem-hemibrain/v1.2/segmentation
+            # But the 'precomputed://' and 'gs://' prefixes are optional.
+            parts = ng_src_url.split('://')
+            assert len(parts) <= 3
+            if len(parts) == 3:
+                assert parts[0] == 'precomputed'
+            if len(parts) >= 2:
+                assert parts[-2] == 'gs'
+
+            bucket, *path_parts = parts[-1].split('/')
+            cfg['tensorstore']['spec']['kvstore']['bucket'] = bucket
+            cfg['tensorstore']['spec']['path'] = '/'.join(path_parts)
+
+        return cfg
+
+    @classmethod
+    def from_url(cls, ng_src_url):
+        """
+        Construct a TensorStoreVolumeServiceReader from a neuroglancer source url,
+        such as:
+
+            precomputed://gs://neuroglancer-janelia-flyem-hemibrain/v1.2/segmentation
+
+        Other than the bucket and path, the config will use default settings.
+        """
+        cfg = cls.default_config(ng_src_url)
+        return cls(cfg)
 
     def __init__(self, volume_config, resource_manager_client=None):
         validate(volume_config, TensorStoreVolumeSchema, inject_defaults=True)
@@ -171,6 +208,8 @@ class TensorStoreVolumeServiceReader(VolumeServiceReader):
         try:
             # Strip 'gs://' if the user provided it.
             bucket = volume_config['tensorstore']['spec']['kvstore']['bucket']
+            if bucket.startswith('precomputed://'):
+                bucket = bucket[len('precomputed://'):]
             if bucket.startswith('gs://'):
                 bucket = bucket[len('gs://'):]
                 volume_config['tensorstore']['spec']['kvstore']['bucket'] = bucket
