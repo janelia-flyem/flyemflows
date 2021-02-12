@@ -279,8 +279,12 @@ def ingest_label_indexes( server,
             Whether or not to include tombstones in the result, or possibly ONLY tombstones, and not the 'real' labelindices.
             Choices: 'include', 'exclude', or 'only'.
         
-        batch_size:
-            How many LabelIndex structures to include in each /indices REST call.
+        batch_rows:
+            The data will be sent in batches, but the number of labelindices
+            structures we send in each /indices post will not be uniform.
+            Since label indices can be of vastly different sizes, we choose a batch
+            size that aims for a certain number of "rows" (block-sv-count stats) in
+            total for the batch.
         
         num_threads:
             How many threads to use, for parallel loading.
