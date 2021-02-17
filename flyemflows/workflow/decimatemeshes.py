@@ -204,7 +204,10 @@ class DecimateMeshes(Workflow):
         bodies = self._load_body_list(options["bodies"], server, uuid, seg_instance)
 
         # Choose more partitions than cores, so that early finishers have the opportunity to steal work.
-        bodies_bag = dask.bag.from_sequence(bodies, npartitions=self.total_cores() * 10)
+        if len(bodies) < 1e5:
+            bodies_bag = dask.bag.from_sequence(bodies, partition_size=1)
+        else:
+            bodies_bag = dask.bag.from_sequence(bodies, npartitions=self.total_cores() * 10)
 
         with Timer(f"Decimating {len(bodies)} meshes", logger):
             stats = bodies_bag.map(process_body).compute()
