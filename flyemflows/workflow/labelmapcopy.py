@@ -246,6 +246,8 @@ class LabelmapCopy(Workflow):
 
         assert len(options["slab-shape"]) == 3
         slab_shape_zyx = np.array(options["slab-shape"][::-1])
+
+        # FIXME: Should be a whole slab (per the docs above), not just the brick shape!
         replace_default_entries(slab_shape_zyx, input_service.preferred_message_shape)
         options["slab-shape"] = slab_shape_zyx[::-1].tolist()
         
