@@ -1,0 +1,17 @@
+
+Following instructions from:
+https://code.visualstudio.com/docs/python/debugging#_remote-debugging
+
+Reserve a slot and start up the remote debugger server, with the program arguments.
+(And make note of the cluster node you end up on.)
+
+    $ ssh login1
+    $ interactive-job.sh
+    $ echo "Starting remote debugging server on $(uname -n)"
+    $ python3 -m ptvsd --host 0.0.0.0 --port 3000 --wait $(which launchflow) ${TEMPLATE_DIR}
+
+# Then, locally:
+$ ssh -L 3000:${REMOTE_MACHINE}:3000 bergs@login1
+
+In VSCode, add an "attach" run configuration if necessary.  Configure it with "localhost" and port 3000.
+
