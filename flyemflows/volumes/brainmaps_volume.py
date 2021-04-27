@@ -95,13 +95,26 @@ class BrainMapsVolume:
                 vol_list = volume_list['volumeId']
             except KeyError:
                 raise RuntimeError("Failed to fetch volume list.  Are you using the right project and credentials?")
-                
-            if f'{project}:{dataset}:{volume_id}' not in volume_list['volumeId']:
-                raise RuntimeError(f"BrainMaps volume does not exist on server: {project}:{dataset}:{volume_id}")
-    
-            if change_stack_id:
-                if change_stack_id not in self.get_change_stacks():
-                    raise RuntimeError(f"ChangeStackId doesn't exist on the server: '{change_stack_id}'")
+
+            # We would LIKE to execute the following checks, but due to a known problem with the
+            # brainmaps cache infrastructure, sometimes new-ish volumes are missing from the volume list.
+            #
+            # if f'{project}:{dataset}:{volume_id}' not in volume_list['volumeId']:
+            #     raise RuntimeError(f"BrainMaps volume does not exist on server: {project}:{dataset}:{volume_id}\n"
+            #                        f"Available volumes: {json.dumps(volume_list, indent=2)}")
+            #
+            # if change_stack_id:
+            #     if change_stack_id not in self.get_change_stacks():
+            #         raise RuntimeError(f"ChangeStackId doesn't exist on the server: '{change_stack_id}'")
+
+            try:
+                _ = self.geometries
+            except Exception as ex:
+                msg = f"Could not fetch the geometry for {self.volume_uri()}.\n"
+                if f'{project}:{dataset}:{volume_id}' not in volume_list['volumeId']:
+                    msg += f"BrainMaps volume does not exist on server: {project}:{dataset}:{volume_id}\n"
+                    msg += f"Available volumes: {json.dumps(volume_list, indent=2)}"
+                raise RuntimeError(msg) from ex
 
             if dtype:
                 assert self.dtype == dtype, \
@@ -131,7 +144,6 @@ class BrainMapsVolume:
         
         return BrainMapsVolume(project, dataset, volume_id, change_stack_id)
     
-
     @classmethod
     def from_flyem_source_info(cls, d):
         """
@@ -141,7 +153,6 @@ class BrainMapsVolume:
         if 'use-gzip' not in d:
             d["use-gzip"] = True
         return BrainMapsVolume(d["project"], d["dataset"], d["volume-id"], d["change-stack-id"], use_gzip=d["use-gzip"])
-
 
     def flyem_source_info(self, as_str=False):
         """
@@ -168,6 +179,11 @@ class BrainMapsVolume:
         json_lines.insert(-1, f'    "bounding-box": {self.bounding_box[:,::-1].tolist()}')
         return '\n'.join(json_lines)
 
+    def volume_uri(self):
+        parts = (self.project, self.dataset, self.volume_id)
+        if self.change_stack_id:
+            parts += (self.change_stack_id,)
+        return 'brainmaps://' + ':'.join(parts)
 
     def get_subvolume(self, box_zyx, scale=0):
         """
