@@ -338,15 +338,18 @@ def send_error_email(error_msg, email_address):
 
 
 BAD_BODIES = None
-def load_bad_bodies():
-    import pandas as pd
 
+
+def load_bad_bodies():
     global BAD_BODIES
     if BAD_BODIES is not None:
         return BAD_BODIES
 
     try:
-        BAD_BODIES = pd.read_csv('/nrs/flyem/bergs/complete-ffn-agglo/bad-bodies-2019-02-26.csv')['body']
+        BAD_BODIES = []
+        # import pandas as pd
+        # BAD_BODIES = pd.read_csv('/nrs/flyem/bergs/complete-ffn-agglo/bad-bodies-2019-02-26.csv')['body']
+        pass
     except:
         logger.error("Failed to load list of bad bodies to exclude")
         BAD_BODIES = []
