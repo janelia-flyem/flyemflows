@@ -1,4 +1,5 @@
 import copy
+import pickle
 import logging
 
 import numpy as np
@@ -52,6 +53,11 @@ class ContingencyTable(Workflow):
                                "      blocks, if that right-hand label doesn't overlap a left-hand label \n"
                                "      in that block.",
             },
+            "min-overlap-size": {
+                "description": "Discard result rows for overlapping regions smaller than this (Note: filtering is per-block).",
+                "type": "integer",
+                "default": 0
+            },
             "skip-sparse-fetch": {
                 "description": "If True, do not attempt to fetch the sparsevol-coarse for the given subset-labels.\n"
                                "Just fetch the entire bounding-box.\n",
@@ -92,6 +98,7 @@ class ContingencyTable(Workflow):
         left_roi = options["left-roi"]
         left_subset_labels = load_body_list(options["left-subset-labels"], left_is_supervoxels)
         sparse_fetch = not options["skip-sparse-fetch"]
+        min_overlap = options["min-overlap-size"]
 
         # Boxes are determined by the left volume/labels/roi
         boxes = self.init_boxes( left_service,
@@ -101,17 +108,34 @@ class ContingencyTable(Workflow):
         def _contingency_table(box):
             left_vol = left_service.get_subvolume(box)
             right_vol = right_service.get_subvolume(box)
+
             table = contingency_table(left_vol, right_vol)
             table = table.sort_index().reset_index()
 
-            if len(left_subset_labels) == 0:
-                return table
+            # Compute sizes before filtering
+            left_sizes = table.groupby('left')['voxel_count'].sum()
+            right_sizes = table.groupby('right')['voxel_count'].sum()
 
-            keep_left = left_subset_labels  # noqa
-            keep_right = table.query('left in @keep_left')['right'].unique()  # noqa
-            return table.query('left in @keep_left or right in @keep_right')
+            if len(left_subset_labels) > 0:
+                # We keep rows if they match either of these criteria:
+                #   1. they touch a left-subset label
+                #   2. they touch a left label that intersects with one
+                #      of the right labels from criteria 1.
+                keep_left = left_sizes.index.intersection(left_subset_labels)     # noqa
+                keep_right = table.query('left in @keep_left')['right'].unique()  # noqa
+                table = table.query('left in @keep_left or right in @keep_right')
+
+            if min_overlap > 1:
+                table = table.query('voxel_count >= @min_overlap')
+
+            left_sizes = left_sizes.loc[table['left'].unique()].reset_index()
+            right_sizes = right_sizes.loc[table['right'].unique()].reset_index()
+
+            return table, left_sizes, right_sizes
 
         batch_tables = []
+        batch_left_sizes = []
+        batch_right_sizes = []
         batches = iter_batches(boxes, options["batch-size"])
         logger.info(f"Computing contingency tables for {len(boxes)} bricks in total.")
         logger.info(f"Processing {len(batches)} batches of {options['batch-size']} bricks each.")
@@ -120,21 +144,35 @@ class ContingencyTable(Workflow):
             with Timer(f"Batch {batch_index}: Computing tables", logger):
                 # Aim for 4 partitions per worker
                 total_cores = sum( self.client.ncores().values() )
-                tables = (db.from_sequence(batch_boxes, npartitions=4*total_cores)
+                results = (db.from_sequence(batch_boxes, npartitions=4*total_cores)
                             .map(_contingency_table)
                             .compute())
 
+                tables, left_sizes, right_sizes = zip(*results)
                 table = pd.concat(tables, ignore_index=True).sort_values(['left', 'right']).reset_index(drop=True)
                 table = table.groupby(['left', 'right'], as_index=False, sort=False)['voxel_count'].sum()
 
-            batch_tables.append(table)
+                left_sizes = pd.concat(left_sizes, ignore_index=True).groupby('left')['voxel_count'].sum().reset_index()
+                right_sizes = pd.concat(right_sizes, ignore_index=True).groupby('right')['voxel_count'].sum().reset_index()
 
-        with Timer("Constructing final table", logger):
+                batch_tables.append(table)
+                batch_left_sizes.append(left_sizes)
+                batch_right_sizes.append(right_sizes)
+
+        with Timer("Constructing final tables", logger):
             final_table = pd.concat(batch_tables, ignore_index=True).sort_values(['left', 'right']).reset_index(drop=True)
             final_table = final_table.groupby(['left', 'right'], as_index=False, sort=False)['voxel_count'].sum()
 
-        with Timer("Writing contingency_table.npy", logger):
-            np.save('contingency_table.npy', final_table.to_records(index=False))
+            final_left_sizes = pd.concat(batch_left_sizes, ignore_index=True).groupby('left')['voxel_count'].sum()
+            final_right_sizes = pd.concat(batch_right_sizes, ignore_index=True).groupby('right')['voxel_count'].sum()
+
+        def dump_table(table, p):
+            with Timer(f"Writing {p}", logger), open(p, 'wb') as f:
+                pickle.dump(table, f)
+
+        dump_table(final_table, 'contingency_table.pkl')
+        dump_table(final_left_sizes, 'left_sizes.pkl')
+        dump_table(final_right_sizes, 'right_sizes.pkl')
 
     def init_services(self):
         """

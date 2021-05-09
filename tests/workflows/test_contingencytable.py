@@ -1,4 +1,5 @@
 import os
+import pickle
 import tempfile
 import textwrap
 from io import StringIO
@@ -69,13 +70,27 @@ def setup_hdf5_inputs():
 
 
 def test_contingencytable(setup_hdf5_inputs):
+    """
+    TODO: Test the filtering options (left-subset-labels, min-overlap-size)
+    """
     template_dir, _config, left_vol, right_vol = setup_hdf5_inputs
     expected_table = contingency_table(left_vol, right_vol).sort_index().reset_index()
 
+    expected_left_sizes = expected_table.groupby('left')['voxel_count'].sum()
+    expected_right_sizes = expected_table.groupby('right')['voxel_count'].sum()
+
     execution_dir, _workflow = launch_flow(template_dir, 1)
 
-    output_table = pd.DataFrame(np.load(f"{execution_dir}/contingency_table.npy"))
+    with open(f"{execution_dir}/contingency_table.pkl", "rb") as f:
+        output_table = pickle.load(f)
+    with open(f"{execution_dir}/left_sizes.pkl", "rb") as f:
+        left_sizes = pickle.load(f)
+    with open(f"{execution_dir}/right_sizes.pkl", "rb") as f:
+        right_sizes = pickle.load(f)
+
     assert (output_table == expected_table).all().all()
+    assert (left_sizes == expected_left_sizes).all().all()
+    assert (right_sizes == expected_right_sizes).all().all()
 
 
 if __name__ == "__main__":
