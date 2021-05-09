@@ -15,6 +15,7 @@ from . import Workflow
 
 logger = logging.getLogger(__name__)
 
+
 class ContingencyTable(Workflow):
     """
     Given two segmentation volumes ("left" and "right"),
@@ -38,8 +39,18 @@ class ContingencyTable(Workflow):
             },
             "left-subset-labels": {
                 **BodyListSchema,
-                "description": "If provided, only the listed labels will be analyzed.\n"
-                               "Other labels will be left untouched in the results.\n",
+                "description": "If provided, limit the computation to the rows that correspond\n"
+                               "to this set of labels AND the set of labels they overlap with\n"
+                               "on the right-hand side.\n"
+                               "Every voxel of the listed left-hand labels will be counted, \n"
+                               "and for the bodies they overlap with, every voxel will be counted.\n"
+                               "But objects on the left which are NOT in the listed subset will not\n"
+                               "necessarily be fully accounted for in the results.\n"
+                               "NOTE: This is done independently at the block-level, which means labels\n"
+                               "      from the right-hand volume which overlap a subset-label in the left\n"
+                               "      volume in one block are not guaranteed to be returned from different\n"
+                               "      blocks, if that right-hand label doesn't overlap a left-hand label \n"
+                               "      in that block.",
             },
             "skip-sparse-fetch": {
                 "description": "If True, do not attempt to fetch the sparsevol-coarse for the given subset-labels.\n"
@@ -51,7 +62,7 @@ class ContingencyTable(Workflow):
                 "description": "Brick-wise contingency tables will be computed in batches.\n"
                                "This setting specifies the number of bricks in each batch.\n",
                 "type": "integer",
-                "default": "1000"
+                "default": 1000
             }
         }
     }
@@ -63,11 +74,9 @@ class ContingencyTable(Workflow):
         "contingencytable": ContingencyTableOptionsSchema
     })
 
-
     @classmethod
     def schema(cls):
         return ContingencyTable.Schema
-
 
     def execute(self):
         self.init_services()
@@ -82,19 +91,25 @@ class ContingencyTable(Workflow):
 
         left_roi = options["left-roi"]
         left_subset_labels = load_body_list(options["left-subset-labels"], left_is_supervoxels)
-        left_subset_labels = set(left_subset_labels)
         sparse_fetch = not options["skip-sparse-fetch"]
-        
+
         # Boxes are determined by the left volume/labels/roi
         boxes = self.init_boxes( left_service,
-                                 sparse_fetch and left_subset_labels,
+                                 sparse_fetch and set(left_subset_labels),
                                  left_roi )
 
         def _contingency_table(box):
             left_vol = left_service.get_subvolume(box)
             right_vol = right_service.get_subvolume(box)
             table = contingency_table(left_vol, right_vol)
-            return table.reset_index()
+            table = table.sort_index().reset_index()
+
+            if len(left_subset_labels) == 0:
+                return table
+
+            keep_left = left_subset_labels  # noqa
+            keep_right = table.query('left in @keep_left')['right'].unique()  # noqa
+            return table.query('left in @keep_left or right in @keep_right')
 
         batch_tables = []
         batches = iter_batches(boxes, options["batch-size"])
@@ -108,7 +123,7 @@ class ContingencyTable(Workflow):
                 tables = (db.from_sequence(batch_boxes, npartitions=4*total_cores)
                             .map(_contingency_table)
                             .compute())
-            
+
                 table = pd.concat(tables, ignore_index=True).sort_values(['left', 'right']).reset_index(drop=True)
                 table = table.groupby(['left', 'right'], as_index=False, sort=False)['voxel_count'].sum()
 
@@ -120,7 +135,6 @@ class ContingencyTable(Workflow):
 
         with Timer("Writing contingency_table.npy", logger):
             np.save('contingency_table.npy', final_table.to_records(index=False))
-        
 
     def init_services(self):
         """
@@ -143,7 +157,6 @@ class ContingencyTable(Workflow):
         if (self.left_service.preferred_message_shape != self.right_service.preferred_message_shape).any():
             raise RuntimeError("Your left and right input volumes must use the same message-block-shape.")
 
-
     def init_boxes(self, volume_service, subset_labels, roi):
         sbm = None
         if roi:
@@ -152,13 +165,13 @@ class ContingencyTable(Workflow):
                 "Can't specify an ROI unless you're using a dvid input"
 
             assert isinstance(volume_service, (ScaledVolumeService, DvidVolumeService)), \
-                "The 'roi' option doesn't support adapters other than 'rescale-level'" 
+                "The 'roi' option doesn't support adapters other than 'rescale-level'"
             scale = 0
             if isinstance(volume_service, ScaledVolumeService):
                 scale = volume_service.scale_delta
                 assert scale <= 5, \
                     "The 'roi' option doesn't support volumes downscaled beyond level 5"
-                
+
             server, uuid, _seg_instance = base_service.instance_triple
 
             brick_shape = volume_service.preferred_message_shape
@@ -169,7 +182,7 @@ class ContingencyTable(Workflow):
             seg_box = round_box(seg_box, brick_shape)
             seg_box_s0 = seg_box * 2**scale
             seg_box_s5 = seg_box // 2**(5-scale)
-            
+
             with Timer(f"Fetching mask for ROI '{roi}' ({seg_box_s0[:, ::-1].tolist()})", logger):
                 roi_mask_s5, _ = fetch_roi(server, uuid, roi, format='mask', mask_box=seg_box_s5)
 
