@@ -234,7 +234,7 @@ def extract_body_ids_and_launch(c, args, seg_instance, body_csv, msgs_df):
     uuid = resolve_ref(server, uuid)
 
     # Extract all bodies and supervoxels that have been touched in the kafka log
-    new_bodies, changed_bodies, _removed_bodies, new_supervoxels = compute_affected_bodies(msgs_df['msg'])
+    new_bodies, changed_bodies, _removed_bodies, new_supervoxels, _deleted_svs = compute_affected_bodies(msgs_df['msg'])
 
     # For touched supervoxels, we need to find their mapped bodies.
     sv_split_bodies = set(fetch_mapping(server, uuid, instance, new_supervoxels)) - set([0])
