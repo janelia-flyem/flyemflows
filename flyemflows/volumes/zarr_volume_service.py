@@ -55,9 +55,9 @@ ZarrCreationSettingsSchema = \
             "default": -1
         },
         "compression": {
-            "description": "What type of compression to use.  We only use options supported by numcodecs.Blosc\n",
+            "description": "What type of compression to use.  We only support 'gzip' and options supported by numcodecs.Blosc\n",
             "type": "string",
-            "enum": ['', 'blosc-blosclz', 'blosc-lz4', 'blosc-lz4hc', 'blosc-snappy', 'blosc-zlib', 'blosc-zstd'],
+            "enum": ['', 'gzip', 'blosc-blosclz', 'blosc-lz4', 'blosc-lz4hc', 'blosc-snappy', 'blosc-zlib', 'blosc-zstd'],
             "default": 'blosc-zstd'
         }
     }
@@ -365,12 +365,13 @@ class ZarrVolumeService(VolumeServiceWriter):
         replace_default_entries(creation_shape, bounding_box_zyx[1] - global_offset)
 
         compression = volume_config["zarr"]["creation-settings"]["compression"]
-        if compression:
-            assert compression.startswith('blosc-')
+        if compression == 'gzip':
+            compressor = numcodecs.GZip()
+        elif compression.startswith('blosc-'):
             cname = compression[len('blosc-'):]
             compressor = numcodecs.Blosc(cname)
         else:
-            compressor = None
+            assert compression == "", f"Unimplemented compression: {compression}"
 
         if create_if_necessary:
             max_scale = volume_config["zarr"]["creation-settings"]["max-scale"]
