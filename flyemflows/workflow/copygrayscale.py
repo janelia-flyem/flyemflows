@@ -157,10 +157,10 @@ class CopyGrayscale(Workflow):
         self.mgr_client = ResourceManagerClient( mgr_options["server"], mgr_options["port"] )
         self.input_service = VolumeService.create_from_config( input_config, self.mgr_client )
 
-        # For services that support the 'max-scale' creation setting (n5 and dvid),
+        # For services that support the 'max-scale' creation setting (n5, dvid, zarr),
         # auto-set the max-scale based on the max-pyramid-scale config setting.
         VolumeService.remove_default_service_configs(output_config)
-        multiscale_service = {*output_config.keys()} & {'dvid', 'n5'}
+        multiscale_service = {*output_config.keys()} & {'dvid', 'n5', 'zarr'}
         if multiscale_service:
             svc = [*multiscale_service][0]
             if output_config[svc]["create-if-necessary"]:
