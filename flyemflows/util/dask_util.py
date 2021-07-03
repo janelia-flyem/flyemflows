@@ -17,7 +17,6 @@ import distributed.config
 from distributed.utils import parse_bytes
 from distributed.client import futures_of
 
-from confiddler import dump_config
 from neuclease.util import Timer
 
 from .dask_schema import DaskConfigSchema
