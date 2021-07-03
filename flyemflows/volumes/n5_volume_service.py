@@ -1,7 +1,6 @@
 import os
 import platform
 
-import z5py
 import numpy as np
 
 from confiddler import validate, flow_style
@@ -126,6 +125,7 @@ N5VolumeSchema = \
 class N5VolumeService(VolumeServiceWriter):
 
     def __init__(self, volume_config):
+        import z5py
         validate(volume_config, N5VolumeSchema, inject_defaults=True)
         
         # Convert path to absolute if necessary (and write back to the config)
@@ -222,6 +222,8 @@ class N5VolumeService(VolumeServiceWriter):
 
     @property
     def n5_file(self):
+        import z5py
+
         # This member is memoized because that makes it
         # easier to support pickling/unpickling.
         if self._n5_file is None:

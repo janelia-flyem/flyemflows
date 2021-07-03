@@ -62,8 +62,13 @@ requirements:
     - vigra
     - h5py
     - zarr >=2.2
-    - z5py
     - intern # APL Boss service
+
+    # Optional dependency.
+    # The N5VolumeService uses z5py,
+    # but the ZarrVolumeservice is capable of reading/writing N5 volumes, too.
+    #- z5py
+
     
     # Needed for brainmaps support:
     - httplib2

@@ -2,7 +2,6 @@ import os
 import collections
 from pathlib import Path
 
-import z5py
 import numpy as np
 
 from .util import downsample
@@ -11,6 +10,7 @@ def export_to_multiscale_n5(volume, path, dataset_scale_0_name='s0', chunks=256,
     """
     Export the given ndarray to N5, creating a series of datasets (one for each scale).
     """
+    import z5py
     if not isinstance(chunks, collections.Iterable):
         chunks = volume.ndim * (chunks,)
     
