@@ -328,6 +328,7 @@ class TensorStoreVolumeServiceReader(VolumeServiceReader):
     @auto_retry(3, pause_between_tries=30.0, logging_name=__name__,
                 predicate=lambda ex: '503' not in str(ex.args[0]) and '504' not in str(ex.args[0]))
     def get_subvolume(self, box_zyx, scale=0):
+        box_zyx = np.asarray(box_zyx)
         req_bytes = 8 * np.prod(box_zyx[1] - box_zyx[0])
         try:
             resource_name = self.volume_config['tensorstore']['spec']['kvstore']['bucket']
