@@ -188,21 +188,31 @@ class BrainMapsVolume:
     def get_subvolume(self, box_zyx, scale=0):
         """
         Fetch a subvolume from the remote BrainMaps volume.
-        
+
         Args:
             box: (start, stop) tuple, in ZYX order.
             scale: Which scale to fetch the subvolume from.
-        
+
         Returns:
             volume (ndarray), where volume.shape = (stop - start)
         """
         box_zyx = np.asarray(box_zyx)
+        if (box_zyx[1] <= box_zyx[0]).any():
+            raise RuntimeError(f"Invalid box: {box_zyx.tolist()}")
+
+        bb = self.bounding_boxes[scale]
+        if (box_zyx[0] < bb[0]).any() or (box_zyx[1] > bb[1]).any():
+            msg = (f"Box ({box_zyx.tolist()}) exceeds "
+                   f"volume bounding box ({bb.tolist()}) "
+                   f"at scale {scale}")
+            raise RuntimeError(msg)
+
         corner_zyx = box_zyx[0]
         shape_zyx = box_zyx[1] - box_zyx[0]
-        
+
         corner_xyz = corner_zyx[::-1]
         shape_xyz = shape_zyx[::-1]
-        
+
         snappy_data = fetch_subvol_data( self.http,
                                          self.project,
                                          self.dataset,
