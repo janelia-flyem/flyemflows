@@ -141,20 +141,20 @@ class ClusterContext:
 
             if self.cluster_type == "lsf":
                 from dask_jobqueue import LSFCluster
-                cluster = LSFCluster(ip='0.0.0.0')
+                cluster = LSFCluster()
             elif self.cluster_type == "sge":
                 from dask_jobqueue import SGECluster
-                cluster = SGECluster(ip='0.0.0.0')
+                cluster = SGECluster()
             elif self.cluster_type == "slurm":
                 from dask_jobqueue import SLURMCluster
-                cluster = SLURMCluster(ip='0.0.0.0')
+                cluster = SLURMCluster()
             else:
                 raise AssertionError("Unimplemented jobqueue cluster")
 
             cluster.scale(self.num_workers)
 
         elif self.cluster_type == "local-cluster":
-            cluster = LocalCluster(self.num_workers, threads_per_worker=1, processes=True, ip='0.0.0.0')
+            cluster = LocalCluster(self.num_workers, threads_per_worker=1, processes=True)
 
         elif self.cluster_type in ("synchronous", "processes"):
             cluster = None
