@@ -1283,7 +1283,21 @@ def compute_meshes_for_brick(brick, stats_df, options):
             mask = (volume == row.sv)
             mask, mask_box = crop(mask, brick.physical_box)
             args = (row.sv, row.body, mask, mask_box, smoothing, decimation, max_vertices, rescale_factor, False)
-            mesh_results.append( generate_mesh(*args) )
+            sv, body, mesh, vertex_count, compressed_size = generate_mesh(*args)
+
+            from trimesh.intersections import slice_faces_plane
+
+            # Use trimesh to crop off the sides of the mesh, to ensure they don't exceed the bounds of the LOGICAL BOX
+            #[(z0, y0, x0), (z1, y1, x1)] = brick.logical_box
+            start, stop = brick.logical_box
+            for normal in [(0, 0, -1), (0, -1, 0), (-1, 0, 0)]:
+                v, f = slice_faces_plane(mesh.vertices_zyx, mesh.faces, normal, start)
+                mesh = Mesh(v, f)
+            for normal in [(0, 0, 1), (0, 1, 0), (1, 0, 0)]:
+                v, f = slice_faces_plane(mesh.vertices_zyx, mesh.faces, normal, stop)
+                mesh = Mesh(v, f)
+
+            mesh_results.append( (sv, body, mesh, vertex_count, compressed_size) )
     else:
         # Parallelize using dask's ability to launch tasks-within-tasks
         # https://distributed.dask.org/en/latest/task-launch.html
