@@ -55,12 +55,11 @@ def _update_lsf_settings():
     # Similar to above, the difference between 'mem' and 'memory' is that the former
     # specifies the memory to reserve in LSF, whereas the latter is actually used
     # by Dask workers to determine when they've exceeded their limits.
-    mem = dask.config.get("jobqueue.lsf.mem", -1)
-    if not mem or mem == -1:
-        memory = dask.config.get("jobqueue.lsf.memory", None)
-        if memory:
-            mem = parse_bytes(memory)
-            dask.config.set({"jobqueue.lsf.mem": mem})
+    memory = dask.config.get("jobqueue.lsf.memory", None)
+    mem = dask.config.get("jobqueue.lsf.mem", 0)
+    if memory and not mem:
+        mem = parse_bytes(memory)
+        dask.config.set({"jobqueue.lsf.mem": mem})
 
 def _update_sge_settings():
     # No settings to change (for now)
