@@ -157,7 +157,7 @@ class SparseMeshes(Workflow):
     
                 try:
                     with mgr_client.access_context(server, True, 1, 0):
-                        coords = fetch_sparsevol(server, uuid, instance, body, is_supervoxels, scale, dtype=np.int16)
+                        coords = fetch_sparsevol(server, uuid, instance, body, scale=scale, supervoxels=is_supervoxels, dtype=np.int16)
                 except:
                     return (body, 0, 0, 0, 0.0, timer.seconds, 'error-sparsevol')
     
