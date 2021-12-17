@@ -1,6 +1,7 @@
 import socket
 import logging
 from itertools import chain
+from functools import wraps
 
 
 import numpy as np
@@ -458,13 +459,11 @@ class DvidVolumeService(VolumeServiceWriter):
     def resource_manager_client(self):
         return self._resource_manager_client
 
-
     def _create_instance(self, volume_config):
         if 'segmentation-name' in volume_config["dvid"]:
             self._create_segmentation_instance(volume_config)
         if 'grayscale-name' in volume_config["dvid"]:
             self._create_grayscale_instances(volume_config)
-
 
     def _create_segmentation_instance(self, volume_config):
         """
@@ -605,6 +604,30 @@ class DvidVolumeService(VolumeServiceWriter):
         logger.info(f"The kafka log shows that {len(subset_bodies)} bodies have changed since ({kafka_timestamp_string})")
         return subset_bodies
 
+    def _log_read_errors(f):
+        @wraps(f)
+        def wrapper(self, box_zyx, scale=0):
+            try:
+                return f(self, box_zyx, scale)
+            except Exception as ex:
+                # In cluster scenarios, a chained 'raise ... from ex' traceback
+                # doesn't get fully transmitted to the driver,
+                # so we simply append this extra info to the current exception
+                # rather than using exception chaining.
+                # Also log it now so it at least appears in the worker log.
+                # See: https://github.com/dask/dask/issues/4384
+                import io
+                import traceback
+                sio = io.StringIO()
+                traceback.print_exc(file=sio)
+                logger.log(logging.ERROR, sio.getvalue() )
+
+                host = socket.gethostname()
+                msg = f"Host {host}: Failed to fetch subvolume: box_zyx = {box_zyx.tolist()}"
+
+                ex.args += (msg,)
+                raise
+        return wrapper
 
     # Two-levels of auto-retry:
     # 1. Auto-retry up to three time for any reason.
@@ -613,6 +636,7 @@ class DvidVolumeService(VolumeServiceWriter):
     @auto_retry(2, pause_between_tries=5*60.0, logging_name=__name__,
                 predicate=lambda ex: '503' in str(ex.args[0]) or '504' in str(ex.args[0]))
     @auto_retry(3, pause_between_tries=60.0, logging_name=__name__)
+    @_log_read_errors
     def get_subvolume(self, box_zyx, scale=0):
         req_bytes = self._dtype_nbytes * np.prod(box_zyx[1] - box_zyx[0])
 
@@ -622,57 +646,69 @@ class DvidVolumeService(VolumeServiceWriter):
             instance_name = f"{instance_name}_{scale}"
             scale = 0
 
-        try:
-            if self._instance_type in ('labelarray', 'labelmap'):
-                # Obtain permission from the resource manager while fetching the compressed data,
-                # but release the resource token before inflating the data.
-                with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
-                    aligned_box = round_box(box_zyx, 64, 'out')
-                    if 8*np.prod(aligned_box[1] - aligned_box[0]) < 2**31:
-                        vol_proxy = fetch_labelmap_voxels( self._server,
-                                                           self._uuid,
-                                                           instance_name,
-                                                           box_zyx,
-                                                           scale,
-                                                           self._throttle,
-                                                           supervoxels=self.supervoxels,
-                                                           format='lazy-array' )
-                    else:
-                        # Requested subvolume is too large to download in one request.
-                        # Download it in chunks, with a somewhat arbitrary chunkshape
-                        chunk_shape = (64, 128, 10240)
-                        vol_proxy = fetch_labelmap_voxels_chunkwise( self._server,
-                                                                     self._uuid,
-                                                                     instance_name,
-                                                                     box_zyx,
-                                                                     scale,
-                                                                     self._throttle,
-                                                                     supervoxels=self.supervoxels,
-                                                                     format='lazy-array',
-                                                                     chunk_shape=chunk_shape )
-                # Inflate after releasing resource token
-                return vol_proxy()
-            else:
-                with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
-                    return fetch_raw(self._server, self._uuid, instance_name, box_zyx, self._throttle)
+        with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
+            if self._instance_type not in ('labelarray', 'labelmap'):
+                return fetch_raw(self._server, self._uuid, instance_name, box_zyx, self._throttle)
 
-        except Exception as ex:
-            # In cluster scenarios, a chained 'raise ... from ex' traceback
-            # doesn't get fully transmitted to the driver,
-            # so we simply append this extra info to the current exception
-            # rather than using exception chaining.
-            # Also log it now so it at least appears in the worker log.
-            # See: https://github.com/dask/dask/issues/4384
-            import traceback, io
-            sio = io.StringIO()
-            traceback.print_exc(file=sio)
-            logger.log(logging.ERROR, sio.getvalue() )
+            # Fetch compressed data while we have the resource token
+            vol_proxy = self._fetch_lazy_array(instance_name, box_zyx, scale)
 
-            host = socket.gethostname()
-            msg = f"Host {host}: Failed to fetch subvolume: box_zyx = {box_zyx.tolist()}"
+        # Inflate after releasing resource token
+        return vol_proxy()
 
-            ex.args += (msg,)
-            raise
+    def _fetch_lazy_array(self, instance_name, box_zyx, scale):
+        """
+        Fetch data from the given labelmap instance,
+        but return it without compressing it first.
+        """
+        aligned_box = round_box(box_zyx, 64, 'out')
+        if 8*np.prod(aligned_box[1] - aligned_box[0]) < 2**31:
+            return fetch_labelmap_voxels( self._server,
+                                          self._uuid,
+                                          instance_name,
+                                          box_zyx,
+                                          scale,
+                                          self._throttle,
+                                          supervoxels=self.supervoxels,
+                                          format='lazy-array' )
+
+        # Requested subvolume is too large to download in one request.
+        # Download it in chunks, with a somewhat arbitrary chunkshape
+        chunk_shape = (64, 128, 10240)
+        return fetch_labelmap_voxels_chunkwise( self._server,
+                                                self._uuid,
+                                                instance_name,
+                                                box_zyx,
+                                                scale,
+                                                self._throttle,
+                                                supervoxels=self.supervoxels,
+                                                format='lazy-array',
+                                                chunk_shape=chunk_shape )
+
+    def _log_write_errors(f):
+        @wraps(f)
+        def wrapper(self, subvolume, offset_zyx, scale=0):
+            try:
+                return f(self, subvolume, offset_zyx, scale)
+            except Exception as ex:
+                # In cluster scenarios, a chained 'raise ... from ex' traceback
+                # doesn't get fully transmitted to the driver,
+                # so we simply append this extra info to the current exception
+                # rather than using exception chaining.
+                # Also log it now so it at least appears in the worker log.
+                # See: https://github.com/dask/dask/issues/4384
+                import io
+                import traceback
+                sio = io.StringIO()
+                traceback.print_exc(file=sio)
+                logger.log(logging.ERROR, sio.getvalue() )
+
+                host = socket.gethostname()
+                msg = f"Host {host}: Failed to write subvolume: offset_zyx = {offset_zyx.tolist()}, shape = {subvolume.shape}"
+
+                ex.args += (msg,)
+                raise
+        return wrapper
 
     # Two-levels of auto-retry:
     # 1. Auto-retry up to three times for any http-related reason
@@ -682,6 +718,7 @@ class DvidVolumeService(VolumeServiceWriter):
                 predicate=lambda ex: '503' in str(ex.args[0]) or '504' in str(ex.args[0]))
     @auto_retry(3, pause_between_tries=60.0, logging_name=__name__,
                 predicate=lambda ex: not isinstance(ex, HTTPError))
+    @_log_write_errors
     def write_subvolume(self, subvolume, offset_zyx, scale=0):
         req_bytes = self._dtype_nbytes * np.prod(subvolume.shape)
 
@@ -705,50 +742,29 @@ class DvidVolumeService(VolumeServiceWriter):
         assert (not self.enable_downres) or (scale == 0), \
             "When using enable-downres, you can only write scale-0 data."
 
-        try:
-            # Labelarray data can be posted very efficiently if the request is block-aligned
-            if self._instance_type in ('labelarray', 'labelmap') and is_block_aligned:
-                # Encode and post in two separate steps, so that the compression
-                # can be peformed before obtaining a token from the resource manager.
-                encoded = encode_labelarray_volume(offset_zyx, subvolume, self.gzip_level, not self.write_empty_blocks)
-                with self._resource_manager_client.access_context(self._server, False, 1, req_bytes):
-                    # Post pre-encoded data with 'is_raw'
-                    post_labelmap_blocks( self._server, self._uuid, instance_name, None, encoded, scale,
-                                          self.enable_downres, self.disable_indexing, self._throttle,
-                                          is_raw=True )
-            else:
-                assert not self.enable_downres, \
-                    "Can't use enable-downres: You are attempting to post non-block-aligned data."
+        # Labelarray data can be posted very efficiently if the request is block-aligned
+        if self._instance_type in ('labelarray', 'labelmap') and is_block_aligned:
+            # Encode and post in two separate steps, so that the compression
+            # can be peformed before obtaining a token from the resource manager.
+            encoded = encode_labelarray_volume(offset_zyx, subvolume, self.gzip_level, not self.write_empty_blocks)
+            with self._resource_manager_client.access_context(self._server, False, 1, req_bytes):
+                # Post pre-encoded data with 'is_raw'
+                post_labelmap_blocks( self._server, self._uuid, instance_name, None, encoded, scale,
+                                        self.enable_downres, self.disable_indexing, self._throttle,
+                                        is_raw=True )
+        else:
+            assert not self.enable_downres, \
+                "Can't use enable-downres: You are attempting to post non-block-aligned data."
 
-                with self._resource_manager_client.access_context(self._server, False, 1, req_bytes):
-                    post_raw( self._server, self._uuid, instance_name, offset_zyx, subvolume,
-                              throttle=self._throttle, mutate=not self.disable_indexing )
-
-        except Exception as ex:
-            # In cluster scenarios, a chained 'raise ... from ex' traceback
-            # doesn't get fully transmitted to the driver,
-            # so we simply append this extra info to the current exception
-            # rather than using exception chaining.
-            # Also log it now so it at least appears in the worker log.
-            # See: https://github.com/dask/dask/issues/4384
-            import traceback, io
-            sio = io.StringIO()
-            traceback.print_exc(file=sio)
-            logger.log(logging.ERROR, sio.getvalue() )
-
-            host = socket.gethostname()
-            msg = f"Host {host}: Failed to write subvolume: offset_zyx = {offset_zyx.tolist()}, shape = {subvolume.shape}"
-
-            ex.args += (msg,)
-            raise
-
+            with self._resource_manager_client.access_context(self._server, False, 1, req_bytes):
+                post_raw( self._server, self._uuid, instance_name, offset_zyx, subvolume,
+                            throttle=self._throttle, mutate=not self.disable_indexing )
 
     def sample_labels(self, points_zyx, scale=0, npartitions=1024):
         msg = ("FIXME: DvidVolumeService.sample_labels() has not yet been optimized to use DVID's GET /label endpoint. "
                "This will be much slower than it could be.")
         logger.warning(msg)
         return super().sample_labels(points_zyx, scale, npartitions)
-
 
     def sparse_brick_coords_for_labels(self, labels, clip=True):
         """
@@ -922,4 +938,3 @@ class DvidVolumeService(VolumeServiceWriter):
             coords_df = coords_df.loc[keep]
 
         return coords_df[['z', 'y', 'x', 'label']]
-
