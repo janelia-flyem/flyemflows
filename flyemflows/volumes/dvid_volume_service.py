@@ -648,7 +648,7 @@ class DvidVolumeService(VolumeServiceWriter):
 
         with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
             if self._instance_type not in ('labelarray', 'labelmap'):
-                return fetch_raw(self._server, self._uuid, instance_name, box_zyx, self._throttle)
+                return fetch_raw(self._server, self._uuid, instance_name, box_zyx, self._throttle, dtype=self._dtype)
 
             # Fetch compressed data while we have the resource token
             vol_proxy = self._fetch_lazy_array(instance_name, box_zyx, scale)
