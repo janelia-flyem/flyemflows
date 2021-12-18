@@ -756,7 +756,7 @@ class CreateMeshes(Workflow):
                 logger.warning("Using skip-exists with a keyvalue output.  This might take a LONG time if there are many meshes already stored.")
                 kv_instance = [destination['keyvalue'][k] for k in ('server', 'uuid', 'instance')]
                 keys = fetch_keys(*kv_instance)
-                existing_svs = set(int(k[:-4]) for k in keys)
+                existing_svs = set(int(k.split('.')[0]) for k in keys)
 
         return existing_svs
 
