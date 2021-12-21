@@ -251,6 +251,12 @@ class CreateMeshes(Workflow):
                 "type": "boolean",
                 "default": False
             },
+            "if-nothing-to-do": {
+                "description": "If there's no work to do, due to skip-existing, should this workflow raise an exception, or exit successfully?",
+                "type": "string",
+                "enum": ['exit-as-failure', 'exit-as-success'],
+                "default": "exit-as-failure"
+            },
             "include-empty": {
                 "description": "Objects too small to generate proper meshes for may be 'serialized' as an empty buffer (0 bytes long).\n"
                                "This setting specifies whether 0-byte files are uploaded to the destination server in such cases,\n"
@@ -326,6 +332,9 @@ class CreateMeshes(Workflow):
         "createmeshes": CreateMeshesOptionsSchema,
 
     })
+
+    class NothingToDo(Exception):
+        pass
 
     @classmethod
     def schema(cls):
@@ -500,7 +509,15 @@ class CreateMeshes(Workflow):
         self._init_input_service()
         self._prepare_output()
 
-        subset_supervoxels, existing_svs = self._load_subset_supervoxels()
+        try:
+            subset_supervoxels, existing_svs = self._load_subset_supervoxels()
+        except CreateMeshes.NothingToDo as ex:
+            if self.config["createmeshes"]["if-nothing-to-do"] == "exit-as-success":
+                for line in str(ex).split('\n'):
+                    logger.warning(line)
+                return
+            raise
+
         batch_size = self.config["createmeshes"]["subset-batch-size"]
 
         # Prefetch all bricks for all batches because in most cases
@@ -700,8 +717,9 @@ class CreateMeshes(Workflow):
             subset_supervoxels = list(subset_supervoxels)
 
             if not subset_supervoxels:
-                raise RuntimeError("Based on your current settings, no meshes will be generated at all.\n"
-                                   "See subset-supervoxels and skip-existing")
+                raise CreateMeshes.NothingToDo(
+                    "Based on your current settings, no meshes will be generated at all.\n"
+                    "See subset-supervoxels and skip-existing")
 
         return subset_supervoxels, existing_svs
 
@@ -724,8 +742,9 @@ class CreateMeshes(Workflow):
         subset_bodies = self.input_service.base_service.determine_changed_labelmap_bodies(kafka_timestamp_string)
 
         if not subset_bodies:
-            raise RuntimeError("Based on your current settings, no meshes will be generated at all.\n"
-                               f"No bodies have changed since your specified timestamp {kafka_timestamp_string}")
+            raise CreateMeshes.NothingToDo(
+                "Based on your current settings, no meshes will be generated at all.\n"
+                f"No bodies have changed since your specified timestamp {kafka_timestamp_string}")
         return subset_bodies
 
 
@@ -860,8 +879,9 @@ class CreateMeshes(Workflow):
             brick_counts_df = brick_counts_df.query(q)
 
             if len(brick_counts_df) == 0:
-                raise RuntimeError("Based on your current settings, no meshes will be generated at all.\n"
-                                   "See sv-sizes.npy and body-sizes.npy")
+                raise CreateMeshes.NothingToDo(
+                    "Based on your current settings, no meshes will be generated at all.\n"
+                    "See sv-sizes.npy and body-sizes.npy")
 
 
             if options["skip-existing"]:
@@ -871,9 +891,10 @@ class CreateMeshes(Workflow):
 
                 brick_counts_df = brick_counts_df.query('sv not in @existing_svs')
                 if len(brick_counts_df) == 0:
-                    raise RuntimeError("Based on your current settings, no meshes will be generated at all.\n"
-                                       "All possible meshes already exist in the destination location.\n"
-                                       "To regenerate them anyway, use 'skip-existing: false'")
+                    raise CreateMeshes.NothingToDo(
+                        "Based on your current settings, no meshes will be generated at all.\n"
+                        "All possible meshes already exist in the destination location.\n"
+                        "To regenerate them anyway, use 'skip-existing: false'")
 
         with Timer(f"Batch {batch_index:02}: Saving filtered brick counts", logger):
             np.save('filtered-brick-counts.npy', brick_counts_df.to_records(index=False))
