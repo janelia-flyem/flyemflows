@@ -75,6 +75,13 @@ class DecimateMeshes(Workflow):
                 "type": "boolean",
                 "default": False,
             },
+            "if-nothing-to-do": {
+                "description": "If there's no work to do (e.g. due to skip-existing or if nothing has changed since the kafka timestmap),\n"
+                               "should this workflow raise an exception, or exit successfully?",
+                "type": "string",
+                "enum": ['exit-as-failure', 'exit-as-success'],
+                "default": "exit-as-failure"
+            },
             "format": {
                 "description": "Format to save the meshes in",
                 "type": "string",
@@ -201,7 +208,14 @@ class DecimateMeshes(Workflow):
 
             return (body_id, vertex_count, fraction, orig_vertices, 'success', mutid)
 
-        bodies = self._load_body_list(options["bodies"], server, uuid, seg_instance)
+        try:
+            bodies = self._load_body_list(options["bodies"], server, uuid, seg_instance)
+        except DecimateMeshes.NothingToDo as ex:
+            if options["if-nothing-to-do"] == "exit-as-success":
+                for line in str(ex).split('\n'):
+                    logger.warning(line)
+                return
+            raise
 
         # Choose more partitions than cores, so that early finishers have the opportunity to steal work.
         if len(bodies) < 1e5:
@@ -259,7 +273,8 @@ class DecimateMeshes(Workflow):
         subset_bodies = svc.determine_changed_labelmap_bodies(kafka_timestamp_string)
 
         if not subset_bodies:
-            raise RuntimeError("Based on your current settings, no meshes will be generated at all.\n"
-                               f"No bodies have changed since your specified timestamp {kafka_timestamp_string}")
+            raise DecimateMeshes.NothingToDo(
+                "Based on your current settings, no meshes will be generated at all.\n"
+                f"No bodies have changed since your specified timestamp {kafka_timestamp_string}")
 
         return subset_bodies
