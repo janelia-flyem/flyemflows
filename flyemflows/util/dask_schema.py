@@ -1,3 +1,23 @@
+#
+# https://docs.dask.org/en/latest/configuration-reference.html
+#
+
+DaskBaseSchemaProperties = \
+{
+    "temporary-directory": {
+        "description": "Temporary directory for local disk storage /tmp, /scratch, or /local.\n"
+                       "This directory is used during dask spill-to-disk operations.\n"
+                       "When the value is 'null' (default), dask will create a directory\n"
+                       "from where dask was launched: `cwd/dask-worker-space`\n",
+        "type": "string",
+        "oneOf": [
+            {"type": "string"},
+            {"type": "null"}
+        ],
+        "default": None
+    }
+}
+
 LsfJobSchema = \
 {
     "description": "dask-jobqueue config settings for LSF jobs.\n"
@@ -438,6 +458,7 @@ DaskConfigSchema = \
     "default": {},
     "properties": {
         "jobqueue": JobQueueSchema,
-        "distributed": DistributedSchema
+        "distributed": DistributedSchema,
+        **DaskBaseSchemaProperties
     }
 }
