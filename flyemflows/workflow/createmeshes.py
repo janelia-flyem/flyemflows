@@ -252,7 +252,8 @@ class CreateMeshes(Workflow):
                 "default": False
             },
             "if-nothing-to-do": {
-                "description": "If there's no work to do, due to skip-existing, should this workflow raise an exception, or exit successfully?",
+                "description": "If there's no work to do, due to skip-existing,\n"
+                               "should this workflow raise an exception, or exit successfully?",
                 "type": "string",
                 "enum": ['exit-as-failure', 'exit-as-success'],
                 "default": "exit-as-failure"
