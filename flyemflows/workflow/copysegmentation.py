@@ -237,6 +237,11 @@ class CopySegmentation(Workflow):
         slab_depth = self.config["copysegmentation"]["slab-depth"]
 
         # Process data in Z-slabs
+        # FIXME:
+        #   If the SBM is smaller than the overall bounding box,
+        #   then we should shrink the overall bounding box accordingly.
+        #   Right now, the empty slabs are processed anyway, leading to strange
+        #   errors when we attempt to extract non-existent parts of the SBM.
         output_slab_boxes = list( slabs_from_box(output_bb_zyx, slab_depth) )
         max_depth = max(map(lambda box: box[1][0] - box[0][0], output_slab_boxes))
         logger.info(f"Processing data in {len(output_slab_boxes)} slabs (max depth={max_depth}) for {pyramid_depth} pyramid levels")
@@ -402,7 +407,6 @@ class CopySegmentation(Workflow):
             assert (input_sbm.resolution == output_sbm.resolution).all(), \
                 "FIXME: At the moment, you can't supply both an input mask and an output "\
                 "mask unless the input and output sources use the same brick shape (message-block-shape)"
-
 
             final_box = box_intersection(input_sbm.box, output_sbm.box)
 
