@@ -1,4 +1,5 @@
 from .transposed_volume_service import TransposedVolumeService, NewAxisOrderSchema
+from .translated_volume_service import TranslatedVolumeService, TranslateSchema
 from .scaled_volume_service import ScaledVolumeService, RescaleLevelSchema
 from .labelmapped_volume_service import LabelmappedVolumeService, LabelMapSchema
 from .adapters_schema import GrayscaleAdapters, SegmentationAdapters

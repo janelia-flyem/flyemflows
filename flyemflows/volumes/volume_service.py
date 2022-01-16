@@ -121,6 +121,10 @@ class VolumeService(metaclass=ABCMeta):
         if ("transpose-axes" in adapter_config) and (adapter_config["transpose-axes"] != TransposedVolumeService.NO_TRANSPOSE):
             service = TransposedVolumeService(service, adapter_config["transpose-axes"])
 
+        from . import TranslatedVolumeService
+        if "translate" in adapter_config and adapter_config["translate"] != [0,0,0]:
+            service = TranslatedVolumeService(service, adapter_config["translate"])
+
         # Even if rescale-level == 0, we still wrap in a scaled volumeservice because
         # it enables more 'available-scales'.
         # We only avoid the ScaledVolumeService adapter if rescale-level is None.
