@@ -4,9 +4,10 @@ import platform
 import zarr
 import numcodecs
 import numpy as np
+from skimage.util import view_as_blocks
 
 from confiddler import validate, flow_style
-from neuclease.util import box_to_slicing, choose_pyramid_depth, box_intersection
+from neuclease.util import box_to_slicing, choose_pyramid_depth, box_intersection, boxes_from_grid, ndrange
 
 from ..util import replace_default_entries
 from . import VolumeServiceWriter, GeometrySchema, GrayscaleAdapters
@@ -116,6 +117,14 @@ ZarrServiceSchema = \
             "enum": ["forbid", "permit", "permit-empty"],
             "default": "permit-empty"
         },
+        "write-empty-blocks": {
+            "description": "Whether to write blocks which are completely zeros.  \n"
+                           "For new datasets, it's best to avoid the writes.  If you're overwring an existing dataset,\n"
+                           "then using this setting is not advisable unless you know that no empty blocks will need to\n"
+                           "be written to erase old data.",
+            "type": "boolean",
+            "default": True
+        },
         "writable": {
             "description": "If True, open the array in read/write mode, otherwise open in read-only mode.\n"
                            "By default, guess based on create-if-necessary.\n",
@@ -218,7 +227,7 @@ class ZarrVolumeService(VolumeServiceWriter):
         self._out_of_bounds_access = volume_config["zarr"]["out-of-bounds-access"]
 
         # Overwrite config entries that we might have modified
-        volume_config["geometry"]["block-width"] = self._block_width
+        volume_config["geometry"]["block-width"] = int(self._block_width)
         volume_config["geometry"]["bounding-box"] = self._bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["message-block-shape"] = self._preferred_message_shape_zyx[::-1].tolist()
 
@@ -279,35 +288,71 @@ class ZarrVolumeService(VolumeServiceWriter):
         stored_bounding_box = (self._bounding_box_zyx - self._global_offset) // (2**scale)
         if (box[0] >= 0).all() and (box[1] <= stored_bounding_box[1]).all():
             # Box is fully contained within the Zarr volume bounding box.
+            self._write_subvolume(subvolume, box, scale)
+            return
+
+        msg = ("Box extends beyond Zarr volume bounds (XYZ): "
+                f"{box[:, ::-1].tolist()} exceeds {stored_bounding_box[:, ::-1].tolist()}")
+
+        if self._out_of_bounds_access == 'forbid':
+            # Note that this message shows the true zarr storage bounds,
+            # and doesn't show the logical bounds according to global_offset (if any).
+            msg = "Cannot write subvolume. " + msg
+            msg += "\nAdd permit-out-of-bounds to your config to allow such writes,"
+            msg += " assuming the out-of-bounds portion is completely empty."
+            raise RuntimeError(msg)
+
+        clipped_box = box_intersection(box, stored_bounding_box)
+
+        # If any of the out-of-bounds portion is non-empty, that's an error.
+        subvol_copy = subvolume.copy()
+        subvol_copy[box_to_slicing(*(clipped_box - box[0]))] = 0
+        if self._out_of_bounds_access == 'permit-empty' and subvol_copy.any():
+            # Note that this message shows the true zarr storage bounds,
+            # and doesn't show the logical bounds according to global_offset (if any).
+            msg = ("Cannot write subvolume. Box extends beyond Zarr volume storage bounds (XYZ): "
+                f"{box[:, ::-1].tolist()} exceeds {stored_bounding_box[:, ::-1].tolist()}\n"
+                "and the out-of-bounds portion is not empty (contains non-zero values).\n")
+            raise RuntimeError(msg)
+
+        logger.warning(msg)
+        clipped_subvolume = subvolume[box_to_slicing(*clipped_box - box[0])]
+        self._write_subvolume(clipped_subvolume, clipped_box, scale)
+
+    def _write_subvolume(self, subvolume, box, scale):
+        if self._write_empty_blocks:
             self.zarr_dataset(scale)[box_to_slicing(*box)] = subvolume
+            return
+
+        # Check each block to see if any are empty
+        block_shape = self.zarr_dataset(scale).chunks
+        block_boxes = boxes_from_grid(box, block_shape, clipped=True)
+
+        if not (box % block_shape).any():
+            # Faster path for block-aligned subvolumes
+            subvolume = np.asarray(subvolume, order='C')
+            block_vols = view_as_blocks(subvolume, block_shape)
+            block_flags = block_vols.any(axis=(3,4,5)).ravel()
         else:
-            msg = ("Box extends beyond Zarr volume bounds (XYZ): "
-                   f"{box[:, ::-1].tolist()} exceeds {stored_bounding_box[:, ::-1].tolist()}")
+            block_flags = []
+            for block_box in block_boxes:
+                has_data = subvolume[box_to_slicing(*block_box - box[0])].any()
+                block_flags.append(has_data)
 
-            if self._out_of_bounds_access == 'forbid':
-                # Note that this message shows the true zarr storage bounds,
-                # and doesn't show the logical bounds according to global_offset (if any).
-                msg = "Cannot write subvolume. " + msg
-                msg += "\nAdd permit-out-of-bounds to your config to allow such writes,"
-                msg += " assuming the out-of-bounds portion is completely empty."
-                raise RuntimeError(msg)
+        if all(block_flags):
+            # No empty blocks; write it all in one operation
+            self.zarr_dataset(scale)[box_to_slicing(*box)] = subvolume
+            return
 
-            clipped_box = box_intersection(box, stored_bounding_box)
+        if not any(block_flags):
+            # All blocks are empty
+            return
 
-            # If any of the out-of-bounds portion is non-empty, that's an error.
-            subvol_copy = subvolume.copy()
-            subvol_copy[box_to_slicing(*(clipped_box - box[0]))] = 0
-            if self._out_of_bounds_access == 'permit-empty' and subvol_copy.any():
-                # Note that this message shows the true zarr storage bounds,
-                # and doesn't show the logical bounds according to global_offset (if any).
-                msg = ("Cannot write subvolume. Box extends beyond Zarr volume storage bounds (XYZ): "
-                    f"{box[:, ::-1].tolist()} exceeds {stored_bounding_box[:, ::-1].tolist()}\n"
-                    "and the out-of-bounds portion is not empty (contains non-zero values).\n")
-                raise RuntimeError(msg)
-
-            logger.warning(msg)
-            clipped_subvolume = subvolume[box_to_slicing(*clipped_box - box[0])]
-            self.zarr_dataset(scale)[box_to_slicing(*clipped_box)] = clipped_subvolume
+        # At least one empty block;
+        # So write blocks individually, skipping the empty ones.
+        for block_box, has_data in zip(block_boxes, block_flags):
+            if has_data:
+                self.zarr_dataset(scale)[box_to_slicing(*block_box)] = subvolume[box_to_slicing(*block_box - box[0])]
 
 
     @property
@@ -372,6 +417,8 @@ class ZarrVolumeService(VolumeServiceWriter):
             compressor = numcodecs.Blosc(cname)
         else:
             assert compression == "", f"Unimplemented compression: {compression}"
+
+        self._write_empty_blocks = volume_config["zarr"]["write-empty-blocks"]
 
         if create_if_necessary:
             max_scale = volume_config["zarr"]["creation-settings"]["max-scale"]

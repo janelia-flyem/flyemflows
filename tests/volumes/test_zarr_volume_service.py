@@ -82,7 +82,7 @@ def test_write(volume_setup):
     # Can't initialize service if file doesn't exist
     with pytest.raises(RuntimeError) as excinfo:
         ZarrVolumeService(config)
-    assert 'create-if-necessary' in str(excinfo.value)
+        assert 'create-if-necessary' in str(excinfo.value)
 
     assert not os.path.exists(config["zarr"]["path"])
     config["zarr"]["create-if-necessary"] = True
@@ -120,7 +120,75 @@ def test_write(volume_setup):
         service.write_subvolume(subvol, oob_box[0] + global_offset)
 
 
+def test_write_empty_blocks(volume_setup):
+    tmpdir = tempfile.mkdtemp()
+    config, volume = volume_setup
+    del config["zarr"]["global-offset"]
+
+    config["zarr"]["path"] = f"{tmpdir}/test_zarr_service_testvol_WRITE_EMPTY_BLOCKS.zarr"
+    if os.path.exists(config["zarr"]["path"]):
+        os.unlink(config["zarr"]["path"])
+
+    assert not os.path.exists(config["zarr"]["path"])
+    config["zarr"]["write-empty-blocks"] = False
+    config["zarr"]["create-if-necessary"] = True
+    config["zarr"]["creation-settings"] = {
+        "shape": [*volume.shape][::-1],
+        "dtype": str(volume.dtype),
+        "chunk-shape": [32,32,32],
+        "max-scale": 0
+    }
+
+    # Write some data
+    box = np.array([(0,0,0), (128, 128, 128)])
+    subvol = volume[box_to_slicing(*box)].copy()
+    subvol[0:32, 0:32, 0:32] = 0
+    subvol[32:64, 32:64, 32:64] = 0
+    subvol[32:64, 32:64, 64:96] = 0
+
+    #
+    # Block-aligned write
+    #
+    service = ZarrVolumeService(config)
+    service.write_subvolume(subvol, box[0])
+    d = config["zarr"]["path"] + '/' + config["zarr"]["dataset"]
+    _, subdirs, files = next(os.walk(d))
+
+    empty_chunks = {(0,0,0), (1,1,1), (1,1,2)}
+    nonempty_chunks = {*np.ndindex(4,4,4)} - empty_chunks
+    for cz, cy, cx in nonempty_chunks:
+        assert os.path.exists(f'{d}/{cz}/{cy}/{cx}')
+    for cz, cy, cx in empty_chunks:
+        assert not os.path.exists(f'{d}/{cz}/{cy}/{cx}')
+
+    # Read it back.
+    read_subvol = service.get_subvolume(box)
+    assert (read_subvol == subvol).all()
+
+    #
+    # Again, but with a non-block aligned write
+    #
+    box[0] += (1, 1, 1)
+    subvol = subvol[1:, 1:, 1:]
+
+    service = ZarrVolumeService(config)
+    service.write_subvolume(subvol, box[0])
+    d = config["zarr"]["path"] + '/' + config["zarr"]["dataset"]
+    _, subdirs, files = next(os.walk(d))
+
+    empty_chunks = {(0,0,0), (1,1,1), (1,1,2)}
+    nonempty_chunks = {*np.ndindex(4,4,4)} - empty_chunks
+    for cz, cy, cx in nonempty_chunks:
+        assert os.path.exists(f'{d}/{cz}/{cy}/{cx}')
+    for cz, cy, cx in empty_chunks:
+        assert not os.path.exists(f'{d}/{cz}/{cy}/{cx}')
+
+    # Read it back.
+    read_subvol = service.get_subvolume(box)
+    assert (read_subvol == subvol).all()
+
+
 if __name__ == "__main__":
     args = ['-s', '--tb=native', '--pyargs', 'tests.volumes.test_zarr_volume_service']
-    #args += ['-k', 'write']
+    #args += ['-k', 'write_empty_blocks']
     pytest.main(args)
