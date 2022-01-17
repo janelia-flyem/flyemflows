@@ -1,4 +1,5 @@
 import os
+import json
 import platform
 
 import zarr
@@ -7,7 +8,7 @@ import numpy as np
 from skimage.util import view_as_blocks
 
 from confiddler import validate, flow_style
-from neuclease.util import box_to_slicing, choose_pyramid_depth, box_intersection, boxes_from_grid, ndrange
+from neuclease.util import box_to_slicing, choose_pyramid_depth, box_intersection, boxes_from_grid, ndrange, dump_json
 
 from ..util import replace_default_entries
 from . import VolumeServiceWriter, GeometrySchema, GrayscaleAdapters
@@ -60,6 +61,14 @@ ZarrCreationSettingsSchema = \
             "type": "string",
             "enum": ['', 'gzip', 'blosc-blosclz', 'blosc-lz4', 'blosc-lz4hc', 'blosc-snappy', 'blosc-zlib', 'blosc-zstd'],
             "default": 'blosc-zstd'
+        },
+        "resolution": {
+            "description": "Resolution of the s0 data, in nanometers",
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 3,
+            "maxItems": 3,
+            "default": flow_style([8.0, 8.0, 8.0])
         }
     }
 }
@@ -180,6 +189,9 @@ class ZarrVolumeService(VolumeServiceWriter):
         self._zarr_datasets = {}
 
         self._ensure_datasets_exist(volume_config)
+
+        if volume_config["zarr"]["store-type"] == "N5Store":
+            self._ensure_multires_n5_attributes(volume_config)
 
         if isinstance(self.zarr_dataset(0), zarr.hierarchy.Group):
             raise RuntimeError("The Zarr dataset you specified appears to be a 'group', not a volume.\n"
@@ -475,3 +487,40 @@ class ZarrVolumeService(VolumeServiceWriter):
                                                                             dtype=np.dtype(dtype),
                                                                             chunks=chunks,
                                                                             compressor=compressor )
+
+    def _ensure_multires_n5_attributes(self, volume_config):
+        """
+        If we're writing to n5, then the parent directory containing
+        s0, s1, etc. should have an attributes.json file with certain values
+        that neuroglancer (and BigDataViewer) knows how to interpret.
+        """
+        max_scale = volume_config["zarr"]["creation-settings"]["max-scale"]
+        scales = [[2**s, 2**s, 2**s] for s in range(1+max_scale)]
+
+        new_attributes = {
+            "pixelResolution": {
+                "dimensions": volume_config["zarr"]["creation-settings"]["resolution"],
+                "unit":"nm"
+            },
+            "multiScale": True,
+            "scales": scales,
+            "axes":["x", "y", "z"],
+            "units":["nm", "nm", "nm"],
+            #"n5":"2.5.0",
+            #"translate":[0, 0, 0]
+        }
+
+        path = volume_config["zarr"]["path"]
+        dset_name = volume_config["zarr"]["dataset"]
+        dset_path = f'{path}/{dset_name}'
+        dset_dir = os.path.dirname(dset_path)
+        attrs_path = f'{dset_dir}/attributes.json'
+
+        # Combine with existing attributes (if any)
+        with open(attrs_path, 'r') as f:
+            attributes = json.load(f)
+
+        attributes.update(new_attributes)
+        attributes.setdefault('n5', '2.5.0')
+
+        dump_json(attributes, attrs_path, unsplit_int_lists=True)
