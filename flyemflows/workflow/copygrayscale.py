@@ -129,6 +129,15 @@ class CopyGrayscale(Workflow):
                                "Use this setting to specify whether such padding is required.\n",
                 "type": "boolean",
                 "default": True # FIXME: This is the default because that's what DVID needs, but most sources don't.
+            },
+
+            "drop-empty-bricks": {
+                "description": "Discard completely empty (all zero) bricks immediately after reading them.\n"
+                               "This is faster for data with empty regions, but it prevents you from overwriting old data with zeros.\n"
+                               "Also, this setting operates at the 'brick' level, not the storage location's native 'block' level,\n"
+                               " which is usually more fine-grained.\n",
+                "type": "boolean",
+                "default": False
             }
         }
     }
@@ -273,7 +282,8 @@ class CopyGrayscale(Workflow):
         if pyramid_source == "copy" or scale == 0:
             # Copy from input source
             bricked_slab_wall = BrickWall.from_volume_service(self.input_service, scale, slab_fullres_box_zyx, self.client, partition_voxels)
-            bricked_slab_wall = bricked_slab_wall.drop_empty()
+            if options["drop-empty-bricks"]:
+                bricked_slab_wall = bricked_slab_wall.drop_empty()
             bricked_slab_wall.persist_and_execute(f"Slab {slab_index}: Downloading scale {scale}", logger)
         else:
             # Downsample from previous scale
