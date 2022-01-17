@@ -9,7 +9,6 @@ DaskBaseSchemaProperties = \
                        "This directory is used during dask spill-to-disk operations.\n"
                        "When the value is 'null' (default), dask will create a directory\n"
                        "from where dask was launched: `cwd/dask-worker-space`\n",
-        "type": "string",
         "oneOf": [
             {"type": "string"},
             {"type": "null"}
