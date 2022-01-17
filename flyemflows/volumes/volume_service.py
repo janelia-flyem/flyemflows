@@ -7,6 +7,7 @@ import pandas as pd
 
 from neuclease.util import Timer, lexsort_columns, groupby_presorted
 from dvid_resource_manager.client import ResourceManagerClient
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,6 +70,7 @@ class VolumeService(metaclass=ABCMeta):
         from .n5_volume_service import N5VolumeService
         from .zarr_volume_service import ZarrVolumeService
         from .slice_files_volume_service import SliceFilesVolumeService
+        from .adapters.adapters_schema import ADAPTER_ORDER
 
         VolumeService.remove_default_service_configs(volume_config)
 
@@ -111,6 +113,18 @@ class VolumeService(metaclass=ABCMeta):
         if 'labelmap' in adapter_config:
             raise RuntimeError("Bad key for volume service: 'labelmap' -- did you mean 'apply-labelmap'?")
 
+        ## TODO: It would be nice to require the user to specify these adapters in the
+        #        exact order that they are applied here, to avoid confusion about that.
+        #        The ordering of 'transpose-axes' and `translate` changes the semantics,
+        #        so the user had better not be confused!
+
+        # Ensure config entries are listed in the canonical order.
+        expected_adapter_order = [*filter(lambda k: k in ADAPTER_ORDER, adapter_config.keys())]
+        if [*adapter_config.keys()] != expected_adapter_order:
+            msg = ("Your config lists adapters in a different order than the order in which they will be constructed.\n"
+                   "To avoid confusion, you must specify your adapters in the proper order: {ADAPTER_ORDER}")
+            raise RuntimeError(msg)
+
         # Wrap with labelmap service
         from . import LabelmappedVolumeService
         if ("apply-labelmap" in adapter_config) and (adapter_config["apply-labelmap"]["file-type"] != "__invalid__"):
@@ -121,6 +135,7 @@ class VolumeService(metaclass=ABCMeta):
         if ("transpose-axes" in adapter_config) and (adapter_config["transpose-axes"] != TransposedVolumeService.NO_TRANSPOSE):
             service = TransposedVolumeService(service, adapter_config["transpose-axes"])
 
+        # Wrap with translate service
         from . import TranslatedVolumeService
         if "translate" in adapter_config and adapter_config["translate"] != [0,0,0]:
             service = TranslatedVolumeService(service, adapter_config["translate"])
