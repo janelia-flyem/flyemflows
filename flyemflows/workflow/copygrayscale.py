@@ -273,6 +273,7 @@ class CopyGrayscale(Workflow):
         if pyramid_source == "copy" or scale == 0:
             # Copy from input source
             bricked_slab_wall = BrickWall.from_volume_service(self.input_service, scale, slab_fullres_box_zyx, self.client, partition_voxels)
+            bricked_slab_wall = bricked_slab_wall.drop_empty()
             bricked_slab_wall.persist_and_execute(f"Slab {slab_index}: Downloading scale {scale}", logger)
         else:
             # Downsample from previous scale
