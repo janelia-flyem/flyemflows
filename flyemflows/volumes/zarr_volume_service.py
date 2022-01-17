@@ -320,6 +320,9 @@ class ZarrVolumeService(VolumeServiceWriter):
         self._write_subvolume(clipped_subvolume, clipped_box, scale)
 
     def _write_subvolume(self, subvolume, box, scale):
+        assert (subvolume.shape == box[1] - box[0]).all(), \
+            f"shape (XYZ) {subvolume.shape[::-1]} doesn't match box (XYZ) {box[:, ::-1].tolist()}"
+
         if self._write_empty_blocks:
             self.zarr_dataset(scale)[box_to_slicing(*box)] = subvolume
             return
