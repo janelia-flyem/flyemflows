@@ -1,5 +1,6 @@
 import logging
 import numpy as np
+from numba import njit
 
 from .. import VolumeServiceReader
 
@@ -16,6 +17,17 @@ NewAxisOrderSchema = \
     "items": { "type": "string", "enum": ["x", "y", "z", "1-x", "1-y", "1-z"] },
     "default": flow_style(["x", "y", "z"]) # no transpose
 }
+
+@njit
+def numba_any(a):
+    """
+    Like np.any(), but uses short-circuiting to return as soon as possible.
+    """
+    for x in a.ravel():
+        if x:
+            return True
+    return False
+
 
 class TransposedVolumeService(VolumeServiceReader):
     """
@@ -105,7 +117,6 @@ class TransposedVolumeService(VolumeServiceReader):
         self.new_axis_order_zyx = new_axis_order_zyx
         self.original_volume_service = original_volume_service
 
-
         self.axis_names = [ a[-1] for a in new_axis_order_zyx ]
         assert set(self.axis_names) == set(['z', 'y', 'x'])
         self.transpose_order = tuple('zyx'.index(a) for a in self.axis_names)  # where to find the new axis in the old order
@@ -169,5 +180,10 @@ class TransposedVolumeService(VolumeServiceReader):
         data = data[inversion_slices]
 
         # Force contiguous so caller doesn't have to worry about it.
-        data = np.asarray(data, order='C')
-        return data
+        if numba_any(data):
+            # Note: This is actually somewhat expensive.
+            return np.asarray(data, order='C')
+        else:
+            # Special optimization for completely empty arrays:
+            # It's much faster to just reshape the buffer instead of incurring a copy.
+            return data.ravel('K').reshape(data.shape, order='C')
