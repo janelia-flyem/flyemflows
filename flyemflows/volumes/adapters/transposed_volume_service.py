@@ -23,7 +23,7 @@ def numba_any(a):
     """
     Like np.any(), but uses short-circuiting to return as soon as possible.
     """
-    for x in a.ravel():
+    for x in a.ravel(order='K'):
         if x:
             return True
     return False
@@ -187,7 +187,9 @@ class TransposedVolumeService(VolumeServiceReader):
 
         # Force contiguous so caller doesn't have to worry about it.
         if numba_any(data):
-            # Note: This is actually somewhat expensive.
+            # FIXME: This is actually pretty expensive, and probably not necessary for many use-cases.
+            #        Maybe we should add a config option to skip
+            #        this step in cases where we don't really need it.
             return np.asarray(data, order='C')
         else:
             # Special optimization for completely empty arrays:
