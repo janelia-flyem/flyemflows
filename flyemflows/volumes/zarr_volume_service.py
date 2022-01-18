@@ -189,9 +189,7 @@ class ZarrVolumeService(VolumeServiceWriter):
         self._zarr_datasets = {}
 
         self._ensure_datasets_exist(volume_config)
-
-        if volume_config["zarr"]["store-type"] == "N5Store":
-            self._ensure_multires_n5_attributes(volume_config)
+        self._ensure_multires_n5_attributes(volume_config)
 
         if isinstance(self.zarr_dataset(0), zarr.hierarchy.Group):
             raise RuntimeError("The Zarr dataset you specified appears to be a 'group', not a volume.\n"
@@ -444,6 +442,9 @@ class ZarrVolumeService(VolumeServiceWriter):
                                        "volume creation shape (or bounding box")
                 max_scale = choose_pyramid_depth(creation_shape, 512)
 
+                # Overwrite config
+                volume_config["zarr"]["creation-settings"]["max-scale"] = max_scale
+
             available_scales = [*range(1+max_scale)]
         else:
             available_scales = volume_config["geometry"]["available-scales"]
@@ -494,7 +495,18 @@ class ZarrVolumeService(VolumeServiceWriter):
         s0, s1, etc. should have an attributes.json file with certain values
         that neuroglancer (and BigDataViewer) knows how to interpret.
         """
+        if volume_config["zarr"]["store-type"] != "N5Store":
+            return
+
+        writable = volume_config["zarr"]["writable"]
+        if writable is None:
+            writable = volume_config["zarr"]["create-if-necessary"]
+
+        if not writable:
+            return
+
         max_scale = volume_config["zarr"]["creation-settings"]["max-scale"]
+        assert max_scale >= 0
         scales = [[2**s, 2**s, 2**s] for s in range(1+max_scale)]
 
         new_attributes = {
