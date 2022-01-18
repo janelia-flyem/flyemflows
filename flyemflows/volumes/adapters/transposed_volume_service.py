@@ -123,10 +123,16 @@ class TransposedVolumeService(VolumeServiceReader):
         self.rev_transpose_order = tuple(self.axis_names.index(a) for a in 'zyx')  # where to find the original axis in the new order
         self.axis_inversions = [a.startswith('1-') for a in new_axis_order_zyx]
 
-        for i, (new, orig) in enumerate( zip(new_axis_order_zyx, 'zyx') ):
-            if new != orig:
+        for i, new_axis in enumerate(new_axis_order_zyx):
+            if new_axis in {'1-z', '1-y', '1-x'}:
+                # FIXME: This assertion is necessary because of how the '1-x' axes are supported.
+                #        I need to reverse the voxel order between 0 and <max>,
+                #        which could (potentially) have unintended consequences if users try to
+                #        process a subvolume of a larger volume. For that reason, the logic in get_subvolume()
+                #        doesn't even attempt to handle non-zero bounding box starts.
+                #        I ought to just permit users to provide a 'global' bounding box as a separate config setting.
                 assert self.bounding_box_zyx[0, i] == 0, \
-                    "Bounding box must start at the origin for transposed axes."
+                    "Inverted axes are only supported if the bounding box starts at the origin for those axes. \n"
 
         logger.info(f"Initialized TransposedVolumeService with bounding box (XYZ): {self.bounding_box_zyx[:,::-1].tolist()}")
 
