@@ -75,7 +75,7 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
  
         copysegmentation:
           pyramid-depth: 1
-          slab-depth: 128
+          slab-shape: [-1, -1, 128]
     """)
  
     with open(f"{template_dir}/workflow.yaml", 'w') as f:
@@ -136,7 +136,7 @@ def setup_dvid_to_zarr(setup_dvid_repo, random_segmentation):
  
         copysegmentation:
           pyramid-depth: 1
-          slab-depth: 128
+          slab-shape: [-1, -1, 128]
     """)
  
     with open(f"{template_dir}/workflow.yaml", 'w') as f:
@@ -197,7 +197,7 @@ def setup_hdf5_segmentation_input(setup_dvid_repo, write_hdf5_volume):
         
         copysegmentation:
           pyramid-depth: 1
-          slab-depth: 128
+          slab-shape: [-1, -1, 128]
           download-pre-downsampled: false
     """)
 
@@ -529,7 +529,7 @@ def test_copysegmentation_from_brainmaps_to_dvid(setup_dvid_repo):
  
         copysegmentation:
           pyramid-depth: 2
-          slab-depth: 128
+          slab-shape: [-1, -1, 128]
           download-pre-downsampled: true
     """)
  

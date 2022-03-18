@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from confiddler import flow_style
 
-from neuclease.util import (Timer, Grid, slabs_from_box, block_stats_for_volume, BLOCK_STATS_DTYPES,
+from neuclease.util import (Timer, Grid, boxes_from_grid, block_stats_for_volume, BLOCK_STATS_DTYPES,
                             mask_for_labels, box_intersection, extract_subvol, SparseBlockMask)
 from neuclease.dvid import fetch_repo_instances, fetch_instance_info
 from neuclease.dvid.rle import runlength_encode_to_ranges
@@ -150,13 +150,24 @@ class CopySegmentation(Workflow):
                 "type": "boolean",
                 "default": False
             },
-            "slab-depth": {
-                "description": "The data is downloaded and processed in Z-slabs.\n"
+            "slab-shape": {
+                "description": "The data is downloaded and processed in big slabs.\n"
                                "This setting determines how thick each Z-slab is.\n"
-                               "Should be a multiple of (block_width * 2**pyramid_depth) to ensure slabs\n"
-                               "are completely independent, even after downsampling.\n",
+                               "If you make it a multiple of the message-block-shape, \n"
+                               "then slabs will be completely independent, even after downsampling.\n"
+                               "(But that's not a requirement.)\n",
+                "type": "array",
+                "items": {
+                    "type": "integer",
+                    "minItems": 3,
+                    "maxItems": 3,
+                },
+                "default": flow_style([-1,-1,-1])  # Choose automatically: full XY plane, with Z = block_width * 2**pyramid_depth
+            },
+            "slab-depth": {
+                "description": "Deprecated. Do not use.",
                 "type": "integer",
-                "default": -1 # Choose automatically: block_width * 2**pyramid_depth
+                "default": -1
             },
             "delay-minutes-between-slabs": {
                 "description": "Optionally introduce an artificial pause after finishing one slab before starting the next,\n"
@@ -234,7 +245,7 @@ class CopySegmentation(Workflow):
             logger.info(f"Translation offset is {self.translation_offset_zyx[:, ::-1].tolist()}")
 
         pyramid_depth = self.config["copysegmentation"]["pyramid-depth"]
-        slab_depth = self.config["copysegmentation"]["slab-depth"]
+        slab_shape = self.config["copysegmentation"]["slab-shape"][::-1]
 
         # Process data in Z-slabs
         # FIXME:
@@ -242,9 +253,10 @@ class CopySegmentation(Workflow):
         #   then we should shrink the overall bounding box accordingly.
         #   Right now, the empty slabs are processed anyway, leading to strange
         #   errors when we attempt to extract non-existent parts of the SBM.
-        output_slab_boxes = list( slabs_from_box(output_bb_zyx, slab_depth) )
+
+        output_slab_boxes = boxes_from_grid(output_bb_zyx, slab_shape, clipped=True)
         max_depth = max(map(lambda box: box[1][0] - box[0][0], output_slab_boxes))
-        logger.info(f"Processing data in {len(output_slab_boxes)} slabs (max depth={max_depth}) for {pyramid_depth} pyramid levels")
+        logger.info(f"Processing data in {len(output_slab_boxes)} slabs (mega-bricks) for {pyramid_depth} pyramid levels")
 
         if self.config["copysegmentation"]["compute-block-statistics"]:
             self._init_stats_file()
@@ -275,7 +287,7 @@ class CopySegmentation(Workflow):
         mgr_options = self.config["resource-manager"]
 
         options = self.config["copysegmentation"]
-        slab_depth = options["slab-depth"]
+        slab_shape = options["slab-shape"][::-1]
         pyramid_depth = options["pyramid-depth"]
         permit_inconsistent_pyramids = options["permit-inconsistent-pyramid"]
 
@@ -283,9 +295,8 @@ class CopySegmentation(Workflow):
         self.input_service = VolumeService.create_from_config( input_config, self.mgr_client )
 
         brick_shape = self.input_service.preferred_message_shape
-        if slab_depth % brick_shape[0] != 0:
-            self.input_service.preferred_message_shape[0]
-            logger.warning(f"Your slab-depth {slab_depth} is not a multiple of the input's brick width {brick_shape[0]}")
+        if (slab_shape % brick_shape).any():
+            logger.warning(f"Your slab-shape {slab_shape} is not a multiple of the input's brick shape {brick_shape}")
 
         if isinstance(self.input_service.base_service, DvidVolumeService):
             assert input_config["dvid"]["supervoxels"], \
@@ -490,12 +501,17 @@ class CopySegmentation(Workflow):
             options["pyramid-depth"] = self._read_pyramid_depth()
         pyramid_depth = options["pyramid-depth"]
 
+        # Default slab shape is a full XY slice and a single block in Z
         block_width = self.output_service.block_width
+        default_slab_shape = self.input_service.bounding_box_zyx[1] - self.input_service.bounding_box_zyx[0]
+        default_slab_shape[0] = block_width * 2**pyramid_depth
 
-        slab_depth = options["slab-depth"]
-        if slab_depth == -1:
-            slab_depth = block_width * 2**pyramid_depth
-        options["slab-depth"] = slab_depth
+        if options["slab-depth"] != -1:
+            raise RuntimeError("Config problem: 'slab-depth' is no longer a valid setting.  Please use 'slab-shape' instead.")
+
+        slab_shape = options["slab-shape"][::-1]
+        replace_default_entries(slab_shape, default_slab_shape)
+        options["slab-shape"] = slab_shape[::-1]
 
         if (options["download-pre-downsampled"] and (options["input-mask-labels"] or options["output-mask-labels"])):
             # TODO: This restriction could be lifted if we also used the mask when fetching
