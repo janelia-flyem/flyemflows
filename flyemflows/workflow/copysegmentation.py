@@ -655,13 +655,11 @@ class CopySegmentation(Workflow):
                     brick.compress()
                     return block_stats_for_volume(block_shape, vol, brick.physical_box)
 
+                # We compute stats now (while the scale-0 data is available),
+                # but don't append them to the file until after the slab successfully computes, below.
                 slab_block_stats_per_brick = padded_wall.bricks.map(block_stats_for_brick).compute()
                 slab_block_stats_df = pd.concat(slab_block_stats_per_brick, ignore_index=True)
                 del slab_block_stats_per_brick
-
-            with Timer(f"Slab {slab_index}: Appending stats and overwriting stats file"):
-                self._append_slab_statistics( slab_block_stats_df )
-
 
         for new_scale in range(1, 1+pyramid_depth):
             if options["download-pre-downsampled"] and new_scale in self.input_service.available_scales:
@@ -689,6 +687,12 @@ class CopySegmentation(Workflow):
             padded_wall = consolidated_wall
             del consolidated_wall
         del padded_wall
+
+        # Now we append to the stats file, after successfully writing all scales.
+        # This saves us from writing duplicate stats in the event that we have to kill the job and resume it.
+        if options["compute-block-statistics"]:
+            with Timer(f"Slab {slab_index}: Appending to stats file"):
+                self._append_slab_statistics( slab_block_stats_df )
 
 
     def _consolidate_and_pad(self, slab_index, input_wall, scale, output_service):
