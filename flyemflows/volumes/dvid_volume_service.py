@@ -205,6 +205,11 @@ DvidSegmentationServiceSchema = \
             "type": "boolean",
             "default": False
         },
+        "ingestion-mode": {
+            "description": "If true, posts to labelmap instances will be made via POST /ingest-supervoxels, rather than POST .../blocks",
+            "type": "boolean",
+            "default": True,
+        },
         "gzip-level": {
             "description": "When posting labelmap data, each block is encoded and compressed with gzip.\n"
                            "This sets the gzip compression level, from 0 (no compression) to 9 (max).\n",
@@ -321,6 +326,12 @@ class DvidVolumeService(VolumeServiceWriter):
             bs_x, bs_y, bs_z = instance_info["Extended"]["BlockSize"]
             assert (bs_x == bs_y == bs_z), "Expected blocks to be cubes."
             block_width = bs_x
+
+        self._ingestion_mode = volume_config["dvid"]["ingestion-mode"]
+        if self._ingestion_mode and self._instance_type != 'labelmap':
+            raise RuntimeError(
+                f"Config problem: The 'ingestion-mode' setting only works with "
+                "'labelmap' instances, not '{self._instance_type}' instances.")
 
         if "disable-indexing" in volume_config["dvid"]:
             self.disable_indexing = volume_config["dvid"]["disable-indexing"]
@@ -747,7 +758,7 @@ class DvidVolumeService(VolumeServiceWriter):
                 # Post pre-encoded data with 'is_raw'
                 post_labelmap_blocks( self._server, self._uuid, instance_name, None, encoded, scale,
                                         self.enable_downres, self.disable_indexing, self._throttle,
-                                        is_raw=True )
+                                        is_raw=True, ingestion_mode=self._ingestion_mode )
         else:
             assert not self.enable_downres, \
                 "Can't use enable-downres: You are attempting to post non-block-aligned data."
