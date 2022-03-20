@@ -474,6 +474,9 @@ class DvidVolumeService(VolumeServiceWriter):
         """
         if self.instance_name in fetch_repo_instances(self.server, self.uuid):
             logger.info(f"'{self.instance_name}' already exists, skipping creation")
+            did_update = update_extents(self.server, self.uuid, self.instance_name, self.bounding_box_zyx)
+            if did_update:
+                logger.info(f"Updated extents metadata for '{self.instance_name}'")
             return
 
         settings = volume_config["dvid"]["creation-settings"]
@@ -502,14 +505,7 @@ class DvidVolumeService(VolumeServiceWriter):
                                   settings["enable-index"],
                                   pyramid_depth )
 
-        # Workaround for https://github.com/janelia-flyem/dvid/issues/344
-        # Write an empty block to the first and last blocks to set the
-        # bounding-box in DVID now, without any concurrency issues.
-        empty_block = np.zeros((64,64,64), np.uint64)
-        first_block_start, last_block_stop = round_box(self.bounding_box_zyx, 64, 'out')
-        last_block_start = last_block_stop - 64
-        self.write_subvolume(empty_block, first_block_start)
-        self.write_subvolume(empty_block, last_block_start)
+        update_extents( self.server, self.uuid, self.instance_name, self.bounding_box_zyx )
 
     def _create_grayscale_instances(self, volume_config):
         """
