@@ -459,7 +459,17 @@ class StatsBatchProcessor:
                 if not str(ex.response.status_code).startswith('4'):
                     logger.warning(f"Failed to fetch LabelIndex for label: {labelindex.label} due to error {ex.response.status_code}")
             else:
-                if (labelindex.blocks != existing_labelindex.blocks):
+                mismatch = len(labelindex.blocks) != len(existing_labelindex.blocks)
+                if not mismatch:
+                    new_df = convert_labelindex_to_pandas(labelindex).blocks
+                    old_df = convert_labelindex_to_pandas(existing_labelindex).blocks
+
+                    # Compare contents, but sort first to avoid superficial ordering differences.
+                    new_df.sort_values([*'zyx', 'sv', 'count'], ignore_index=True, inplace=True)
+                    old_df.sort_values([*'zyx', 'sv', 'count'], ignore_index=True, inplace=True)
+                    mismatch = (new_df != old_df).any().any()
+
+                if mismatch:
                     # Update the mut_id to match the previous one.
                     labelindex.last_mutid = existing_labelindex.last_mutid
                     mismatch_batch.append(labelindex)
