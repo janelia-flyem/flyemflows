@@ -442,14 +442,22 @@ class StatsBatchProcessor:
     def process_batch(self, batch_and_rowcount):
         """
         Takes a batch of grouped stats rows and sends it to dvid in the appropriate protobuf format.
-        
+
         If self.check_mismatches is True, read the labelindex for each 
         """
         next_stats_batch, next_stats_batch_total_rows = batch_and_rowcount
+
         labelindex_batch = chain(*map(self.label_indexes_for_body, next_stats_batch))
 
+        # Important to extract chain() iterable contents first,
+        # since post_labelindex_batch() might auto_retry...
+        labelindex_batch = list(labelindex_batch)
+
         if not self.check_mismatches:
-            post_labelindex_batch(*self.instance_info, labelindex_batch)
+            try:
+                post_labelindex_batch(*self.instance_info, labelindex_batch)
+            except Exception as ex:
+                raise RuntimeError(f"Failed to post {len(labelindex_batch)} label indexes") from ex
             return next_stats_batch_total_rows, [], []
 
         # Check for mismatches
