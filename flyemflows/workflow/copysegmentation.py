@@ -847,6 +847,8 @@ class CopySegmentation(Workflow):
                                                                  self.client,
                                                                  self.target_partition_size_voxels,
                                                                  compression=options["brick-compression"])
+
+                downsampled_wall = self._add_label_offset_to_wall(downsampled_wall)
                 downsampled_wall.persist_and_execute(f"Slab {slab_index}: Scale {new_scale}: Downloading pre-downsampled bricks", logger)
             else:
                 # Compute downsampled (results in smaller bricks)
