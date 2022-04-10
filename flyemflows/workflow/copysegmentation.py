@@ -594,6 +594,7 @@ class CopySegmentation(Workflow):
         )
         if not need_scale_0:
             # We can just write the pyramids and skip the rest of this function
+            logger.info(f"Slab {slab_index}: Starting pyramids for box {input_slab_box[:,::-1].tolist()} (xyz)")
             self._write_pyramids(slab_index, input_slab_box, slab_sbm, None, output_service)
             return
 
@@ -614,7 +615,7 @@ class CopySegmentation(Workflow):
             if "SparseBlockMask selects no blocks" in str(ex):
                 return
 
-        input_wall.persist_and_execute(f"Slab {slab_index}: Reading ({input_slab_box[:,::-1].tolist()})", logger)
+        input_wall.persist_and_execute(f"Slab {slab_index}: Reading from box {input_slab_box[:,::-1].tolist()} (xyz)", logger)
 
         # Translate coordinates from input to output
         # (which will leave the bricks in a new, offset grid)
