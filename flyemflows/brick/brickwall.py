@@ -174,16 +174,22 @@ class BrickWall:
             assert isinstance(sparse_block_mask, SparseBlockMask)
             sparse_block_mask = copy.deepcopy(sparse_block_mask)
             new_resolution = sparse_block_mask.resolution // (2**scale)
-            assert not (new_resolution % 1).any(), \
-                ("Can't adjust the scale of your SparseBlockMask "
-                f"because the scale factor (2**{scale}=={2**scale}) doesn't divide evenly "
-                f"into the SBM resolution ({sparse_block_mask.resolution}).")
-            new_resolution = new_resolution.astype(int)
-            sparse_block_mask.change_resolution(new_resolution)
-            sparse_boxes = sparse_block_mask.sparse_boxes(grid)
-            if len(sparse_boxes) == 0:
-                # Some workflows check for this message; if you change it, change those checks!
-                raise RuntimeError("SparseBlockMask selects no blocks at all!")
+
+            if (new_resolution == 0).any():
+                # FIXME: If we're downloading a lower resolution than the SBM is defined at,
+                #        just ignore the SBM for now.
+                sparse_block_mask = None
+            else:
+                assert not (new_resolution % 1).any(), \
+                    ("Can't adjust the scale of your SparseBlockMask "
+                    f"because the scale factor (2**{scale}=={2**scale}) doesn't divide evenly "
+                    f"into the SBM resolution ({sparse_block_mask.resolution}).")
+                new_resolution = new_resolution.astype(int)
+                sparse_block_mask.change_resolution(new_resolution)
+                sparse_boxes = sparse_block_mask.sparse_boxes(grid)
+                if len(sparse_boxes) == 0:
+                    # Some workflows check for this message; if you change it, change those checks!
+                    raise RuntimeError("SparseBlockMask selects no blocks at all!")
 
         return BrickWall.from_accessor_func( downsampled_box,
                                              grid,
