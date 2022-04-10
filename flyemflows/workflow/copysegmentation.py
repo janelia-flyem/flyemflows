@@ -579,12 +579,23 @@ class CopySegmentation(Workflow):
         6. Downsample the bricks and repeat steps 3-5 for the downsampled scale.
         """
         options = self.config["copysegmentation"]
+        output_service = self.output_service
 
         input_slab_box = output_slab_box - self.translation_offset_zyx
         if self.sbm is None:
             slab_sbm = None
         else:
             slab_sbm = SparseBlockMask.create_from_sbm_box(self.sbm, input_slab_box)
+
+        need_scale_0 = (
+            not options["skip-scale-0-write"] or
+            not options["download-pre-downsampled"] or
+            options["compute-block-statistics"]
+        )
+        if not need_scale_0:
+            # We can just write the pyramids and skip the rest of this function
+            self._write_pyramids(slab_index, input_slab_box, slab_sbm, None, output_service)
+            return
 
         try:
             input_wall = BrickWall.from_volume_service( self.input_service,
@@ -612,10 +623,9 @@ class CopySegmentation(Workflow):
             input_wall = input_wall.translate(self.translation_offset_zyx)
 
         input_wall = self._add_label_offset_to_wall(input_wall)
-        output_service = self.output_service
 
         # Pad internally to block-align to the OUTPUT alignment.
-        # Here, we assume that any output labelmap (if any) is idempotent,
+        # Here, we assume that any output labelmap adapter (if any) is idempotent,
         # so it's okay to read pre-existing output data that will ultimately get remapped.
         padded_wall = self._consolidate_and_pad(slab_index, input_wall, 0, output_service)
 
