@@ -308,7 +308,7 @@ def ingest_label_indexes( server,
 
     all_mismatch_ids = []
     all_missing_ids = []
-    pool = multiprocessing.Pool(num_threads)
+    pool = multiprocessing.get_context('fork').Pool(num_threads)
     with progress_bar, pool:
         # Rather than call pool.imap_unordered() with processor.process_batch(),
         # we use globally declared process_batch(), as explained below.
