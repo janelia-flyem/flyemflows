@@ -858,6 +858,9 @@ class CopySegmentation(Workflow):
                         # We assume that there's no point in processing remaining scales, either.
                         return
 
+                if any(self.translation_offset_zyx):
+                    downsampled_wall = downsampled_wall.translate(self.translation_offset_zyx // 2**new_scale)
+
                 downsampled_wall = self._add_label_offset_to_wall(downsampled_wall)
                 downsampled_wall.persist_and_execute(f"Slab {slab_index}: Scale {new_scale}: Downloading pre-downsampled bricks", logger)
             else:
