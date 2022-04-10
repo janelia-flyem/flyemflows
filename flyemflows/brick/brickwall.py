@@ -1,3 +1,4 @@
+import copy
 import numpy as np
 
 from neuclease.util import Grid, SparseBlockMask, round_box, extract_subvol
@@ -171,7 +172,14 @@ class BrickWall:
             #   end up passing the same SparseBlockMask for every slab, which gets processed from
             #   scratch in generate_bricks_from_volume_source() to filter boxes for each slab's bounding box.
             assert isinstance(sparse_block_mask, SparseBlockMask)
-            assert scale == 0, "FIXME: I don't think the sparse feature works with scales other than 0."
+            sparse_block_mask = copy.deepcopy(sparse_block_mask)
+            new_resolution = sparse_block_mask.resolution // (2**scale)
+            assert not (new_resolution % 1).any(), \
+                ("Can't adjust the scale of your SparseBlockMask "
+                f"because the scale factor (2**{scale}=={2**scale}) doesn't divide evenly "
+                f"into the SBM resolution ({sparse_block_mask.resolution}).")
+            new_resolution = new_resolution.astype(int)
+            sparse_block_mask.change_resolution(new_resolution)
             sparse_boxes = sparse_block_mask.sparse_boxes(grid)
             if len(sparse_boxes) == 0:
                 # Some workflows check for this message; if you change it, change those checks!

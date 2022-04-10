@@ -626,7 +626,7 @@ class CopySegmentation(Workflow):
         if options["compute-block-statistics"]:
             slab_block_stats_df = self._compute_block_statistics(slab_index, padded_wall)
 
-        self._write_pyramids(slab_index, input_slab_box, padded_wall, output_service)
+        self._write_pyramids(slab_index, input_slab_box, slab_sbm, padded_wall, output_service)
         del padded_wall
 
         # Now we append to the stats file, after successfully writing all scales.
@@ -831,22 +831,32 @@ class CopySegmentation(Workflow):
             slab_block_stats_df = pd.concat(slab_block_stats_per_brick, ignore_index=True)
             return slab_block_stats_df
 
-    def _write_pyramids(self, slab_index, input_slab_box, padded_wall, output_service):
-        """
-        FIXME: This doesn't make use of the SBM mask (if any), so 
-        """
+    def _write_pyramids(self, slab_index, input_slab_box, slab_sbm, padded_wall, output_service):
         options = self.config["copysegmentation"]
         pyramid_depth = options["pyramid-depth"]
 
         for new_scale in range(1, 1+pyramid_depth):
             if options["download-pre-downsampled"] and new_scale in self.input_service.available_scales:
                 del padded_wall
-                downsampled_wall = BrickWall.from_volume_service(self.input_service,
-                                                                 new_scale,
-                                                                 input_slab_box,
-                                                                 self.client,
-                                                                 self.target_partition_size_voxels,
-                                                                 compression=options["brick-compression"])
+                try:
+                    downsampled_wall = BrickWall.from_volume_service( self.input_service,
+                                                                      new_scale,
+                                                                      input_slab_box,
+                                                                      self.client,
+                                                                      self.target_partition_size_voxels,
+                                                                      sparse_block_mask=slab_sbm,
+                                                                      compression=options["brick-compression"] )
+
+                    if downsampled_wall.num_bricks == 0:
+                        logger.info(f"Slab {slab_index}: Scale {new_scale}: No bricks to process.  Skipping.")
+                        # We assume that there's no point in processing remaining scales, either.
+                        return
+
+                except RuntimeError as ex:
+                    if "SparseBlockMask selects no blocks" in str(ex):
+                        logger.info(f"Slab {slab_index}: Scale {new_scale}: SparseBlockMask selects no blocks.  Skipping.")
+                        # We assume that there's no point in processing remaining scales, either.
+                        return
 
                 downsampled_wall = self._add_label_offset_to_wall(downsampled_wall)
                 downsampled_wall.persist_and_execute(f"Slab {slab_index}: Scale {new_scale}: Downloading pre-downsampled bricks", logger)

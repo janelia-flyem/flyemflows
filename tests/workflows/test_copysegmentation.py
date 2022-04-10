@@ -1,4 +1,5 @@
 import os
+import copy
 import pickle
 import tempfile
 import textwrap
@@ -70,6 +71,7 @@ def setup_dvid_segmentation_input(setup_dvid_repo, random_segmentation):
             supervoxels: true
             disable-indexing: true
             create-if-necessary: true
+            ingestion-mode: false  # I haven't upgraded my local dvid package to support this yet...
            
           geometry: {{}} # Auto-set from input
  
@@ -192,6 +194,8 @@ def setup_hdf5_segmentation_input(setup_dvid_repo, write_hdf5_volume):
             supervoxels: true
             disable-indexing: true
             create-if-necessary: true
+            ingestion-mode: false  # I haven't upgraded my local dvid package to support this yet...
+
                         
           geometry: {{}} # Auto-set from input
         
@@ -249,6 +253,7 @@ def test_copysegmentation_from_dvid_to_dvid(setup_dvid_segmentation_input, disab
 
 def test_copysegmentation_from_dvid_to_dvid_with_labelmap(setup_dvid_segmentation_input, disable_auto_retry):
     template_dir, config, volume, dvid_address, repo_uuid, _output_segmentation_name = setup_dvid_segmentation_input
+    config = copy.deepcopy(config)
 
     # make sure we get a fresh output
     output_segmentation_name = 'copyseg-with-labelmap'
@@ -271,6 +276,7 @@ def test_copysegmentation_from_dvid_to_dvid_with_labelmap(setup_dvid_segmentatio
 
 def test_copysegmentation_from_dvid_to_dvid_input_mask(setup_dvid_segmentation_input, disable_auto_retry):
     template_dir, config, volume, dvid_address, repo_uuid, _output_segmentation_name = setup_dvid_segmentation_input
+    config = copy.deepcopy(config)
     
     # make sure we get a fresh output
     output_segmentation_name = 'copyseg-with-input-mask-from-dvid'
@@ -309,8 +315,10 @@ def test_copysegmentation_from_hdf5_to_dvid(setup_hdf5_segmentation_input, disab
     _box_zyx, _expected_vol, _output_vol = _run_to_dvid(setup_hdf5_segmentation_input)
  
 
-def test_copysegmentation_from_hdf5_to_dvid_custom_sbm(setup_hdf5_segmentation_input, disable_auto_retry):
+@pytest.mark.parametrize('download_pyramid', [True, False])
+def test_copysegmentation_from_hdf5_to_dvid_custom_sbm(setup_hdf5_segmentation_input, download_pyramid, disable_auto_retry):
     template_dir, config, volume, dvid_address, repo_uuid, output_segmentation_name = setup_hdf5_segmentation_input
+    config = copy.deepcopy(config)
 
     # Our bricks are long in Z, so use a mask that's aligned that way, too.
     mask = np.zeros(volume.shape, bool)
@@ -321,6 +329,7 @@ def test_copysegmentation_from_hdf5_to_dvid_custom_sbm(setup_hdf5_segmentation_i
     with open(f"{template_dir}/sbm.pkl", 'wb') as f:
         pickle.dump(sbm, f)
     config["copysegmentation"]["sparse-block-mask"] = f"{template_dir}/sbm.pkl"
+    config["copysegmentation"]["download-pre-downsampled"] = download_pyramid
 
     setup = (template_dir, config, volume, dvid_address, repo_uuid, output_segmentation_name)
     box_zyx, expected_vol, output_vol = _run_to_dvid(setup, check_scale_0=False)
@@ -332,6 +341,7 @@ def test_copysegmentation_from_hdf5_to_dvid_custom_sbm(setup_hdf5_segmentation_i
 
 def test_copysegmentation_from_hdf5_to_dvid_input_mask(setup_hdf5_segmentation_input, disable_auto_retry):
     template_dir, config, volume, dvid_address, repo_uuid, _output_segmentation_name = setup_hdf5_segmentation_input
+    config = copy.deepcopy(config)
     
     # make sure we get a fresh output
     output_segmentation_name = 'copyseg-with-input-mask'
@@ -358,6 +368,7 @@ def test_copysegmentation_from_hdf5_to_dvid_input_mask(setup_hdf5_segmentation_i
 
 def test_copysegmentation_from_hdf5_to_dvid_output_mask(setup_hdf5_segmentation_input, disable_auto_retry):
     template_dir, config, input_volume, dvid_address, repo_uuid, _output_segmentation_name = setup_hdf5_segmentation_input
+    config = copy.deepcopy(config)
 
     # make sure we get a fresh output
     output_segmentation_name = 'copyseg-with-output-mask'
@@ -392,7 +403,8 @@ def test_copysegmentation_from_hdf5_to_dvid_output_mask(setup_hdf5_segmentation_
 
 def test_copysegmentation_from_hdf5_to_dvid_multiscale(setup_hdf5_segmentation_input, disable_auto_retry):
     template_dir, config, volume, dvid_address, repo_uuid, _ = setup_hdf5_segmentation_input
-    
+    config = copy.deepcopy(config)
+
     # Modify the config from above to compute pyramid scales,
     # and choose a bounding box that is aligned with the bricks even at scale 2
     # (just for easier testing).
@@ -443,6 +455,7 @@ def test_copysegmentation_from_hdf5_to_dvid_multiscale(setup_hdf5_segmentation_i
 
 def test_copysegmentation_dvid_to_zarr(setup_dvid_to_zarr):
     template_dir, config, volume, dvid_address, repo_uuid, output_file = setup_dvid_to_zarr
+    config = copy.deepcopy(config)
 
     # Modify the config from above to compute pyramid scales,
     # and choose a bounding box that is aligned with the bricks even at scale 2
@@ -524,6 +537,7 @@ def test_copysegmentation_from_brainmaps_to_dvid(setup_dvid_repo):
             supervoxels: true
             disable-indexing: true
             create-if-necessary: true
+            ingestion-mode: false  # I haven't upgraded my local dvid package to support this yet...
            
           geometry: {{}} # Auto-set from input
  
@@ -566,6 +580,6 @@ if __name__ == "__main__":
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_copysegmentation']
     args += ['-x']
-    #args += ['-k', 'copysegmentation_from_hdf5_to_dvid_custom_sbm or copysegmentation_from_hdf5_to_dvid_input_mask']
+    args += ['-k', 'copysegmentation_from_hdf5_to_dvid_custom_sbm']
     #args += ['-k', 'copysegmentation_dvid_to_zarr']
     pytest.main(args)
