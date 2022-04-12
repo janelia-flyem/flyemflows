@@ -306,13 +306,17 @@ def ingest_label_indexes( server,
 
     progress_bar = tqdm_proxy(total=len(block_sv_stats), logger=logger)
 
+    start_time = datetime.datetime.now().strftime('%Y-%m-%d-%H%M%S')
+
     all_mismatch_ids = []
     all_missing_ids = []
     pool = multiprocessing.get_context('fork').Pool(num_threads)
     with progress_bar, pool:
         # Rather than call pool.imap_unordered() with processor.process_batch(),
         # we use globally declared process_batch(), as explained below.
-        for next_stats_batch_total_rows, batch_mismatches, batch_missing in pool.imap_unordered(process_batch, gen):
+        for labels, next_stats_batch_total_rows, batch_mismatches, batch_missing in pool.imap_unordered(process_batch, gen):
+            pd.Series(labels).to_csv(f'labelindexes-processed-{uuid}-{start_time}.csv', index=False, header=False, mode='a')
+
             if batch_mismatches:
                 pd.Series(batch_mismatches).to_csv(f'labelindex-mismatches-{uuid}.csv', index=False, header=False, mode='a')
                 all_mismatch_ids.extend( batch_mismatches )
@@ -452,13 +456,14 @@ class StatsBatchProcessor:
         # Important to extract chain() iterable contents first,
         # since post_labelindex_batch() might auto_retry...
         labelindex_batch = list(labelindex_batch)
+        labels = [li.label for li in labelindex_batch]
 
         if not self.check_mismatches:
             try:
                 post_labelindex_batch(*self.instance_info, labelindex_batch)
             except Exception as ex:
                 raise RuntimeError(f"Failed to post {len(labelindex_batch)} label indexes") from ex
-            return next_stats_batch_total_rows, [], []
+            return labels, next_stats_batch_total_rows, [], []
 
         # Check for mismatches
         mismatch_batch = []
@@ -493,7 +498,7 @@ class StatsBatchProcessor:
         mismatch_labels = [labelindex.label for labelindex in mismatch_batch]
         missing_labels = [labelindex.label for labelindex in missing_batch]
         
-        return next_stats_batch_total_rows, mismatch_labels, missing_labels
+        return labels, next_stats_batch_total_rows, mismatch_labels, missing_labels
 
 
     def label_indexes_for_body(self, body_group_span):
