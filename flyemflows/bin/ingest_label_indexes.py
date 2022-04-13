@@ -20,6 +20,7 @@ from neuclease.dvid.labelmap.labelops_pb2 import LabelIndex
 from dvidutils import LabelMapper # Fast label mapping in C++
 
 from neuclease import configure_default_logging
+from neuclease.dvid import default_dvid_session_template, clear_default_dvid_sessions
 from neuclease.util import Timer, groupby_presorted, groupby_spans_presorted, tqdm_proxy
 from neuclease.logging_setup import initialize_excepthook
 from neuclease.merge_table import load_edge_csv
@@ -28,7 +29,7 @@ from flyemflows.workflow.util.config_helpers import load_body_list
 from flyemflows.util import auto_retry
 
 # Auto-retry in case of connection issues.
-post_labelindex_batch = auto_retry(3, logging_name='ingest_label_indexes')(post_labelindices)
+post_labelindex_batch = auto_retry(3, pause_between_tries=60.0, logging_name='ingest_label_indexes')(post_labelindices)
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,13 @@ def main():
     """
     configure_default_logging()
     initialize_excepthook()
+
+    # Set long timeout by modifying the global session template.
+    # (The code in this file doesn't use any custom sessions, so the global default is used.)
+    default_dvid_session_template().adapters['http://'].timeout = (3.05, 600.0)
+    default_dvid_session_template().adapters['https://'].timeout = (3.05, 600.0)
+    clear_default_dvid_sessions()
+
     logger.setLevel(logging.INFO)
     
     parser = argparse.ArgumentParser()
