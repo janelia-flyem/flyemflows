@@ -68,8 +68,11 @@ def main():
     parser.add_argument('--operation', default='indexes', choices=['indexes', 'mappings', 'both', 'sort-only'],
                         help='Whether to load the LabelIndices, MappingOps, or both. If sort-only, sort/save the stats and exit.')
     parser.add_argument('--subset-labels', required=False,
-                        help='CSV file with a single column of label IDs to write LabelIndexes for.'
+                        help='CSV/numpy file with a single column of label IDs to write LabelIndexes for.'
                              'Other labels found in the mapping and or block stats h5 file will be ignored. '
+                             'NOTE: Whether or not the label ids are interpreted as supervoxels or bodies depends on whether or not --agglomeration-mapping was provided.')
+    parser.add_argument('--exclude-labels', required=False,
+                        help='CSV/numpy file with a single column of label IDs to exclude from the write, even if they are present in your block statistics.'
                              'NOTE: Whether or not the label ids are interpreted as supervoxels or bodies depends on whether or not --agglomeration-mapping was provided.')
     parser.add_argument('--tombstones', default='include', choices=['include', 'exclude', 'only'],
                         help="Whether to include 'tombstones' in the labelindexes (i.e. explicitly send empty labelindexes for all supervoxels in a body that don't match the body-id). "
@@ -125,7 +128,11 @@ def main_impl(args):
     if args.subset_labels:
         is_supervoxels = (args.agglomeration_mapping is None)
         subset_labels = load_body_list(args.subset_labels, is_supervoxels)
-        subset_labels = set(subset_labels)
+
+    exclude_labels = None
+    if args.exclude_labels:
+        is_supervoxels = (args.agglomeration_mapping is None)
+        exclude_labels = load_body_list(args.exclude_labels, is_supervoxels)
 
     if args.last_mutid is None:
         args.last_mutid = fetch_repo_info(args.server, args.uuid)['MutationID']
@@ -137,14 +144,14 @@ def main_impl(args):
 
         # Read block stats file
         block_sv_stats, presorted_by, agglomeration_path = load_stats_h5_to_records(args.supervoxel_block_stats_h5)
-        
+
         stats_are_presorted = False
         if args.agglomeration_mapping:
             if (presorted_by == 'body_id') and (agglomeration_path == args.agglomeration_mapping):
                 stats_are_presorted = True
         elif presorted_by == 'segment_id':
             stats_are_presorted = True
-        
+
         if stats_are_presorted:
             logger.info("Stats are pre-sorted")
         else:
@@ -154,9 +161,39 @@ def main_impl(args):
             else:
                 output_path = output_dir + '/sorted-by-body-' +  basename
             sort_block_stats(block_sv_stats, segment_to_body_df, output_path, args.agglomeration_mapping)
-    
+
         if args.operation == 'sort-only':
             return
+
+        start_time = datetime.datetime.now().strftime('%Y-%m-%d-%H%M%S')
+
+        # Note that the stats are already sorted by body_id, so this is faster than unique()
+        first_occ = np.ones(len(block_sv_stats), dtype=bool)
+        first_occ[1:] = (block_sv_stats['body_id'][1:] != block_sv_stats['body_id'][:-1])
+        unique_bodies = block_sv_stats['body_id'][first_occ]
+        np.save(f'unfiltered-body-ids-{start_time}', unique_bodies)
+
+        if exclude_labels is not None:
+            with Timer(f"Filtering {len(block_sv_stats)} blockwise supervoxel counts to exclude {len(exclude_labels)} bodies", logger):
+                exclusions = pd.Series(block_sv_stats['body_id']).isin(exclude_labels).values
+                block_sv_stats = block_sv_stats[~exclusions]
+
+                # Note that the stats are already sorted by body_id, so this is faster than unique()
+                first_occ = np.ones(len(block_sv_stats), dtype=bool)
+                first_occ[1:] = (block_sv_stats['body_id'][1:] != block_sv_stats['body_id'][:-1])
+                unique_bodies = block_sv_stats['body_id'][first_occ]
+                np.save(f'filtered-body-ids-{start_time}', unique_bodies)
+
+        if subset_labels is not None:
+            with Timer(f"Selecting {len(block_sv_stats)} blockwise supervoxel counts for subset of {len(subset_labels)} bodies", logger):
+                selections = pd.Series(block_sv_stats['body_id']).isin(subset_labels).values
+                block_sv_stats = block_sv_stats[selections]
+
+                # Note that the stats are already sorted by body_id, so this is faster than unique()
+                first_occ = np.ones(len(block_sv_stats), dtype=bool)
+                first_occ[1:] = (block_sv_stats['body_id'][1:] != block_sv_stats['body_id'][:-1])
+                unique_bodies = block_sv_stats['body_id'][first_occ]
+                np.save(f'selected-body-ids-{start_time}', unique_bodies)
 
         with Timer(f"Grouping {len(block_sv_stats)} blockwise supervoxel counts and loading LabelIndices", logger):
             ingest_label_indexes( args.server,
@@ -164,7 +201,6 @@ def main_impl(args):
                                   args.labelmap_instance,
                                   args.last_mutid,
                                   block_sv_stats,
-                                  subset_labels,
                                   args.tombstones,
                                   batch_rows=args.batch_size,
                                   num_threads=args.num_threads,
@@ -174,7 +210,7 @@ def main_impl(args):
     if args.operation in ('mappings', 'both'):
         if not args.agglomeration_mapping:
             raise RuntimeError("Can't load mappings without an agglomeration-mapping file.")
-        
+
         with Timer(f"Loading mapping ops", logger):
             ingest_mapping( args.server,
                             args.uuid,
@@ -182,6 +218,7 @@ def main_impl(args):
                             args.last_mutid,
                             segment_to_body_df,
                             subset_labels,
+                            exclude_labels,
                             args.batch_size )
 
 def sort_block_stats(block_sv_stats, segment_to_body_df=None, output_path=None, agglo_mapping_path=None):
@@ -205,7 +242,7 @@ def sort_block_stats(block_sv_stats, segment_to_body_df=None, output_path=None, 
     agglo_mapping_path:
         A path indicating where the segment_to_body_df was loaded from.
         It's saved to the hdf5 attributes for provenance tracking.
-    
+
     """
     with Timer("Assigning body IDs", logger):
         _overwrite_body_id_column(block_sv_stats, segment_to_body_df)
@@ -222,7 +259,7 @@ def sort_block_stats(block_sv_stats, segment_to_body_df=None, output_path=None, 
                 assert agglo_mapping_path
                 f['stats'].attrs['presorted-by'] = 'body_id'
                 f['stats'].attrs['agglomeration-mapping-path'] = agglo_mapping_path
-                
+
 
 def ingest_mapping( server,
                     uuid,
@@ -230,35 +267,41 @@ def ingest_mapping( server,
                     mutid,
                     segment_to_body_df,
                     subset_labels=None,
+                    exclude_labels=None,
                     batch_size=100_000 ):
     """
     Ingest the forward-map (supervoxel-to-body) into DVID via the .../mappings endpoint
-    
+
     Args:
         server, uuid, instance_name:
             DVID instance info
-    
+
         mutid:
             The mutation ID to use for all mappings
-        
+
         segment_to_body_df:
             DataFrame.  Must have columns ['segment_id', 'body_id']
-        
+
         batch_size:
             Approximately how many mapping pairs to pack into a single REST call.
-    
+
     """
     assert list(segment_to_body_df.columns) == AGGLO_MAP_COLUMNS
     if fetch_repo_instances(server, uuid)[instance] != 'labelmap':
         raise RuntimeError(f"DVID instance is not a labelmap: {instance}")
 
     segment_to_body_df.sort_values(['body_id', 'segment_id'], inplace=True)
-    
+
     if subset_labels is not None:
         segment_to_body_df = segment_to_body_df.query('body_id in @subset_labels')
         if len(segment_to_body_df) == 0:
             raise RuntimeError("None of the selected bodies have any mappings to post!")
-    
+
+    if exclude_labels is not None:
+        segment_to_body_df = segment_to_body_df.query('body_id not in @exclude_labels')
+        if len(segment_to_body_df) == 0:
+            raise RuntimeError("After filtering out excluded labels, there are no mappings to post!")
+
     mappings = segment_to_body_df.set_index('segment_id')['body_id']
     post_mappings(server, uuid, instance, mappings, mutid, batch_size=batch_size)
 
@@ -268,7 +311,6 @@ def ingest_label_indexes( server,
                           instance_name,
                           last_mutid,
                           sorted_block_sv_stats,
-                          subset_labels=None,
                           tombstone_mode='include',
                           batch_rows=1_000_000,
                           num_threads=1,
@@ -308,7 +350,7 @@ def ingest_label_indexes( server,
     # subprocesses quickly via implicit memory sharing via after fork()
     global processor
     instance_info = (server, uuid, instance_name)
-    processor = StatsBatchProcessor(last_mutid, instance_info, tombstone_mode, block_sv_stats, subset_labels, check_mismatches)
+    processor = StatsBatchProcessor(last_mutid, instance_info, tombstone_mode, block_sv_stats, check_mismatches)
 
     gen = generate_stats_batch_spans(block_sv_stats, batch_rows)
 
@@ -438,13 +480,12 @@ class StatsBatchProcessor:
     Defined here as a class instead of a simple function to enable
     pickling (for multiprocessing), even when this file is run as __main__.
     """
-    def __init__(self, last_mutid, instance_info, tombstone_mode, block_sv_stats, subset_labels=None, check_mismatches=False):
+    def __init__(self, last_mutid, instance_info, tombstone_mode, block_sv_stats, check_mismatches=False):
         assert tombstone_mode in ('include', 'exclude', 'only')
         self.last_mutid = last_mutid
         self.tombstone_mode = tombstone_mode
         self.block_sv_stats = block_sv_stats
         self.check_mismatches = check_mismatches
-        self.subset_labels = subset_labels
 
         self.user = os.environ.get("USER", "unknown")
         self.mod_time = datetime.datetime.now().isoformat()
@@ -520,9 +561,6 @@ class StatsBatchProcessor:
         body_group = self.block_sv_stats[body_group_start:body_group_stop]
         body_id = body_group[0]['body_id']
         
-        if (self.subset_labels is not None) and (body_id not in self.subset_labels):
-            return []
-
         if self.tombstone_mode != 'only':
             label_index = LabelIndex()
             label_index.label = body_id
