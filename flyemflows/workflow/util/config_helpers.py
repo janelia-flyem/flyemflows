@@ -29,27 +29,42 @@ BodyListSchema = {
     "default": []
 }
 
+
 def load_body_list(config_data, is_supervoxels):
     if isinstance(config_data, list):
         return np.array(config_data, dtype=np.uint64)
 
-    bodies_csv = config_data
+    assert isinstance(config_data, str)
+
+    bodies_path = config_data
     del config_data
 
-    assert os.path.exists(bodies_csv), \
-        f"CSV file does not exist: {bodies_csv}"
-        
     if is_supervoxels:
         col = 'sv'
     else:
         col = 'body'
-    
-    if col in read_csv_header(bodies_csv):
-        bodies = pd.read_csv(bodies_csv)[col].drop_duplicates()
+
+    assert os.path.exists(bodies_path), \
+        f"File does not exist: {bodies_path}"
+
+    if bodies_path.endswith('.npy'):
+        a = np.load(bodies_path)
+        assert a.ndim == 1
+        if a.dtype.names is None:
+            # We assume that the user supplied the correct column (sv or body)
+            return a.astype(np.uint64)
+        if col not in a.dtype.names:
+            msg = (f"File contains a structured array, but it does not have a '{col}' column:\n"
+                   + bodies_path)
+            raise RuntimeError(msg)
+        return a[col].astype(np.uint64)
+
+    if col in read_csv_header(bodies_path):
+        bodies = pd.read_csv(bodies_path)[col].drop_duplicates()
     else:
         # Just read the first column, no matter what it's named
         logger.warning(f"No column named {col}, so reading first column instead")
-        bodies = read_csv_col(bodies_csv, 0, np.uint64).drop_duplicates()
+        bodies = read_csv_col(bodies_path, 0, np.uint64).drop_duplicates()
 
     return bodies.values.astype(np.uint64)
 
