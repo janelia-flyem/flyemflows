@@ -59,7 +59,8 @@ def load_body_list(config_data, is_supervoxels):
             raise RuntimeError(msg)
         return a[col].astype(np.uint64)
 
-    if col in read_csv_header(bodies_path):
+    header = read_csv_header(bodies_path)
+    if header and col in header:
         bodies = pd.read_csv(bodies_path)[col].drop_duplicates()
     else:
         # Just read the first column, no matter what it's named
