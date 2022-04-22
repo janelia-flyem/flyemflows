@@ -7,6 +7,7 @@ from .createmeshes import CreateMeshes
 from .copysegmentation import CopySegmentation
 from .decimatemeshes import DecimateMeshes
 from .findadjacencies import FindAdjacencies
+from .gridmeshes import GridMeshes
 from .labelmapcopy import LabelmapCopy
 from .maskedcopy import MaskedCopy
 from .masksegmentation import MaskSegmentation
@@ -31,6 +32,7 @@ BUILTIN_WORKFLOWS = [
     CreateMeshes,
     DecimateMeshes,
     FindAdjacencies,
+    GridMeshes,
     LabelmapCopy,
     MaskedCopy,
     MaskSegmentation,
