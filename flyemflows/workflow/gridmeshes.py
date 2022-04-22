@@ -10,7 +10,7 @@ import pyarrow.feather as feather
 from neuclease.dvid import (fetch_repo_instances, create_tarsupervoxel_instance,
                             create_instance, is_locked, post_load, post_keyvalues, fetch_exists, fetch_key,
                             fetch_server_info, fetch_mapping, resolve_ref)
-from neuclease.util import meshes_from_volume
+from neuclease.util import Timer, meshes_from_volume
 
 from dvid_resource_manager.client import ResourceManagerClient
 
@@ -146,6 +146,9 @@ class GridMeshes(Workflow):
                                "      This config setting can only be used when using a labelmap source.\n",
             },
             "minimum-supervoxel-size": {
+                "description": "Supervoxels smaller than this won't be processed.\n"
+                               "Note: This is NOT automatically adjusted according to whatever scale you're using.\n"
+                               "      Adjust it manually, after you've chosen your input scale.",
                 "type": "number",
                 "default": 0
             },
@@ -216,8 +219,11 @@ class GridMeshes(Workflow):
         """
         """
         self._sanitize_config()
-        subset_supervoxels_, subset_bodies = self._init_input_service()
-        self._prepare_output()
+        with Timer("Initializing input", logger):
+            subset_supervoxels_, subset_bodies = self._init_input_service()
+
+        with Timer("Initializing output", logger):
+            self._prepare_output()
 
         config = self.config
         input_service = self.input_service
@@ -264,11 +270,16 @@ class GridMeshes(Workflow):
             _write_meshes(config, resource_mgr, meshes)
             return label_df['Count'].rename('voxels').rename_axis('sv').reset_index()
 
-        # Just one brick per partition, for better work stealing and responsive dashboard progress updates.
-        target_partition_size_voxels = np.prod(self.input_service.preferred_message_shape)
-        brickwall = BrickWall.from_volume_service(self.input_service, 0, None, self.client, target_partition_size_voxels, 0, self.sbm, compression='lz4_2x')
-        sv_sizes = persist_and_execute(brickwall.bricks.map(process_brick))
-        feather.write_feather(pd.concat(sv_sizes), 'written-sv-sizes.feather')
+        with Timer(f"Initializing BrickWall", logger):
+            # Just one brick per partition, for better work stealing and responsive dashboard progress updates.
+            target_partition_size_voxels = np.prod(self.input_service.preferred_message_shape)
+            brickwall = BrickWall.from_volume_service(self.input_service, 0, None, self.client, target_partition_size_voxels, 0, self.sbm, compression='lz4_2x')
+
+        with Timer(f"Processing {brickwall.num_bricks} bricks", logger):
+            sv_sizes = persist_and_execute(brickwall.bricks.map(process_brick))
+
+        with Timer("Writing supervoxel sizes", logger):
+            feather.write_feather(pd.concat(sv_sizes), 'written-sv-sizes.feather')
 
     def _sanitize_config(self):
         rescale_factor = self.config["gridmeshes"]["rescale-before-write"]
@@ -289,6 +300,8 @@ class GridMeshes(Workflow):
 
         self.mgr_client = ResourceManagerClient( mgr_options["server"], mgr_options["port"] )
         self.input_service = VolumeService.create_from_config( input_config, self.mgr_client )
+        grid_xyz = self.input_service.preferred_message_shape[::-1].tolist()
+        logger.info(f"Initialized input service with grid shape of {grid_xyz}")
         if isinstance(self.input_service.base_service, DvidVolumeService):
             assert input_config["dvid"]["supervoxels"], \
                 'DVID input service config must use "supervoxels: true"'
