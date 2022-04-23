@@ -191,6 +191,8 @@ class BrickWall:
                     # Some workflows check for this message; if you change it, change those checks!
                     raise RuntimeError("SparseBlockMask selects no blocks at all!")
 
+                assert (sparse_boxes[:, 1, :] > sparse_boxes[:, 0, :]).all(), \
+                    "sparse_boxes contained some boxes with zero or negative size!"
         return BrickWall.from_accessor_func( downsampled_box,
                                              grid,
                                              lambda box: volume_service.get_subvolume(box, scale),
@@ -199,7 +201,6 @@ class BrickWall:
                                              sparse_boxes,
                                              lazy,
                                              compression=compression )
-
 
     ##
     ## Operations

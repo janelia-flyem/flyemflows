@@ -645,6 +645,8 @@ class DvidVolumeService(VolumeServiceWriter):
     @auto_retry(3, pause_between_tries=60.0, logging_name=__name__)
     @_log_read_errors
     def get_subvolume(self, box_zyx, scale=0):
+        assert (box_zyx[1] > box_zyx[0]).all(), \
+            f"Requested box has zero or negative size (ZYX): {box_zyx.tolist()}"
         req_bytes = self._dtype_nbytes * np.prod(box_zyx[1] - box_zyx[0])
 
         instance_name = self._instance_name
