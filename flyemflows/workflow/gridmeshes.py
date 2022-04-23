@@ -242,6 +242,8 @@ class GridMeshes(Workflow):
         replace_default_entries(slab_shape, self.input_service.bounding_box_zyx[1])
 
         slab_boxes = boxes_from_grid(self.input_service.bounding_box_zyx, slab_shape, clipped=False)
+        logger.info(f"Splitting job into {len(slab_boxes)} slabs (each XYZ {slab_shape[::-1]})")
+
         for slab_index, slab_box in enumerate(slab_boxes):
             if slab_index < self.config["gridmeshes"]["restart-at-slab"]:
                 logger.info(f"Slab {slab_index}: SKIPPING (restart)")
