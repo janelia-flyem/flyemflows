@@ -251,7 +251,12 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
         # Check that physical box doesn't completely fall outside its logical_box
         def is_valid(logical_and_physical):
             logical_box, physical_box = logical_and_physical
-            return (physical_box[1] > logical_box[0]).all() and (physical_box[0] < logical_box[1]).all()
+            valid = (
+                (physical_box[1] > logical_box[0]).all() and
+                (physical_box[0] < logical_box[1]).all() and
+                (physical_box[0] < physical_box[1]).all()
+            )
+            return valid
         logical_and_physical_boxes = filter(is_valid, logical_and_physical_boxes )
 
     if not hasattr(logical_and_physical_boxes, '__len__'):
