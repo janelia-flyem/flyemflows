@@ -2,6 +2,7 @@ import os
 import copy
 import logging
 import pickle
+from functools import partial
 
 import numpy as np
 import pandas as pd
@@ -222,7 +223,7 @@ class GridMeshes(Workflow):
         """
         self._sanitize_config()
         with Timer("Initializing input", logger):
-            subset_supervoxels_, subset_bodies = self._init_input_service()
+            subset_supervoxels, subset_bodies = self._init_input_service()
 
         with Timer("Initializing output", logger):
             self._prepare_output()
@@ -231,74 +232,13 @@ class GridMeshes(Workflow):
         input_service = self.input_service
         resource_mgr = self.mgr_client
 
-        os.makedirs('sv-stats')
-
-        def process_brick(brick):
-            subset_supervoxels = subset_supervoxels_
-            options = config["gridmeshes"]
-            all_svs = None
-            if len(subset_bodies):
-                all_svs = pd.unique(brick.volume.ravel())
-                mappings = fetch_mapping(*input_service.base_service.instance_triple, all_svs, as_series=True)
-                subset_supervoxels = mappings[mappings.isin(subset_bodies)].index
-
-            if len(subset_supervoxels) == 0:
-                subset_supervoxels = None
-
-            z, y, x = brick.logical_box[0]
-            d = f'sv-stats/z{z}/y{y}'
-            os.makedirs(d, exist_ok=True)
-
-            if options["skip-existing"]:
-                if subset_supervoxels is None:
-                    subset_supervoxels = all_svs
-
-                if subset_supervoxels is None:
-                    subset_supervoxels = pd.unique(brick.volume.ravel())
-
-                existing_svs = _determine_existing(resource_mgr, config, subset_supervoxels)
-                subset_supervoxels = pd.Index(subset_supervoxels).difference(existing_svs)
-
-                if len(existing_svs):
-                    existing_svs = pd.Series(existing_svs, name='sv').to_frame()
-                    path = f'{d}/brick-existing-svs-x{x}-y{y}-z{z}.feather'
-                    feather.write_feather(existing_svs, path)
-
-            label_df, mesh_gen = meshes_from_volume(
-                brick.volume, brick.physical_box, subset_supervoxels,
-                cuffs=True, capped=True,
-                min_voxels=options["minimum-supervoxel-size"],
-                max_voxels=options["maximum-supervoxel-size"],
-                smoothing=options["mesh-parameters"]["smoothing"],
-                decimation=options["mesh-parameters"]["decimation"],
-                keep_normals=options["mesh-parameters"]["compute-normals"],
-                progress=False
-            )
-            # The actual computation happens while iterating here.
-            meshes = {label: mesh for label, mesh in mesh_gen}
-
-            if (np.array(options["rescale-before-write"]) != 1.0).any():
-                for m in meshes.values():
-                    m.vertices_zyx[:] *= options["rescale-before-write"][::-1]  # zyx
-
-            _write_meshes(config, resource_mgr, meshes)
-
-            if len(label_df):
-                label_df = label_df.rename_axis('sv').reset_index()
-                box_cols = ['z0', 'y0', 'x0', 'z1', 'y1', 'x1']
-                label_df[box_cols] = np.concatenate(label_df['Box'].values).reshape(-1, 6)
-                label_df = label_df[['Count', *box_cols]].reset_index()
-                path = f'{d}/brick-sv-stats-x{x}-y{y}-z{z}.feather'
-                feather.write_feather(label_df, path)
-
-            return len(label_df)
-
         with Timer(f"Initializing BrickWall", logger):
             # Just one brick per partition, for better work stealing and responsive dashboard progress updates.
             target_partition_size_voxels = np.prod(self.input_service.preferred_message_shape)
             brickwall = BrickWall.from_volume_service(self.input_service, 0, None, self.client, target_partition_size_voxels, 0, self.sbm, compression='lz4_2x')
 
         with Timer(f"Processing {brickwall.num_bricks} bricks", logger):
+            process_brick = partial(_process_brick, config, resource_mgr, input_service, subset_supervoxels, subset_bodies)
             results_bag = brickwall.bricks.map(process_brick)
 
             # Support synchronous testing with a fake 'as_completed' object
@@ -549,6 +489,67 @@ def _write_meshes(config, resource_mgr, meshes):
                 post_load(*instance, binary_meshes)
             elif 'keyvalue' in destination:
                 post_keyvalues(*instance, binary_meshes)
+
+
+def _process_brick(config, resource_mgr, input_service, subset_supervoxels, subset_bodies, brick):
+    options = config["gridmeshes"]
+    all_svs = None
+    if len(subset_bodies):
+        all_svs = pd.unique(brick.volume.ravel())
+        mappings = fetch_mapping(*input_service.base_service.instance_triple, all_svs, as_series=True)
+        subset_supervoxels = mappings[mappings.isin(subset_bodies)].index
+
+    if len(subset_supervoxels) == 0:
+        subset_supervoxels = None
+
+    z, y, x = brick.logical_box[0]
+    d = f'sv-stats/z{z}/y{y}'
+    os.makedirs(d, exist_ok=True)
+
+    if options["skip-existing"]:
+        if subset_supervoxels is None:
+            subset_supervoxels = all_svs
+
+        if subset_supervoxels is None:
+            subset_supervoxels = pd.unique(brick.volume.ravel())
+
+        existing_svs = _determine_existing(resource_mgr, config, subset_supervoxels)
+        subset_supervoxels = pd.Index(subset_supervoxels).difference(existing_svs)
+
+        if len(existing_svs):
+            existing_svs = pd.Series(existing_svs, name='sv').to_frame()
+            path = f'{d}/brick-existing-svs-x{x}-y{y}-z{z}.feather'
+            feather.write_feather(existing_svs, path)
+
+    label_df, mesh_gen = meshes_from_volume(
+        brick.volume, brick.physical_box, subset_supervoxels,
+        cuffs=True, capped=True,
+        min_voxels=options["minimum-supervoxel-size"],
+        max_voxels=options["maximum-supervoxel-size"],
+        smoothing=options["mesh-parameters"]["smoothing"],
+        decimation=options["mesh-parameters"]["decimation"],
+        keep_normals=options["mesh-parameters"]["compute-normals"],
+        progress=False
+    )
+    # The actual computation happens while iterating here.
+    meshes = {label: mesh for label, mesh in mesh_gen}
+
+    if (np.array(options["rescale-before-write"]) != 1.0).any():
+        for m in meshes.values():
+            m.vertices_zyx[:] *= options["rescale-before-write"][::-1]  # zyx
+
+    _write_meshes(config, resource_mgr, meshes)
+
+    if len(label_df):
+        label_df = label_df.rename_axis('sv').reset_index()
+        box_cols = ['z0', 'y0', 'x0', 'z1', 'y1', 'x1']
+        label_df[box_cols] = np.concatenate(label_df['Box'].values).reshape(-1, 6)
+        label_df = label_df[['Count', *box_cols]].reset_index()
+        path = f'{d}/brick-sv-stats-x{x}-y{y}-z{z}.feather'
+        feather.write_feather(label_df, path)
+
+    return len(label_df)
+
 
 def serialize_mesh(sv, mesh, path=None, fmt=None):
     """
