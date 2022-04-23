@@ -245,6 +245,10 @@ class GridMeshes(Workflow):
             if len(subset_supervoxels) == 0:
                 subset_supervoxels = None
 
+            z, y, x = brick.logical_box[0]
+            d = f'sv-stats/z{z}/y{y}'
+            os.makedirs(d, exist_ok=True)
+
             if options["skip-existing"]:
                 if subset_supervoxels is None:
                     subset_supervoxels = all_svs
@@ -254,6 +258,11 @@ class GridMeshes(Workflow):
 
                 existing_svs = _determine_existing(config, subset_supervoxels)
                 subset_supervoxels = pd.Index(subset_supervoxels).difference(existing_svs)
+
+                if len(existing_svs):
+                    existing_svs = pd.Series(existing_svs, name='sv')
+                    path = f'{d}/brick-existing-svs-x{x}-y{y}-z{z}.feather'
+                    feather.write_feather(existing_svs, path)
 
             label_df, mesh_gen = meshes_from_volume(
                 brick.volume, brick.physical_box, subset_supervoxels,
@@ -274,16 +283,14 @@ class GridMeshes(Workflow):
 
             _write_meshes(config, resource_mgr, meshes)
 
-            label_df = label_df.rename_axis('sv').reset_index()
-            box_cols = ['z0', 'y0', 'x0', 'z1', 'y1', 'x1']
-            label_df[box_cols] = np.concatenate(label_df['Box'].values).reshape(-1, 6)
-            label_df = label_df[['Count', *box_cols]].reset_index()
+            if len(label_df):
+                label_df = label_df.rename_axis('sv').reset_index()
+                box_cols = ['z0', 'y0', 'x0', 'z1', 'y1', 'x1']
+                label_df[box_cols] = np.concatenate(label_df['Box'].values).reshape(-1, 6)
+                label_df = label_df[['Count', *box_cols]].reset_index()
+                path = f'{d}/brick-sv-stats-x{x}-y{y}-z{z}.feather'
+                feather.write_feather(label_df, path)
 
-            z, y, x = brick.logical_box[0]
-            d = f'sv-stats/z{z}/y{y}'
-            os.makedirs(d, exist_ok=True)
-            path = f'{d}/brick-sv-stats-x{x}-y{y}-z{z}.feather'
-            feather.write_feather(label_df, path)
             return len(label_df)
 
         with Timer(f"Initializing BrickWall", logger):
@@ -496,24 +503,26 @@ def _determine_existing(config, all_svs):
 
     if destination_type == 'directory':
         d = config["output"]["directory"]
-        existing_svs = set()
+        existing_svs = []
         for sv in all_svs:
+            # FIXME: glob would probably be faster here...
             if os.path.exists(f"{d}/{sv}.{fmt}"):
-                existing_svs.add(sv)
+                existing_svs.append(sv)
 
     elif destination_type == 'tarsupervoxels':
         tsv_instance = [destination['tarsupervoxels'][k] for k in ('server', 'uuid', 'instance')]
         exists = fetch_exists(*tsv_instance, all_svs, batch_size=10_000, processes=32, show_progress=False)
-        existing_svs = set(exists[exists].index)
+        existing_svs = exists[exists].index
 
     elif destination_type == 'keyvalue':
-        logger.warning("Using skip-exists with a keyvalue output.  This might take a LONG time.")
+        logger.warning("Using skip-existing with a keyvalue output.  This might take a LONG time.")
         kv_instance = [destination['keyvalue'][k] for k in ('server', 'uuid', 'instance')]
+        existing_svs = []
         for sv in all_svs:
             if fetch_key(*kv_instance, f"{sv}.{fmt}", check_head=True):
-                existing_svs.add(sv)
+                existing_svs.append(sv)
 
-    return existing_svs
+    return np.asarray(existing_svs)
 
 def _write_meshes(config, resource_mgr, meshes):
     options = config["gridmeshes"]
