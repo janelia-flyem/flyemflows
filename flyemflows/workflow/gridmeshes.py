@@ -7,14 +7,16 @@ import numpy as np
 import pandas as pd
 import pyarrow.feather as feather
 
+import distributed
+
 from neuclease.dvid import (fetch_repo_instances, create_tarsupervoxel_instance,
                             create_instance, is_locked, post_load, post_keyvalues, fetch_exists, fetch_key,
                             fetch_server_info, fetch_mapping, resolve_ref)
-from neuclease.util import Timer, meshes_from_volume
+from neuclease.util import Timer, meshes_from_volume, tqdm_proxy as tqdm
 
 from dvid_resource_manager.client import ResourceManagerClient
 
-from ..util.dask_util import persist_and_execute
+from ..util.dask_util import persist_and_execute, as_completed_synchronous, FakeFuture
 from .util.config_helpers import BodyListSchema, load_body_list
 from ..volumes import VolumeService, SegmentationVolumeSchema, DvidVolumeService
 from ..brick import BrickWall
@@ -280,10 +282,27 @@ class GridMeshes(Workflow):
             brickwall = BrickWall.from_volume_service(self.input_service, 0, None, self.client, target_partition_size_voxels, 0, self.sbm, compression='lz4_2x')
 
         with Timer(f"Processing {brickwall.num_bricks} bricks", logger):
-            sv_stats = persist_and_execute(brickwall.bricks.map(process_brick))
+            results_bag = brickwall.bricks.map(process_brick)
 
-        with Timer("Writing supervoxel sizes", logger):
-            feather.write_feather(pd.concat(sv_stats), 'written-sv-stats.feather')
+            # Support synchronous testing with a fake 'as_completed' object
+            if hasattr(self.client, 'DEBUG'):
+                partition_futures = [FakeFuture([r]) for r in results_bag.compute()]
+                ac = as_completed_synchronous(partition_futures, with_results=True)
+            else:
+                # https://stackoverflow.com/questions/52135188/how-to-get-future-object-from-dask-bag
+                partition_futures = distributed.futures_of(results_bag.persist())
+                ac = distributed.as_completed(partition_futures, with_results=True)
+
+            try:
+                sv_stats = []
+                for _, partition in tqdm(ac, total=len(partition_futures)):
+                    sv_stats.extend(partition)
+            except BaseException as ex:
+                logger.error(f"Exiting early due to {type(ex)}")
+                raise
+            finally:
+                with Timer("Writing supervoxel sizes", logger):
+                    feather.write_feather(pd.concat(sv_stats), 'written-sv-stats.feather')
 
     def _sanitize_config(self):
         rescale_factor = self.config["gridmeshes"]["rescale-before-write"]

@@ -520,5 +520,5 @@ if __name__ == "__main__":
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_gridmeshes']
     args += ['-x']
     #args += ['-Werror']
-    #args += ['-k', 'gridmeshes_rescale']
+    args += ['-k', 'gridmeshes_basic']
     pytest.main(args)
