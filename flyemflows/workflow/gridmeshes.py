@@ -261,6 +261,10 @@ class GridMeshes(Workflow):
                 keep_normals=options["mesh-parameters"]["compute-normals"],
                 progress=False
             )
+            label_df = label_df.rename_axis('sv').reset_index()
+            box_cols = ['z0', 'y0', 'x0', 'z1', 'y1', 'x1']
+            label_df[box_cols] = np.concatenate(label_df['Box'].values).reshape(-1, 6)
+
             meshes = {label: mesh for label, mesh in mesh_gen}
 
             if (np.array(options["rescale-before-write"]) != 1.0).any():
@@ -268,7 +272,7 @@ class GridMeshes(Workflow):
                     m.vertices_zyx[:] *= options["rescale-before-write"][::-1]  # zyx
 
             _write_meshes(config, resource_mgr, meshes)
-            return label_df['Count'].rename('voxels').rename_axis('sv').reset_index()
+            return label_df[['Count', *box_cols]]
 
         with Timer(f"Initializing BrickWall", logger):
             # Just one brick per partition, for better work stealing and responsive dashboard progress updates.
@@ -276,10 +280,10 @@ class GridMeshes(Workflow):
             brickwall = BrickWall.from_volume_service(self.input_service, 0, None, self.client, target_partition_size_voxels, 0, self.sbm, compression='lz4_2x')
 
         with Timer(f"Processing {brickwall.num_bricks} bricks", logger):
-            sv_sizes = persist_and_execute(brickwall.bricks.map(process_brick))
+            sv_stats = persist_and_execute(brickwall.bricks.map(process_brick))
 
         with Timer("Writing supervoxel sizes", logger):
-            feather.write_feather(pd.concat(sv_sizes), 'written-sv-sizes.feather')
+            feather.write_feather(pd.concat(sv_stats), 'written-sv-stats.feather')
 
     def _sanitize_config(self):
         rescale_factor = self.config["gridmeshes"]["rescale-before-write"]
