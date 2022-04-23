@@ -161,6 +161,7 @@ def setup_gridmeshes_config(setup_segmentation_input, disable_auto_retry):
           directory: meshes
 
         gridmeshes:
+          slab-shape: [128, 256, 256]
           subset-supervoxels: []
 
           mesh-parameters:

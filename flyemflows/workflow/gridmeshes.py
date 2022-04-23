@@ -13,9 +13,11 @@ import distributed
 from neuclease.dvid import (fetch_repo_instances, create_tarsupervoxel_instance,
                             create_instance, is_locked, post_load, post_keyvalues, fetch_exists, fetch_key,
                             fetch_server_info, fetch_mapping, resolve_ref)
-from neuclease.util import Timer, meshes_from_volume, tqdm_proxy as tqdm
+from neuclease.util import Timer, meshes_from_volume, tqdm_proxy as tqdm, boxes_from_grid, SparseBlockMask
 
 from dvid_resource_manager.client import ResourceManagerClient
+
+from flyemflows.util.util import replace_default_entries
 
 from ..util.dask_util import persist_and_execute, as_completed_synchronous, FakeFuture
 from .util.config_helpers import BodyListSchema, load_body_list
@@ -192,9 +194,17 @@ class GridMeshes(Workflow):
                                "If you already have a map of where the valid data is, you can provide a\n"
                                "pickled SparseBlockMask here.\n",
                 "type": "string",
-                "default": ""
+                "default": "",
             },
-
+            "slab-shape": {
+               "type": "array",
+               "items": {"type": "number"},
+               "default": [-1, -1, -1]
+            },
+            "restart-at-slab": {
+                "type": "integer",
+                "default": 0
+            }
         }
     }
 
@@ -223,21 +233,44 @@ class GridMeshes(Workflow):
         """
         self._sanitize_config()
         with Timer("Initializing input", logger):
-            subset_supervoxels, subset_bodies = self._init_input_service()
+            self.subset_supervoxels, self.subset_bodies = self._init_input_service()
 
         with Timer("Initializing output", logger):
             self._prepare_output()
 
+        slab_shape = self.config["gridmeshes"]["slab-shape"][::-1]
+        replace_default_entries(slab_shape, self.input_service.bounding_box_zyx[1])
+
+        slab_boxes = boxes_from_grid(self.input_service.bounding_box_zyx, slab_shape, clipped=False)
+        for slab_index, slab_box in enumerate(slab_boxes):
+            if slab_index < self.config["gridmeshes"]["restart-at-slab"]:
+                logger.info(f"Slab {slab_index}: SKIPPING (restart)")
+                continue
+            with Timer(f"Slab {slab_index}: Processing (XYZ: {slab_box[:, ::-1].tolist()})", logger, log_start=False):
+                self.process_slab(slab_index, slab_box)
+
+    def process_slab(self, slab_index, slab_box):
         config = self.config
         input_service = self.input_service
         resource_mgr = self.mgr_client
+        subset_supervoxels = self.subset_supervoxels
+        subset_bodies = self.subset_bodies
 
-        with Timer(f"Initializing BrickWall", logger):
+        if self.sbm is None:
+            slab_sbm = None
+        else:
+            slab_sbm = SparseBlockMask.create_from_sbm_box(self.sbm, slab_box)
+
+        with Timer(f"Slab {slab_index}: Initializing BrickWall", logger):
             # Just one brick per partition, for better work stealing and responsive dashboard progress updates.
             target_partition_size_voxels = np.prod(self.input_service.preferred_message_shape)
-            brickwall = BrickWall.from_volume_service(self.input_service, 0, None, self.client, target_partition_size_voxels, 0, self.sbm, compression='lz4_2x')
+            brickwall = BrickWall.from_volume_service(self.input_service, 0, slab_box, self.client, target_partition_size_voxels, 0, slab_sbm, compression='lz4_2x')
 
-        with Timer(f"Processing {brickwall.num_bricks} bricks", logger):
+        if brickwall.num_bricks == 0:
+            logger.info(f"Slab: {slab_index}: SKIPPING (no bricks to process)")
+            return
+
+        with Timer(f"Slab {slab_index}: Processing {brickwall.num_bricks} bricks", logger):
             process_brick = partial(_process_brick, config, resource_mgr, input_service, subset_supervoxels, subset_bodies)
             results_bag = brickwall.bricks.map(process_brick)
 
@@ -255,10 +288,10 @@ class GridMeshes(Workflow):
                 for _, partition in tqdm(ac, total=len(partition_futures)):
                     sv_counts.extend(partition)
             except BaseException as ex:
-                logger.error(f"Exiting early due to {type(ex)}")
+                logger.error(f"Slab {slab_index}: Exiting early due to {type(ex)}")
                 raise
             finally:
-                logger.info(f"Wrote {sum(sv_counts)} supervoxel meshes.")
+                logger.info(f"Slab {slab_index}: Wrote {sum(sv_counts)} supervoxel meshes.")
 
     def _sanitize_config(self):
         rescale_factor = self.config["gridmeshes"]["rescale-before-write"]
