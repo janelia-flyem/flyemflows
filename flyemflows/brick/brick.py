@@ -274,10 +274,6 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
 
     partition_size = max(1, partition_size)
 
-    def brick_size(log_phys):
-        _logical, physical = log_phys
-        return np.uint64(np.prod(physical[1] - physical[0]))
-
     num_partitions = int(np.ceil(len(logical_and_physical_boxes) / partition_size))
 
     # Avoid powers-of-two partition sizes, since they hash poorly.
@@ -301,6 +297,11 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
 
     boxes_bag = boxes_bag.persist()
     boxes_bag.compute()
+
+    def brick_size(log_phys):
+        _logical, physical = log_phys
+        physical = physical.astype(np.float32)
+        return np.prod(physical[1] - physical[0])
 
     total_volume = sum(map(brick_size, logical_and_physical_boxes))
     logger.info(f"Initializing bag of {num_bricks} Bricks "
