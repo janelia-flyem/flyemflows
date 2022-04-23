@@ -260,7 +260,7 @@ class GridMeshes(Workflow):
                 subset_supervoxels = pd.Index(subset_supervoxels).difference(existing_svs)
 
                 if len(existing_svs):
-                    existing_svs = pd.Series(existing_svs, name='sv')
+                    existing_svs = pd.Series(existing_svs, name='sv').to_frame()
                     path = f'{d}/brick-existing-svs-x{x}-y{y}-z{z}.feather'
                     feather.write_feather(existing_svs, path)
 
