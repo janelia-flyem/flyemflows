@@ -511,7 +511,7 @@ def _determine_existing(config, all_svs):
 
     elif destination_type == 'tarsupervoxels':
         tsv_instance = [destination['tarsupervoxels'][k] for k in ('server', 'uuid', 'instance')]
-        exists = fetch_exists(*tsv_instance, all_svs, batch_size=10_000, processes=32, show_progress=False)
+        exists = fetch_exists(*tsv_instance, all_svs, batch_size=10_000, processes=0, show_progress=False)
         existing_svs = exists[exists].index
 
     elif destination_type == 'keyvalue':
