@@ -256,7 +256,7 @@ class GridMeshes(Workflow):
                 if subset_supervoxels is None:
                     subset_supervoxels = pd.unique(brick.volume.ravel())
 
-                existing_svs = _determine_existing(config, subset_supervoxels)
+                existing_svs = _determine_existing(resource_mgr, config, subset_supervoxels)
                 subset_supervoxels = pd.Index(subset_supervoxels).difference(existing_svs)
 
                 if len(existing_svs):
@@ -491,7 +491,7 @@ class GridMeshes(Workflow):
 
         create_tarsupervoxel_instance(server, uuid, instance, sync_instance, output_fmt)
 
-def _determine_existing(config, all_svs):
+def _determine_existing(resource_mgr, config, all_svs):
     """
     Determine which of the given supervoxels already have
     meshes stored in the configured destination.
@@ -511,7 +511,8 @@ def _determine_existing(config, all_svs):
 
     elif destination_type == 'tarsupervoxels':
         tsv_instance = [destination['tarsupervoxels'][k] for k in ('server', 'uuid', 'instance')]
-        exists = fetch_exists(*tsv_instance, all_svs, batch_size=10_000, processes=0, show_progress=False)
+        with resource_mgr.access_context(tsv_instance[0], False, 1, len(all_svs)):
+            exists = fetch_exists(*tsv_instance, all_svs, batch_size=10_000, processes=0, show_progress=False)
         existing_svs = exists[exists].index
 
     elif destination_type == 'keyvalue':
