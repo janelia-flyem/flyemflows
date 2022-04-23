@@ -231,6 +231,8 @@ class GridMeshes(Workflow):
         input_service = self.input_service
         resource_mgr = self.mgr_client
 
+        os.makedirs('sv-stats')
+
         def process_brick(brick):
             subset_supervoxels = subset_supervoxels_
             options = config["gridmeshes"]
@@ -263,10 +265,7 @@ class GridMeshes(Workflow):
                 keep_normals=options["mesh-parameters"]["compute-normals"],
                 progress=False
             )
-            label_df = label_df.rename_axis('sv').reset_index()
-            box_cols = ['z0', 'y0', 'x0', 'z1', 'y1', 'x1']
-            label_df[box_cols] = np.concatenate(label_df['Box'].values).reshape(-1, 6)
-
+            # The actual computation happens while iterating here.
             meshes = {label: mesh for label, mesh in mesh_gen}
 
             if (np.array(options["rescale-before-write"]) != 1.0).any():
@@ -274,7 +273,18 @@ class GridMeshes(Workflow):
                     m.vertices_zyx[:] *= options["rescale-before-write"][::-1]  # zyx
 
             _write_meshes(config, resource_mgr, meshes)
-            return label_df[['Count', *box_cols]]
+
+            label_df = label_df.rename_axis('sv').reset_index()
+            box_cols = ['z0', 'y0', 'x0', 'z1', 'y1', 'x1']
+            label_df[box_cols] = np.concatenate(label_df['Box'].values).reshape(-1, 6)
+            label_df = label_df[['Count', *box_cols]].reset_index()
+
+            z, y, x = brick.logical_box[0]
+            d = f'sv-stats/z{z}/y{y}'
+            os.makedirs(d, exist_ok=True)
+            path = f'{d}/brick-sv-stats-x{x}-y{y}-z{z}.feather'
+            feather.write_feather(label_df, path)
+            return len(label_df)
 
         with Timer(f"Initializing BrickWall", logger):
             # Just one brick per partition, for better work stealing and responsive dashboard progress updates.
@@ -294,15 +304,14 @@ class GridMeshes(Workflow):
                 ac = distributed.as_completed(partition_futures, with_results=True)
 
             try:
-                sv_stats = []
+                sv_counts = []
                 for _, partition in tqdm(ac, total=len(partition_futures)):
-                    sv_stats.extend(partition)
+                    sv_counts.extend(partition)
             except BaseException as ex:
                 logger.error(f"Exiting early due to {type(ex)}")
                 raise
             finally:
-                with Timer("Writing supervoxel sizes", logger):
-                    feather.write_feather(pd.concat(sv_stats), 'written-sv-stats.feather')
+                logger.info(f"Wrote {sum(sv_counts)} supervoxel meshes.")
 
     def _sanitize_config(self):
         rescale_factor = self.config["gridmeshes"]["rescale-before-write"]
