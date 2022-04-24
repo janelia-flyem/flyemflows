@@ -17,7 +17,7 @@ from neuclease.util import Timer, meshes_from_volume, tqdm_proxy as tqdm, boxes_
 
 from dvid_resource_manager.client import ResourceManagerClient
 
-from flyemflows.util.util import replace_default_entries
+from flyemflows.util import replace_default_entries, auto_retry
 
 from ..util.dask_util import persist_and_execute, as_completed_synchronous, FakeFuture
 from .util.config_helpers import BodyListSchema, load_body_list
@@ -26,6 +26,9 @@ from ..brick import BrickWall
 from . import Workflow
 
 logger = logging.getLogger(__name__)
+
+post_load_with_retry = auto_retry(2, 60.0)(post_load)
+post_keyvalues_with_retry = auto_retry(2, 60.0)(post_keyvalues)
 
 
 class GridMeshes(Workflow):
