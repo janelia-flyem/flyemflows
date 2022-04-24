@@ -9,6 +9,7 @@ import pandas as pd
 import pyarrow.feather as feather
 
 import distributed
+import dask.config
 
 from neuclease.dvid import (fetch_repo_instances, create_tarsupervoxel_instance,
                             create_instance, is_locked, post_load, post_keyvalues, fetch_exists, fetch_key,
@@ -19,7 +20,7 @@ from dvid_resource_manager.client import ResourceManagerClient
 
 from flyemflows.util import replace_default_entries, auto_retry
 
-from ..util.dask_util import persist_and_execute, as_completed_synchronous, FakeFuture
+from ..util.dask_util import as_completed_synchronous, FakeFuture
 from .util.config_helpers import BodyListSchema, load_body_list
 from ..volumes import VolumeService, SegmentationVolumeSchema, DvidVolumeService
 from ..brick import BrickWall
@@ -303,6 +304,13 @@ class GridMeshes(Workflow):
         if not isinstance(rescale_factor, list):
             rescale_factor = 3*[rescale_factor]
         self.config["gridmeshes"]["rescale-before-write"] = rescale_factor
+
+        is_distributed = self.config["cluster-type"] not in ("syncrhonous", "processes")
+        workers_are_daemon = dask.config.get('distributed.worker.daemon', True)
+        if is_distributed and workers_are_daemon:
+            msg = ("This workflow uses multiprocessing, so you must configure your dask workers NOT to be daemons.\n"
+                   "In your dask-config, set distributed.worker.daemon: false")
+            raise RuntimeError(msg)
 
     def _init_input_service(self):
         """
