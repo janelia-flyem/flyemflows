@@ -13,7 +13,7 @@ import distributed
 from neuclease.dvid import (fetch_repo_instances, create_tarsupervoxel_instance,
                             create_instance, is_locked, post_load, post_keyvalues, fetch_exists, fetch_key,
                             fetch_server_info, fetch_mapping, resolve_ref)
-from neuclease.util import Timer, meshes_from_volume, tqdm_proxy as tqdm, boxes_from_grid, SparseBlockMask
+from neuclease.util import Timer, meshes_from_volume, tqdm_proxy as tqdm, boxes_from_grid, SparseBlockMask, compute_parallel
 
 from dvid_resource_manager.client import ResourceManagerClient
 
@@ -524,12 +524,20 @@ def _write_meshes(config, resource_mgr, meshes):
         instance = [destination[destination_type][k] for k in ('server', 'uuid', 'instance')]
         with resource_mgr.access_context(instance[0], False, 1, total_bytes):
             if destination_type == 'tarsupervoxels':
-                post_load(*instance, binary_meshes)
+                post_load_with_retry(*instance, binary_meshes)
             elif 'keyvalue' in destination:
-                post_keyvalues(*instance, binary_meshes)
-
+                post_keyvalues_with_retry(*instance, binary_meshes)
 
 def _process_brick(config, resource_mgr, input_service, subset_supervoxels, subset_bodies, brick):
+    # Run the computation in a child process to shield ourselves
+    # from a suspected memory leak in Mesh.simplify_openmesh().
+    # We use compute_parallel() with a single item as a convenient way
+    # to get a child process -- no work is being processed in parallel.
+    args = (config, resource_mgr, input_service, subset_supervoxels, subset_bodies, brick)
+    (num_svs,) = compute_parallel(_process_brick_impl, (args,), starmap=True, processes=1)
+    return num_svs
+
+def _process_brick_impl(config, resource_mgr, input_service, subset_supervoxels, subset_bodies, brick):
     options = config["gridmeshes"]
     all_svs = None
     if len(subset_bodies):
