@@ -247,7 +247,7 @@ class GridMeshes(Workflow):
         bb_rounded = round_coord(self.input_service.bounding_box_zyx[1], grid_shape, 'up')
         replace_default_entries(slab_shape, bb_rounded)
         if (slab_shape % grid_shape).any():
-            raise RuntimeError("Your slab shape (XYZ {slab_shape[::-1]}) isn't a multiple of your grid shape (XYZ {grid_shape[::-1]})")
+            raise RuntimeError(f"Your slab shape (XYZ {slab_shape[::-1]}) isn't a multiple of your grid shape (XYZ {grid_shape[::-1]})")
 
         slab_boxes = boxes_from_grid(self.input_service.bounding_box_zyx, slab_shape, clipped=False)
         logger.info(f"Splitting job into {len(slab_boxes)} slabs (each XYZ {slab_shape[::-1]})")
