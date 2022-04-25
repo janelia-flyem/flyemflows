@@ -278,12 +278,12 @@ class GridMeshes(Workflow):
                 brickwall = BrickWall.from_volume_service(self.input_service, 0, slab_box, self.client, target_partition_size_voxels, 0, slab_sbm, compression='lz4_2x')
         except RuntimeError as ex:
             if 'SparseBlockMask selects no blocks at all' in str(ex):
-                logger.info(f"Slab: {slab_index}: SKIPPING (no bricks to process)")
+                logger.info(f"Slab {slab_index}: SKIPPING (no bricks to process)")
                 return
             raise
 
         if brickwall.num_bricks == 0:
-            logger.info(f"Slab: {slab_index}: SKIPPING (no bricks to process)")
+            logger.info(f"Slab {slab_index}: SKIPPING (no bricks to process)")
             return
 
         with Timer(f"Slab {slab_index}: Processing {brickwall.num_bricks} bricks", logger):
