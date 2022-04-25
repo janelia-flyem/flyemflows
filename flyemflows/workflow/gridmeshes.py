@@ -322,6 +322,10 @@ class GridMeshes(Workflow):
                    "In your dask-config, set distributed.worker.daemon: false")
             raise RuntimeError(msg)
 
+        if 'dvid' in self.config["input"]:
+            if not self.config['input']['dvid']['supervoxels']:
+                raise RuntimeError("Your input dvid source should specify supervoxels: true")
+
     def _init_input_service(self):
         """
         Initialize the input and output services,
