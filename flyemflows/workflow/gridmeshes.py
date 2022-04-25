@@ -561,33 +561,42 @@ def _process_brick(config, resource_mgr, input_service, subset_supervoxels, subs
 
 def _process_brick_impl(config, resource_mgr, input_service, subset_supervoxels, subset_bodies, brick):
     options = config["gridmeshes"]
-    all_svs = None
-    if len(subset_bodies):
+
+    # Only need to determine all_svs if we're going to do some set logic with it.
+    using_subset = (len(subset_supervoxels) or len(subset_bodies))
+    if using_subset or options["skip-existing"]:
         all_svs = pd.unique(brick.volume.ravel())
+
+    if len(subset_supervoxels):
+        # Only consider supervoxels in the current brick.
+        subset_supervoxels = pd.Index(subset_supervoxels).intersection(all_svs)
+        if len(subset_supervoxels) == 0:
+            return 0
+
+    if len(subset_bodies):
+        # Convert body list to supervoxel list.
         mappings = fetch_mapping(*input_service.base_service.instance_triple, all_svs, as_series=True)
         subset_supervoxels = mappings[mappings.isin(subset_bodies)].index
-
-    if len(subset_supervoxels) == 0:
-        subset_supervoxels = None
+        if len(subset_supervoxels) == 0:
+            return 0
 
     z, y, x = brick.logical_box[0]
     d = f'sv-stats/z{z}/y{y}'
     os.makedirs(d, exist_ok=True)
 
     if options["skip-existing"]:
-        if subset_supervoxels is None:
+        if len(subset_supervoxels) == 0:
             subset_supervoxels = all_svs
 
-        if subset_supervoxels is None:
-            subset_supervoxels = pd.unique(brick.volume.ravel())
-
         existing_svs = _determine_existing(resource_mgr, config, subset_supervoxels)
-        subset_supervoxels = pd.Index(subset_supervoxels).difference(existing_svs)
-
         if len(existing_svs):
-            existing_svs = pd.Series(existing_svs, name='sv').to_frame()
+            existing_svs = pd.Series(existing_svs, name='sv')
             path = f'{d}/brick-existing-svs-x{x}-y{y}-z{z}.feather'
-            feather.write_feather(existing_svs, path)
+            feather.write_feather(existing_svs.to_frame(), path)
+
+        subset_supervoxels = pd.Index(subset_supervoxels).difference(existing_svs)
+        if len(subset_supervoxels) == 0:
+            return 0
 
     label_df, mesh_gen = meshes_from_volume(
         brick.volume, brick.physical_box, subset_supervoxels,
