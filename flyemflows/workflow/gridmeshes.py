@@ -315,7 +315,7 @@ class GridMeshes(Workflow):
             rescale_factor = 3*[rescale_factor]
         self.config["gridmeshes"]["rescale-before-write"] = rescale_factor
 
-        is_distributed = self.config["cluster-type"] not in ("syncrhonous", "processes")
+        is_distributed = self.config["cluster-type"] not in ("synchronous", "processes")
         workers_are_daemon = dask.config.get('distributed.worker.daemon', True)
         if is_distributed and workers_are_daemon:
             msg = ("This workflow uses multiprocessing, so you must configure your dask workers NOT to be daemons.\n"

@@ -313,7 +313,7 @@ class SVDecimate(Workflow):
             assert os.path.exists(options["bodies"]), \
                 f'Input file does not exist: {options["bodies"]}'
 
-        is_distributed = self.config["cluster-type"] not in ("syncrhonous", "processes")
+        is_distributed = self.config["cluster-type"] not in ("synchronous", "processes")
         needs_multiprocessing = (options["processes-per-body"] > 1)
         workers_are_daemon = dask.config.get('distributed.worker.daemon', True)
         if is_distributed and needs_multiprocessing and workers_are_daemon:
