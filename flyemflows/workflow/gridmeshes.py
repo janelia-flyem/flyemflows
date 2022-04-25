@@ -271,20 +271,20 @@ class GridMeshes(Workflow):
         else:
             slab_sbm = SparseBlockMask.create_from_sbm_box(self.sbm, slab_box)
 
-        try:
-            with Timer(f"Slab {slab_index}: Initializing BrickWall", logger):
+        with Timer(f"Slab {slab_index}: Initializing BrickWall", logger):
+            try:
                 # Just one brick per partition, for better work stealing and responsive dashboard progress updates.
                 target_partition_size_voxels = np.prod(self.input_service.preferred_message_shape)
                 brickwall = BrickWall.from_volume_service(self.input_service, 0, slab_box, self.client, target_partition_size_voxels, 0, slab_sbm, compression='lz4_2x')
-        except RuntimeError as ex:
-            if 'SparseBlockMask selects no blocks at all' in str(ex):
+            except RuntimeError as ex:
+                if 'SparseBlockMask selects no blocks at all' in str(ex):
+                    logger.info(f"Slab {slab_index}: SKIPPING (no bricks to process)")
+                    return
+                raise
+
+            if brickwall.num_bricks == 0:
                 logger.info(f"Slab {slab_index}: SKIPPING (no bricks to process)")
                 return
-            raise
-
-        if brickwall.num_bricks == 0:
-            logger.info(f"Slab {slab_index}: SKIPPING (no bricks to process)")
-            return
 
         with Timer(f"Slab {slab_index}: Processing {brickwall.num_bricks} bricks", logger):
             process_brick = partial(_process_brick, config, resource_mgr, input_service, subset_supervoxels, subset_bodies)
