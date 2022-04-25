@@ -609,7 +609,7 @@ def _process_brick_impl(config, resource_mgr, input_service, subset_supervoxels,
     _write_meshes(config, resource_mgr, meshes)
 
     if len(label_df):
-        label_df = label_df.rename_axis('sv').reset_index()
+        label_df = label_df.rename_axis('sv')
         box_cols = ['z0', 'y0', 'x0', 'z1', 'y1', 'x1']
         label_df[box_cols] = np.concatenate(label_df['Box'].values).reshape(-1, 6)
         label_df = label_df[['Count', *box_cols]].reset_index()
