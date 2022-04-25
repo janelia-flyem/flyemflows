@@ -557,6 +557,9 @@ def _process_brick(config, resource_mgr, input_service, subset_supervoxels, subs
     # to get a child process -- no work is being processed in parallel.
     args = (config, resource_mgr, input_service, subset_supervoxels, subset_bodies, brick)
     (num_svs,) = compute_parallel(_process_brick_impl, (args,), starmap=True, processes=1)
+
+    # Discard immediately.
+    brick.destroy()
     return num_svs
 
 def _process_brick_impl(config, resource_mgr, input_service, subset_supervoxels, subset_bodies, brick):
