@@ -1,3 +1,4 @@
+import os
 import copy
 import pickle
 import logging
@@ -5,6 +6,7 @@ import logging
 import numpy as np
 import pandas as pd
 import dask.bag as db
+import pyarrow.feather as feather
 
 from dvid_resource_manager.client import ResourceManagerClient
 from neuclease.util import Timer, contingency_table, round_box, SparseBlockMask, boxes_from_grid, iter_batches
@@ -23,6 +25,11 @@ class ContingencyTable(Workflow):
     compute the contingency table, i.e the table of overlapping
     labels and the size (voxel count) of each unique overlapping
     left/right pair.
+
+    WARNING:
+        The final step of this workflow is to compute a gigantic pandas aggregation.
+        Your client (driver) machine will require lots of RAM, even though it won't be
+        doing much during most of the computation before the very end.
     """
     ContingencyTableOptionsSchema = \
     {
@@ -140,6 +147,7 @@ class ContingencyTable(Workflow):
         logger.info(f"Computing contingency tables for {len(boxes)} bricks in total.")
         logger.info(f"Processing {len(batches)} batches of {options['batch-size']} bricks each.")
 
+        os.makedirs('batch-tables')
         for batch_index, batch_boxes in enumerate(batches):
             with Timer(f"Batch {batch_index}: Computing tables", logger):
                 # Aim for 4 partitions per worker
@@ -149,11 +157,15 @@ class ContingencyTable(Workflow):
                             .compute())
 
                 tables, left_sizes, right_sizes = zip(*results)
-                table = pd.concat(tables, ignore_index=True).sort_values(['left', 'right']).reset_index(drop=True)
+                table = pd.concat(tables, ignore_index=True).sort_values(['left', 'right'], ignore_index=True)
                 table = table.groupby(['left', 'right'], as_index=False, sort=False)['voxel_count'].sum()
 
                 left_sizes = pd.concat(left_sizes, ignore_index=True).groupby('left')['voxel_count'].sum().reset_index()
                 right_sizes = pd.concat(right_sizes, ignore_index=True).groupby('right')['voxel_count'].sum().reset_index()
+
+                feather.write_feather(table.reset_index(), f'batch-tables/batch-{batch_index}-table.feather')
+                feather.write_feather(left_sizes, f'batch-tables/batch-{batch_index}-left-sizes.feather')
+                feather.write_feather(right_sizes, f'batch-tables/batch-{batch_index}-right-sizes.feather')
 
                 batch_tables.append(table)
                 batch_left_sizes.append(left_sizes)
@@ -168,11 +180,12 @@ class ContingencyTable(Workflow):
 
         def dump_table(table, p):
             with Timer(f"Writing {p}", logger), open(p, 'wb') as f:
-                pickle.dump(table, f)
+                feather.write_feather(table, p)
 
-        dump_table(final_table, 'contingency_table.pkl')
-        dump_table(final_left_sizes, 'left_sizes.pkl')
-        dump_table(final_right_sizes, 'right_sizes.pkl')
+        # feather doesn't write the index, so be sure to reset it if needed.
+        dump_table(final_table, 'contingency_table.feather')
+        dump_table(final_left_sizes.reset_index(), 'left_sizes.feather')
+        dump_table(final_right_sizes.reset_index(), 'right_sizes.feather')
 
     def init_services(self):
         """

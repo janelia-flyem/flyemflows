@@ -10,6 +10,7 @@ from ruamel.yaml import YAML
 import h5py
 import numpy as np
 import pandas as pd
+import pyarrow.feather as feather
 
 from neuclease.util import contingency_table
 
@@ -76,17 +77,14 @@ def test_contingencytable(setup_hdf5_inputs):
     template_dir, _config, left_vol, right_vol = setup_hdf5_inputs
     expected_table = contingency_table(left_vol, right_vol).sort_index().reset_index()
 
-    expected_left_sizes = expected_table.groupby('left')['voxel_count'].sum()
-    expected_right_sizes = expected_table.groupby('right')['voxel_count'].sum()
+    expected_left_sizes = expected_table.groupby('left')['voxel_count'].sum().reset_index()
+    expected_right_sizes = expected_table.groupby('right')['voxel_count'].sum().reset_index()
 
     execution_dir, _workflow = launch_flow(template_dir, 1)
 
-    with open(f"{execution_dir}/contingency_table.pkl", "rb") as f:
-        output_table = pickle.load(f)
-    with open(f"{execution_dir}/left_sizes.pkl", "rb") as f:
-        left_sizes = pickle.load(f)
-    with open(f"{execution_dir}/right_sizes.pkl", "rb") as f:
-        right_sizes = pickle.load(f)
+    output_table = feather.read_feather(f"{execution_dir}/contingency_table.feather")
+    left_sizes = feather.read_feather(f"{execution_dir}/left_sizes.feather")
+    right_sizes = feather.read_feather(f"{execution_dir}/right_sizes.feather")
 
     assert (output_table == expected_table).all().all()
     assert (left_sizes == expected_left_sizes).all().all()
