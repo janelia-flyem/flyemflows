@@ -605,11 +605,11 @@ def _process_brick(config, resource_mgr, input_service, subset_supervoxels, subs
 
     if len(label_df):
         label_df = label_df.rename_axis('sv')
+        box_cols = ['z0', 'y0', 'x0', 'z1', 'y1', 'x1']
+        label_df[box_cols] = np.concatenate(label_df['Box'].values).reshape(-1, 6)
         label_df[['z0', 'y0', 'x0']] += brick.physical_box[0]
         label_df[['z1', 'y1', 'x1']] += brick.physical_box[0]
 
-        box_cols = ['z0', 'y0', 'x0', 'z1', 'y1', 'x1']
-        label_df[box_cols] = np.concatenate(label_df['Box'].values).reshape(-1, 6)
         label_df = label_df[['Count', *box_cols]].reset_index()
         path = f'{d}/brick-sv-stats-x{x}-y{y}-z{z}.feather'
         feather.write_feather(label_df, path)
