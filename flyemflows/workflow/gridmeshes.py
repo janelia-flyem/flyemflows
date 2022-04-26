@@ -551,18 +551,6 @@ def _write_meshes(config, resource_mgr, meshes):
                 post_keyvalues_with_retry(*instance, binary_meshes)
 
 def _process_brick(config, resource_mgr, input_service, subset_supervoxels, subset_bodies, brick):
-    # Run the computation in a child process to shield ourselves
-    # from a suspected memory leak in Mesh.simplify_openmesh().
-    # We use compute_parallel() with a single item as a convenient way
-    # to get a child process -- no work is being processed in parallel.
-    args = (config, resource_mgr, input_service, subset_supervoxels, subset_bodies, brick)
-    (num_svs,) = compute_parallel(_process_brick_impl, (args,), starmap=True, processes=1)
-
-    # Discard immediately.
-    brick.destroy()
-    return num_svs
-
-def _process_brick_impl(config, resource_mgr, input_service, subset_supervoxels, subset_bodies, brick):
     options = config["gridmeshes"]
 
     # Only need to determine all_svs if we're going to do some set logic with it.
@@ -601,8 +589,37 @@ def _process_brick_impl(config, resource_mgr, input_service, subset_supervoxels,
         if len(subset_supervoxels) == 0:
             return 0
 
+    # Run the computation in a child process to shield ourselves
+    # from a suspected memory leak in Mesh.simplify_openmesh().
+    # We use compute_parallel() with a single item as a convenient way
+    # to get a child process -- no work is being processed in parallel.
+    ((label_df, meshes),) = compute_parallel(
+        _meshes_from_volume,
+        [(brick.volume, brick.physical_box, subset_supervoxels, options)],
+        starmap=True, processes=1
+    )
+    # Discard immediately.
+    brick.destroy()
+
+    _write_meshes(config, resource_mgr, meshes)
+
+    if len(label_df):
+        label_df = label_df.rename_axis('sv')
+        label_df[['z0', 'y0', 'x0']] += brick.physical_box[0]
+        label_df[['z1', 'y1', 'x1']] += brick.physical_box[0]
+
+        box_cols = ['z0', 'y0', 'x0', 'z1', 'y1', 'x1']
+        label_df[box_cols] = np.concatenate(label_df['Box'].values).reshape(-1, 6)
+        label_df = label_df[['Count', *box_cols]].reset_index()
+        path = f'{d}/brick-sv-stats-x{x}-y{y}-z{z}.feather'
+        feather.write_feather(label_df, path)
+
+    return len(label_df)
+
+
+def _meshes_from_volume(volume, physical_box, subset_supervoxels, options):
     label_df, mesh_gen = meshes_from_volume(
-        brick.volume, brick.physical_box, subset_supervoxels,
+        volume, physical_box, subset_supervoxels,
         cuffs=True, capped=True,
         min_voxels=options["minimum-supervoxel-size"],
         max_voxels=options["maximum-supervoxel-size"],
@@ -618,18 +635,7 @@ def _process_brick_impl(config, resource_mgr, input_service, subset_supervoxels,
         for m in meshes.values():
             m.vertices_zyx[:] *= options["rescale-before-write"][::-1]  # zyx
 
-    _write_meshes(config, resource_mgr, meshes)
-
-    if len(label_df):
-        label_df = label_df.rename_axis('sv')
-        box_cols = ['z0', 'y0', 'x0', 'z1', 'y1', 'x1']
-        label_df[box_cols] = np.concatenate(label_df['Box'].values).reshape(-1, 6)
-        label_df = label_df[['Count', *box_cols]].reset_index()
-        path = f'{d}/brick-sv-stats-x{x}-y{y}-z{z}.feather'
-        feather.write_feather(label_df, path)
-
-    return len(label_df)
-
+    return label_df, meshes
 
 def serialize_mesh(sv, mesh, path=None, fmt=None):
     """
