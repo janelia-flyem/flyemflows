@@ -596,7 +596,7 @@ def _process_brick(config, resource_mgr, input_service, subset_supervoxels, subs
     ((label_df, meshes),) = compute_parallel(
         _meshes_from_volume,
         [(brick.volume, brick.physical_box, subset_supervoxels, options)],
-        starmap=True, processes=1
+        starmap=True, processes=1, shutdown_delay=0.1,
     )
     # Discard immediately.
     brick.destroy()
