@@ -595,7 +595,7 @@ def _process_brick(config, resource_mgr, input_service, subset_supervoxels, subs
     # to get a child process -- no work is being processed in parallel.
     ((label_df, meshes),) = compute_parallel(
         _meshes_from_volume,
-        [(brick.volume, brick.physical_box, subset_supervoxels, options)],
+        [(brick, subset_supervoxels, options)],
         starmap=True, processes=1, shutdown_delay=0.1,
     )
     # Discard immediately.
@@ -617,9 +617,9 @@ def _process_brick(config, resource_mgr, input_service, subset_supervoxels, subs
     return len(label_df)
 
 
-def _meshes_from_volume(volume, physical_box, subset_supervoxels, options):
+def _meshes_from_volume(brick, subset_supervoxels, options):
     label_df, mesh_gen = meshes_from_volume(
-        volume, physical_box, subset_supervoxels,
+        brick.volume, brick.physical_box, subset_supervoxels,
         cuffs=True, capped=True,
         min_voxels=options["minimum-supervoxel-size"],
         max_voxels=options["maximum-supervoxel-size"],
