@@ -159,7 +159,7 @@ def main():
     while True:
         try:
             with ExceptionLogger(logger) as el:
-                msgs_df = read_labelmap_kafka_df(*seg_instance, drop_completes=True, group_id=group_id)
+                msgs_df = read_labelmap_kafka_df(*seg_instance, completes_only=True, group_id=group_id)
                 msgs_df = filter_kafka_msgs_by_timerange(msgs_df, args.starting_timestamp)
                 extract_body_ids_and_launch(c, args, seg_instance, body_csv, msgs_df)
                 need_kafka_reset = False

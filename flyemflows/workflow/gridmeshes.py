@@ -147,12 +147,7 @@ class GridMeshes(Workflow):
             },
             "subset-bodies": {
                 **BodyListSchema,
-                "description": "List of body IDs to process, a path to a CSV file with the list,\n"
-                               "or a timestamp (e.g. '2018-11-22 17:34:00') which will be used with \n"
-                               "the kafka log to determine bodies that have changed (since the given time).\n"
-                               "NOTE: If you're using a non-labelmap source (e.g. HDF5, etc.), \n"
-                               "      it is considered supervoxel data.\n"
-                               "      This config setting can only be used when using a labelmap source.\n",
+                "description": "List of body IDs to process or a path to a CSV file with the list.\n"
             },
             "minimum-supervoxel-size": {
                 "description": "Supervoxels smaller than this won't be processed.\n"
