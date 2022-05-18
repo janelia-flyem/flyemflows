@@ -25,69 +25,6 @@ yaml.default_flow_style = False
 CLUSTER_TYPE = os.environ.get('CLUSTER_TYPE', 'local-cluster')
 
 
-def create_test_object(height=128, radius=10):
-    """
-    Create a test object (shaped like an 'X')
-    with overall height (and width and depth) determined by 'height',
-    and whose "arm" thickness is determined by the given radius.
-    """
-    center_line_img = np.zeros((height,height,height), dtype=np.uint32)
-    for i in range(height):
-        center_line_img[i, i, i] = 1
-        center_line_img[height-1-i, i, i] = 1
-
-    # Scipy distance_transform_edt conventions are opposite of vigra:
-    # it calculates distances of non-zero pixels to the zero pixels.
-    center_line_img = 1 - center_line_img
-    distance_to_line = distance_transform_edt(center_line_img)
-    binary_vol = (distance_to_line <= radius).astype(np.uint8)
-    return binary_vol
-
-
-def create_test_segmentation():
-    if os.environ.get('TRAVIS', '') == 'true':
-        # On Travis-CI, store this test data in a place that gets cached.
-        d = '/home/travis/miniconda/test-data'
-    else:
-        d = '/tmp'
-
-    vol_path = f'{d}/test-gridmeshes-segmentation.npy'
-    boxes_path = f'{d}/test-gridmeshes-boxes.pkl'
-    sizes_path = f'{d}/test-gridmeshes-sizes.pkl'
-    if os.path.exists(vol_path):
-        test_volume = np.load(vol_path)
-        object_boxes = pickle.load(open(boxes_path, 'rb'))
-        object_sizes = pickle.load(open(sizes_path, 'rb'))
-        return test_volume, object_boxes, object_sizes
-
-    test_volume = np.zeros((256, 256, 256), np.uint64)
-
-    def place_test_object(label, corner, height):
-        corner = np.array(corner)
-        object_vol = create_test_object(height).astype(np.uint64)
-        object_vol *= label
-        object_box = np.array([corner, corner + object_vol.shape])
-
-        testvol_view = test_volume[box_to_slicing(*object_box)]
-        testvol_view[:] = np.where(object_vol, object_vol, testvol_view)
-        return object_box, (object_vol != 0).sum()
-
-    # Place four text objects
-    object_boxes = {}
-    object_sizes = {}
-    labels = [100,200,300]
-    corners = [(10,10,10), (10, 60, 10), (10, 110, 10)]
-    heights = (200, 150, 50)
-    for label, corner, height in zip(labels, corners, heights):
-        box, num_voxels = place_test_object(label, corner, height)
-        object_boxes[label] = box
-        object_sizes[label] = int(num_voxels)
-
-    np.save(vol_path, test_volume) # Cache for next pytest run
-    pickle.dump(object_boxes, open(boxes_path, 'wb'))
-    pickle.dump(object_sizes, open(sizes_path, 'wb'))
-    return test_volume, object_boxes, object_sizes
-
 def create_test_segmentation():
     """
     Create a 'gridded' test segmentation.

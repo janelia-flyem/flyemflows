@@ -10,6 +10,7 @@ import pyarrow.feather as feather
 
 import distributed
 import dask.config
+from dask.delayed import delayed
 
 from neuclease.dvid import (fetch_repo_instances, create_tarsupervoxel_instance,
                             create_instance, is_locked, post_load, post_keyvalues, fetch_exists, fetch_key,
@@ -282,8 +283,13 @@ class GridMeshes(Workflow):
                 return
 
         with Timer(f"Slab {slab_index}: Processing {brickwall.num_bricks} bricks", logger):
-            process_brick = partial(_process_brick, config, resource_mgr, input_service, subset_supervoxels, subset_bodies)
-            results_bag = brickwall.bricks.map(process_brick)
+
+            # Pass subset_supervoxels via dask delayed to achieve better
+            # data sharing rather than duplicating it within each task.
+            process_brick = partial(_process_brick, config, resource_mgr, input_service)
+            results_bag = brickwall.bricks.map(process_brick,
+                                               subset_supervoxels=delayed(subset_supervoxels),
+                                               subset_bodies=delayed(subset_bodies))
 
             # Support synchronous testing with a fake 'as_completed' object
             if hasattr(self.client, 'DEBUG'):
@@ -545,7 +551,7 @@ def _write_meshes(config, resource_mgr, meshes):
             elif 'keyvalue' in destination:
                 post_keyvalues_with_retry(*instance, binary_meshes)
 
-def _process_brick(config, resource_mgr, input_service, subset_supervoxels, subset_bodies, brick):
+def _process_brick(config, resource_mgr, input_service, brick, *, subset_supervoxels, subset_bodies):
     options = config["gridmeshes"]
 
     # Only need to determine all_svs if we're going to do some set logic with it.
