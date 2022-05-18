@@ -30,8 +30,8 @@ from . import Workflow
 
 logger = logging.getLogger(__name__)
 
-post_load_with_retry = auto_retry(2, 60.0)(post_load)
-post_keyvalues_with_retry = auto_retry(2, 60.0)(post_keyvalues)
+post_load_with_retry = auto_retry(3, 60.0, __name__)(post_load)
+post_keyvalues_with_retry = auto_retry(3, 60.0, __name__)(post_keyvalues)
 
 
 class GridMeshes(Workflow):
