@@ -53,7 +53,7 @@ def main():
             span_start, span_stop = batch_spans[0][0], batch_spans[-1][1]
             batch_stats = block_sv_stats[span_start:span_stop]
             digits = int(np.ceil(np.log10(num_batches)))
-            batch_path = ('stats-batches/stats-batch-{:0' + str(digits) + 'd}.h5').format(batch_index)
+            batch_path = f'stats-batches/stats-batch-{batch_index:0{digits}d}.h5'
             save_stats(batch_stats, batch_path)
     
     logger.info("DONE sorting stats by body")
