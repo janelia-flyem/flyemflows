@@ -769,7 +769,11 @@ class CreateMeshes(Workflow):
 
             elif destination_type == 'tarsupervoxels':
                 tsv_instance = [destination['tarsupervoxels'][k] for k in ('server', 'uuid', 'instance')]
-                exists = fetch_exists(*tsv_instance, all_svs, batch_size=10_000, processes=32, show_progress=False)
+                if len(all_svs) < 10_000:
+                    processes = 0
+                else:
+                    processes = 32
+                exists = fetch_exists(*tsv_instance, all_svs, batch_size=10_000, processes=processes, show_progress=False)
                 existing_svs = set(exists[exists].index)
 
             elif destination_type == 'keyvalue':
