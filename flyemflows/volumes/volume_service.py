@@ -65,7 +65,7 @@ class VolumeService(metaclass=ABCMeta):
         from .hdf5_volume_service import Hdf5VolumeService
         from .dvid_volume_service import DvidVolumeService
         from .boss_volume_service import BossVolumeServiceReader
-        from .tensorstore_volume_service import TensorStoreVolumeServiceReader
+        from .tensorstore_volume_service import TensorStoreVolumeService
         from .brainmaps_volume_service import BrainMapsVolumeServiceReader
         from .n5_volume_service import N5VolumeService
         from .zarr_volume_service import ZarrVolumeService
@@ -86,7 +86,7 @@ class VolumeService(metaclass=ABCMeta):
         elif "boss" in volume_config:
             service = BossVolumeServiceReader( volume_config, resource_manager_client )
         elif "tensorstore" in volume_config:
-            service = TensorStoreVolumeServiceReader( volume_config, resource_manager_client )
+            service = TensorStoreVolumeService( volume_config, resource_manager_client )
         elif "brainmaps" in volume_config:
             service = BrainMapsVolumeServiceReader( volume_config, resource_manager_client )
         elif "n5" in volume_config:

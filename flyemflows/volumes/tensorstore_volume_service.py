@@ -7,19 +7,21 @@ from dvid_resource_manager.client import ResourceManagerClient
 from neuclease.util import box_to_slicing
 
 from ..util import auto_retry, replace_default_entries
-from . import VolumeServiceReader, GeometrySchema, SegmentationAdapters
+from . import VolumeServiceWriter, GeometrySchema, SegmentationAdapters
 
 TensorStoreSpecSchema = \
 {
     "description": "TensorStore Spec",
     "type": "object",
     "default": {},
-    "required": ["driver", "kvstore", "path"],
+    "required": ["driver", "kvstore"],
     # "additionalProperties": False, # Can't use this in conjunction with 'oneOf' schema feature
     "properties": {
         "driver": {
             "description": "type of volume",
             "type": "string",
+            # For now, we support only ng precomputed, not zarr or n5.
+            # We would need to be more careful about fortran/C ordering to handle other sources.
             "enum": ["neuroglancer_precomputed"],
             "default": "neuroglancer_precomputed"
         },
@@ -29,19 +31,25 @@ TensorStoreSpecSchema = \
             "properties": {
                 "driver": {
                     "type": "string",
-                    "enum": ["gcs"],
-                    "default": "gcs"
+                    "enum": ["gcs", "file"],
+                    "default": "file"
                 },
                 "bucket": {
                     "description": "bucket name",
-                    "type": "string"
-                    # no default
-                }
-            }
+                    "type": "string",
+                    "default": ""
+                },
+                "path": {
+                    "description": "Path on the filesystem or within the bucket, e.g. /tmp/foo/",
+                    "type": "string",
+                    "default": ""
+                },
+            },
         },
         "path": {
-            "description": "Path within the bucket",
-            "type": "string"
+            "description": "DEPRECATED.  DO NOT USE.  (Use kvstore.path instead.)",
+            "type": "string",
+            "default": "",
         },
         "recheck_cached_metadata": {
             "description": "When to check that the metadata hasn't changed.",
@@ -119,7 +127,7 @@ TensorStoreContextSchema = {
 }
 
 TensorStoreServiceSchema = {
-    "description": "TensorStore Service settings",
+    "description": "TensorStore Service settings. Only some of the valid properties are listed here.  For the full schema, see the TensorStore docs.",
     "type": "object",
     "default": {},
     "required": ["spec", "context"],
@@ -149,15 +157,65 @@ TensorStoreVolumeSchema = \
 }
 
 
-class TensorStoreVolumeServiceReader(VolumeServiceReader):
+class TensorStoreVolumeService(VolumeServiceWriter):
     """
-    A wrapper around the TensorStore API to implement the VolumeServiceReader API.
+    A wrapper around the TensorStore API to implement the VolumeServiceWriter API.
+
+    Warning:
+        Currently, this class requires you to supply most of the tensorstore dataset configuration explicitly,
+        even if you've also supplied redundant config paramters in the 'geometry' section of the volume config.
+
+    Here's an example config:
+        tensorstore:
+            spec: {
+                "driver": "neuroglancer_precomputed",
+                "kvstore": {
+                    "driver": "file",
+                    "path": "/tmp/foobar-volume/",
+                },
+                "create": true,
+                "open": true,
+                "multiscale_metadata": {
+                    "type": "segmentation",
+                    "data_type": "uint64",
+                    "num_channels": 1
+                },
+                "scale_metadata": {
+                    "size": [1000, 500, 300],
+                    "encoding": "compressed_segmentation",
+                    "compressed_segmentation_block_size": [8, 8, 8],
+                    "chunk_size": [64, 64, 64],
+                    "resolution": [8, 8, 8],
+                    "sharding": {
+                        "@type": "neuroglancer_uint64_sharded_v1",
+                        "data_encoding": "gzip",
+                        "hash": "identity",
+                        "minishard_bits": 6,
+                        "minishard_index_encoding": "gzip",
+                        "preshift_bits": 9,
+                        "shard_bits": 15,
+                    },
+                },
+                "data_copy_concurrency": {"limit": 1},
+                "recheck_cached_metadata": False,
+                "recheck_cached_data": False,
+            }
+            "context": {
+                "cache_pool": {"total_bytes_limit": 8*(512**3)},
+                "data_copy_concurrency": {"limit": 8},
+                'file_io_concurrency': {'limit': 1}
+            }
+        geometry:
+            bounding-box: [[0,0,0], [1000, 500, 300]]
+            message-block-shape: [2048, 2048, 2048]
+            block-width: 64
+            available-scales: [0,1,2,3,4,5,6,7]
     """
 
     @classmethod
     def default_config(cls, ng_src_url=None):
         """
-        Return the default config for a TensorStoreVolumeReader.
+        Return the default config for a TensorStoreVolumeService.
         If you provide a source url, the bucket and path components will be configured.
         Otherwise, you must overwrite those entries yourself before using the config.
 
@@ -179,14 +237,14 @@ class TensorStoreVolumeServiceReader(VolumeServiceReader):
 
             bucket, *path_parts = parts[-1].split('/')
             cfg['tensorstore']['spec']['kvstore']['bucket'] = bucket
-            cfg['tensorstore']['spec']['path'] = '/'.join(path_parts)
+            cfg['tensorstore']['spec']['kvstore']['path'] = '/'.join(path_parts)
 
         return cfg
 
     @classmethod
     def from_url(cls, ng_src_url):
         """
-        Construct a TensorStoreVolumeServiceReader from a neuroglancer source url,
+        Construct a TensorStoreVolumeService from a neuroglancer source url,
         such as:
 
             precomputed://gs://neuroglancer-janelia-flyem-hemibrain/v1.2/segmentation
@@ -205,6 +263,9 @@ class TensorStoreVolumeServiceReader(VolumeServiceReader):
 
         self.volume_config = volume_config
 
+        if volume_config['tensorstore']['spec']['path']:
+            raise RuntimeError("The tensorstore.spec.path property is deprecated.  Please use tensorstore.spec.kvstore.path instead.")
+
         try:
             # Strip 'gs://' if the user provided it.
             bucket = volume_config['tensorstore']['spec']['kvstore']['bucket']
@@ -215,6 +276,11 @@ class TensorStoreVolumeServiceReader(VolumeServiceReader):
                 volume_config['tensorstore']['spec']['kvstore']['bucket'] = bucket
         except KeyError:
             pass
+
+        if volume_config['tensorstore']['spec']['kvstore']['driver'] == 'file':
+            assert volume_config['tensorstore']['spec']['kvstore']['bucket'] == ''
+            # We must not include 'bucket' if we're writing to a local file
+            del volume_config['tensorstore']['spec']['kvstore']['bucket']
 
         self._stores = {}
         store = self.store(0)
@@ -253,18 +319,37 @@ class TensorStoreVolumeServiceReader(VolumeServiceReader):
         volume_config["geometry"]["bounding-box"] = self._bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["message-block-shape"] = self._preferred_message_shape_zyx[::-1].tolist()
 
+        self._ensure_scales_exist()
+
     def store(self, scale):
         try:
             return self._stores[scale]
         except KeyError:
             import tensorstore as ts
+
+            # We assume the user supplied the metadata for scale 0,
+            # and here we modify it for higher scales.
             spec = copy.copy(self.volume_config['tensorstore']['spec'])
-            spec['scale_index'] = scale
+
+            # Can't actually supply scale_index when creating a new scale...
+            #"scale_index": 0,
+            #spec['scale_index'] = scale
+
+            shape = np.asarray(spec['scale_metadata']['size'])
+            spec['scale_metadata']['size'] = (shape // 2**scale).tolist()
+
+            res = np.asarray(spec['scale_metadata']['resolution'])
+            spec['scale_metadata']['resolution'] = (res * (2**scale)).tolist()
 
             context = self.volume_config['tensorstore']['context']
-            store = ts.open(spec, read=True, write=False, context=ts.Context(context)).result()
+            store = ts.open(spec, read=True, write=spec['create'], context=ts.Context(context)).result()
             self._stores[scale] = store
+
             return store
+
+    def _ensure_scales_exist(self):
+        for scale in self.available_scales:
+            self.store(scale)
 
     def __getstate__(self):
         """
@@ -333,7 +418,7 @@ class TensorStoreVolumeServiceReader(VolumeServiceReader):
         try:
             resource_name = self.volume_config['tensorstore']['spec']['kvstore']['bucket']
         except KeyError:
-            resource_name = self.volume_config['tensorstore']['spec']['path']
+            resource_name = self.volume_config['tensorstore']['spec']['kvstore']['path']
 
         with self._resource_manager_client.access_context(resource_name, True, 1, req_bytes):
             store = self.store(scale)
@@ -348,3 +433,33 @@ class TensorStoreVolumeServiceReader(VolumeServiceReader):
             assert (vol_zyx.shape == (box_zyx[1] - box_zyx[0])).all(), \
                 f"Fetched volume_zyx shape ({vol_zyx.shape} doesn't match box_zyx {box_zyx.tolist()}"
             return vol_zyx
+
+    def write_subvolume(self, subvolume, offset_zyx, scale=0):
+        """
+        Note:
+            It is the user's responsibility to ensure that the data is written in
+            chunks that are aligned to the volume's native shard size (chunk_layout.write_chunk.shape).
+
+            In [1]: import tensorstore as ts
+               ...:
+               ...: hemibrain_uri = 'gs://neuroglancer-janelia-flyem-hemibrain/v1.1/segmentation/'
+               ...: dset = ts.open({
+               ...:     'driver': 'neuroglancer_precomputed',
+               ...:     'kvstore': hemibrain_uri}
+               ...: ).result()
+               ...:
+               ...: dset.chunk_layout.write_chunk.shape
+            Out[1]: (2048, 2048, 2048, 1)
+        """
+        # TODO: We may need to add extra logic here to handle (or ignore) out-of-bounds writes,
+        #       similar to what is implemented in ZarrVolumeService.write_subvolume()
+        store = self.store(scale)
+
+        # Tensorstore and neuroglancer_precomputed use X,Y,Z conventions,
+        # so it's best to send a Fortran array.
+        offset_zyx = np.asarray(offset_zyx)
+        box_zyx = np.array([offset_zyx, offset_zyx + subvolume.shape])
+        box_xyz = box_zyx[:, ::-1]
+        vol_xyz = subvolume.transpose()
+        fut = store[box_to_slicing(*box_xyz)].write(vol_xyz)
+        fut.result()
