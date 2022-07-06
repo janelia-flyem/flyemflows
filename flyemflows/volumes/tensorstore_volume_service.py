@@ -460,11 +460,14 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         #       similar to what is implemented in ZarrVolumeService.write_subvolume()
         store = self.store(scale)
 
+        subvolume_czyx = subvolume[None, ...]
+        offset_czyx = np.array((0, *offset_zyx))
+        shape_czyx = np.array((1, *subvolume.shape))
+        box_czyx = np.array([offset_czyx, offset_czyx + shape_czyx])
+
         # Tensorstore and neuroglancer_precomputed use X,Y,Z conventions,
         # so it's best to send a Fortran array.
-        offset_zyx = np.asarray(offset_zyx)
-        box_zyx = np.array([offset_zyx, offset_zyx + subvolume.shape])
-        box_xyz = box_zyx[:, ::-1]
-        vol_xyz = subvolume.transpose()
-        fut = store[box_to_slicing(*box_xyz)].write(vol_xyz)
+        vol_xyzc = subvolume_czyx.transpose()
+        box_xyzc = box_czyx[:, ::-1]
+        fut = store[box_to_slicing(*box_xyzc)].write(vol_xyzc)
         fut.result()
