@@ -33,7 +33,7 @@ TensorStoreSpecSchema = \
                 "driver": {
                     "type": "string",
                     "enum": ["gcs", "file"],
-                    #"default": "file"
+                    #"default": "file"  # Must not have a default value, to ensure that the default config doesn't meet criteria for a valid config.
                 },
                 "bucket": {
                     "description": "bucket name",
@@ -330,22 +330,26 @@ class TensorStoreVolumeService(VolumeServiceWriter):
 
             # We assume the user supplied the metadata for scale 0,
             # and here we modify it for higher scales.
-            spec = copy.copy(self.volume_config['tensorstore']['spec'])
+            spec = copy.deepcopy(self.volume_config['tensorstore']['spec'])
+            context = copy.deepcopy(self.volume_config['tensorstore']['context'])
 
-            # Can't actually supply scale_index when creating a new scale...
-            #"scale_index": 0,
-            #spec['scale_index'] = scale
+            create = spec.get('create', False)
+            if create:
+                # We can't actually supply scale_index when creating a new scale,
+                # despite what the docs claim.
+                if 'scale_index' in spec:
+                    del spec['scale_index']
 
-            shape = np.asarray(spec['scale_metadata']['size'])
-            spec['scale_metadata']['size'] = (shape // 2**scale).tolist()
+                shape = np.asarray(spec['scale_metadata']['size'])
+                spec['scale_metadata']['size'] = (shape // 2**scale).tolist()
 
-            res = np.asarray(spec['scale_metadata']['resolution'])
-            spec['scale_metadata']['resolution'] = (res * (2**scale)).tolist()
+                res = np.asarray(spec['scale_metadata']['resolution'])
+                spec['scale_metadata']['resolution'] = (res * (2**scale)).tolist()
+            else:
+                spec['scale_index'] = scale
 
-            context = self.volume_config['tensorstore']['context']
-            store = ts.open(spec, read=True, write=spec['create'], context=ts.Context(context)).result()
+            store = ts.open(spec, read=True, write=create, context=ts.Context(context)).result()
             self._stores[scale] = store
-
             return store
 
     def _ensure_scales_exist(self):
