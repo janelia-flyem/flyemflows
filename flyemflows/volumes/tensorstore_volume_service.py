@@ -28,6 +28,7 @@ TensorStoreSpecSchema = \
         "kvstore": {
             "type": "object",
             "default": {},
+            "required": ["driver"],
             "properties": {
                 "driver": {
                     "type": "string",
