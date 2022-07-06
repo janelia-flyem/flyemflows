@@ -32,7 +32,7 @@ TensorStoreSpecSchema = \
                 "driver": {
                     "type": "string",
                     "enum": ["gcs", "file"],
-                    "default": "file"
+                    #"default": "file"
                 },
                 "bucket": {
                     "description": "bucket name",
