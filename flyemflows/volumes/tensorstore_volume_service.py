@@ -151,7 +151,7 @@ TensorStoreServiceSchema = {
         "reinitialize-via": {
             "type": "string",
             "enum": ["unpickle", "reopen"],
-            "default": "unpickle"
+            "default": "reopen"  # 'unpickle' doesn't seem to work consistently, at least in write mode.
         }
     }
 }
