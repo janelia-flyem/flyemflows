@@ -89,7 +89,7 @@ def test_read(disable_auto_retry):
                     reason="Skipping TensorStore test: tensorstore isn't installed")
 def test_write_seg(disable_auto_retry):
     tmpdir = tempfile.mkdtemp()
-    print(tmpdir)
+    #print(tmpdir)
 
     # Modeled on examples from this page:
     # https://google.github.io/tensorstore/driver/neuroglancer_precomputed/index.html#id12
@@ -136,6 +136,7 @@ def test_write_seg(disable_auto_retry):
                 "data_copy_concurrency": {"limit": 8},
                 'file_io_concurrency': {'limit': 1}
             },
+            "out-of-bounds-access": "permit-empty",
         },
         "geometry": {}
     }
