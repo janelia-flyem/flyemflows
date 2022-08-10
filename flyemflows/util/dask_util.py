@@ -32,6 +32,12 @@ def update_jobqueue_config_with_defaults(cluster_type):
     missing values for ncpus, mem, and local-directory.
     Also, set tempfile.tempdir according to the 'local-directory' setting.
     """
+    # Make sure we've at least got the defaults.
+    import dask_jobqueue
+    builtin_defaults = load_config(os.path.dirname(dask_jobqueue.__file__) + '/jobqueue.yaml')
+    cfg = dask.config.update(dask.config.config, builtin_defaults, priority='old')
+    dask.config.set(cfg)
+
     # Must import LSFCluster, SGECluster, etc. first, or else the
     # dask.config data for lsf isn't fully populated yet.
     if cluster_type == "lsf":
