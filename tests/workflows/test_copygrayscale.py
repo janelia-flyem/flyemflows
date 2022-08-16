@@ -306,7 +306,7 @@ def test_copygrayscale_from_hdf5_to_n5(disable_auto_retry):
         
         copygrayscale:
           max-pyramid-scale: 2
-          slab-depth: 128
+          slab-shape: [256, 256, 256]
           fill-blocks: false  # N5 is block-based, but does not require (or allow) us to pad the boundary blocks.
     """)
 
@@ -345,5 +345,5 @@ if __name__ == "__main__":
     
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_copygrayscale']
     #args += "-k copygrayscale_from_hdf5_to_n5".split()
-    args += ["-x"]    
+    args += ["-x"]
     pytest.main(args)

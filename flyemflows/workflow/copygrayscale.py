@@ -5,10 +5,11 @@ from functools import partial
 import numpy as np
 from skimage.util import view_as_blocks
 
-from dvidutils import destripe #@UnresolvedImport
+from confiddler import flow_style
+from dvidutils import destripe
 from dvid_resource_manager.client import ResourceManagerClient
 
-from neuclease.util import Grid, slabs_from_box, Timer, box_to_slicing
+from neuclease.util import Grid, slabs_from_box, Timer, box_to_slicing, boxes_from_grid
 from neuclease.dvid import reload_metadata
 from neuclease.focused.hotknife import HEMIBRAIN_TAB_BOUNDARIES
 
@@ -74,24 +75,38 @@ class CopyGrayscale(Workflow):
                 "default": "compute"
             },
 
+            "slab-shape": {
+                "description": "The data is downloaded and processed in big slabs.\n"
+                               "This setting determines how thick each Z-slab is.\n"
+                               "If you make it a multiple of the message-block-shape, \n"
+                               "then slabs will be completely independent, even after downsampling.\n"
+                               "(But that's not a requirement.)\n",
+                "type": "array",
+                "items": {
+                    "type": "integer",
+                    "minItems": 3,
+                    "maxItems": 3,
+                },
+                "default": flow_style([-1,-1,-1])  # You must set at least ONE dimension of the slab-shape
+            },
+
             "slab-depth": {
-                "description": "The volume is processed iteratively, in 'slabs'.\n"
+                "description": "Deprecated; use slab-shape.\n"
+                               "The volume is processed iteratively, in 'slabs'.\n"
                                "This setting determines the thickness of each slab.\n"
                                "Must be a multiple of the output brick width, in whichever dimension \n"
                                "is specified by the 'slab-axis' setting, below (by default, the Z-axis).\n",
                 "type": "integer",
-                "minimum": 1
-                ##
-                ## NO DEFAULT: Must choose!
-                #"default": -1
+                "default": -1
             },
 
             "slab-axis": {
-                "description": "The axis across which the volume will be cut to create \n"
+                "description": "Deprecated; use slab-shape.\n"
+                               "The axis across which the volume will be cut to create \n"
                                "'slabs' to be processed one at a time.  See 'slab-depth'.",
                 "type": "string",
-                "enum": ["x", "y", "z"],
-                "default": "z"
+                "enum": ["x", "y", "z", ""],
+                "default": ""
             },
 
             "downsample-method": {
@@ -207,15 +222,24 @@ class CopyGrayscale(Workflow):
         """
         options = self.config["copygrayscale"]
 
+        # Old config schema: specify 'slab-axis' and 'slab-depth'
+        slab_depth = options["slab-depth"]
         axis_name = options["slab-axis"]
         axis = 'zyx'.index(axis_name)
-        brick_width = self.output_service.preferred_message_shape[axis]
 
-        assert options["slab-depth"] % brick_width == 0, \
-            f'slab-depth ({options["slab-depth"]}) is not a multiple of the output brick width ({brick_width}) along the slab-axis ("{axis_name}")'
+        # New config schema: specify 'slab-shape'
+        slab_shape = np.array(options["slab-shape"][::-1])
 
-        assert (options["starting-slice"] % options["slab-depth"]) == 0, \
-            f'starting-slice must be a multiple of the slab depth'
+        if slab_depth != -1 and (slab_shape != -1).any() or slab_depth == -1 and (slab_shape == -1).all():
+            raise RuntimeError("Use the new 'slab-shape' parameter or the old 'slab-axis' and 'slab-depth' parameters (not both)")
+
+        if slab_depth != -1:
+            brick_width = self.output_service.preferred_message_shape[axis]
+            assert options["slab-depth"] % brick_width == 0, \
+                f'slab-depth ({options["slab-depth"]}) is not a multiple of the output brick width ({brick_width}) along the slab-axis ("{axis_name}")'
+
+            assert (options["starting-slice"] % options["slab-depth"]) == 0, \
+                f'starting-slice must be a multiple of the slab depth'
 
         # Output bounding-box must match exactly (or left as auto)
         input_bb_zyx = self.input_service.bounding_box_zyx
@@ -241,11 +265,30 @@ class CopyGrayscale(Workflow):
 
         starting_slice = options["starting-slice"]
 
+        # Old config schema: specify 'slab-axis' and 'slab-depth'
+        slab_depth = options["slab-depth"]
         axis_name = options["slab-axis"]
         axis = 'zyx'.index(axis_name)
-        slab_boxes = list(slabs_from_box(input_bb_zyx, options["slab-depth"], slab_cutting_axis=axis))
-        logger.info(f"Processing volume in {len(slab_boxes)} slabs")
 
+        # New config schema: specify 'slab-shape'
+        slab_shape = np.array(options["slab-shape"][::-1])
+
+        if slab_depth != -1 and (slab_shape != -1).any() or slab_depth == -1 and (slab_shape == -1).all():
+            raise RuntimeError("Use the new 'slab-shape' parameter or the old 'slab-axis' and 'slab-depth' parameters (not both)")
+
+        if (slab_shape != -1).any():
+            if starting_slice != 0:
+                raise RuntimeError("Can't use starting-slice if you specified a slab-shape; just change the bounding box")
+            # Missing dimensions default to the full box
+            replace_default_entries(slab_shape, input_bb_zyx[1])
+            brick_shape = self.output_service.preferred_message_shape
+            if (slab_shape % brick_shape).any():
+                logger.warning(f"Your slab-shape {slab_shape} is not a multiple of the input's brick shape {brick_shape}")
+            slab_boxes = boxes_from_grid(input_bb_zyx, slab_shape, clipped=True)
+        else:
+            slab_boxes = list(slabs_from_box(input_bb_zyx, slab_depth, slab_cutting_axis=axis))
+
+        logger.info(f"Processing volume in {len(slab_boxes)} slabs")
         for slab_index, slab_fullres_box_zyx in enumerate(slab_boxes):
             if slab_fullres_box_zyx[0, axis] < starting_slice:
                 logger.info(f"Slab {slab_index}: SKIPPING. {slab_fullres_box_zyx[:,::-1].tolist()}")
