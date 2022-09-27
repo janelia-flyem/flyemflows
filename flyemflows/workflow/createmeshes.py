@@ -1069,7 +1069,7 @@ class CreateMeshes(Workflow):
             mesh = Mesh.concatenate_meshes(sv_brick_meshes_df['mesh'])
 
             if stitch_method == 'stitch':
-                mesh.stitch_adjacent_faces(drop_unused_vertices=True, drop_duplicate_faces=True)
+                mesh.stitch_adjacent_faces()
 
             if final_smoothing != 0:
                 mesh.laplacian_smooth(final_smoothing)

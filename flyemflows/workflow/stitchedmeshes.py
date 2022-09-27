@@ -173,7 +173,7 @@ class StitchedMeshes(Workflow):
         def create_combined_mesh(meshes):
             mesh = concatenate_meshes(meshes, False)
             if options["stitch"]:
-                mesh.stitch_adjacent_faces(drop_unused_vertices=True, drop_duplicate_faces=True)
+                mesh.stitch_adjacent_faces()
             mesh.laplacian_smooth(options["smoothing-iterations"])
             mesh.simplify_openmesh(options["decimation-fraction"])
             return mesh
