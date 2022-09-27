@@ -249,6 +249,7 @@ class TensorStoreVolumeService(VolumeServiceWriter):
                 assert parts[-2] == 'gs'
 
             bucket, *path_parts = parts[-1].split('/')
+            cfg['tensorstore']['spec']['kvstore']['driver'] = 'gcs'
             cfg['tensorstore']['spec']['kvstore']['bucket'] = bucket
             cfg['tensorstore']['spec']['kvstore']['path'] = '/'.join(path_parts)
 
