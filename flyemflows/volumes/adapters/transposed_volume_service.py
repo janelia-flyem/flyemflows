@@ -186,7 +186,12 @@ class TransposedVolumeService(VolumeServiceReader):
         data = data[inversion_slices]
 
         # Force contiguous so caller doesn't have to worry about it.
-        if numba_any(data):
+        try:
+            nonempty = numba_any(data)
+        except:
+            nonempty = data.any()
+
+        if nonempty:
             # FIXME: This is actually pretty expensive, and probably not necessary for many use-cases.
             #        Maybe we should add a config option to skip
             #        this step in cases where we don't really need it.
