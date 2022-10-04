@@ -128,7 +128,7 @@ ZarrServiceSchema = \
         },
         "write-empty-blocks": {
             "description": "Whether to write blocks which are completely zeros.  \n"
-                           "For new datasets, it's best to avoid the writes.  If you're overwring an existing dataset,\n"
+                           "For new datasets, it's best to avoid the writes.  If you're overwriting an existing dataset,\n"
                            "then using this setting is not advisable unless you know that no empty blocks will need to\n"
                            "be written to erase old data.",
             "type": "boolean",
