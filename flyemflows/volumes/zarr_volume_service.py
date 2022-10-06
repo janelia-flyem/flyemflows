@@ -272,7 +272,7 @@ class ZarrVolumeService(VolumeServiceWriter):
 
         # Note that this message shows the true zarr storage bounds,
         # and doesn't show the logical bounds according to global_offset (if any).
-        msg = f"Zarr Request is out-of-bounds (XYZ): {orig_box[:, ::-1].tolist()}"
+        msg = f"Zarr Request is out-of-bounds (scale={scale}) (XYZ): {orig_box[:, ::-1].tolist()}"
         if self._out_of_bounds_access in ("permit", "permit-empty"):
             logger.warning(msg)
         else:
@@ -301,8 +301,8 @@ class ZarrVolumeService(VolumeServiceWriter):
             self._write_subvolume(subvolume, box, scale)
             return
 
-        msg = ("Box extends beyond Zarr volume bounds (XYZ): "
-                f"{box[:, ::-1].tolist()} exceeds {stored_bounding_box[:, ::-1].tolist()}")
+        msg = (f"Box extends beyond Zarr scale {scale} volume bounds (XYZ): "
+               f"{box[:, ::-1].tolist()} exceeds {stored_bounding_box[:, ::-1].tolist()}")
 
         if self._out_of_bounds_access == 'forbid':
             # Note that this message shows the true zarr storage bounds,
@@ -320,7 +320,7 @@ class ZarrVolumeService(VolumeServiceWriter):
         if self._out_of_bounds_access == 'permit-empty' and subvol_copy.any():
             # Note that this message shows the true zarr storage bounds,
             # and doesn't show the logical bounds according to global_offset (if any).
-            msg = ("Cannot write subvolume. Box extends beyond Zarr volume storage bounds (XYZ): "
+            msg = (f"Cannot write subvolume. Box extends beyond Zarr scale {scale} volume storage bounds (XYZ): "
                 f"{box[:, ::-1].tolist()} exceeds {stored_bounding_box[:, ::-1].tolist()}\n"
                 "and the out-of-bounds portion is not empty (contains non-zero values).\n")
             raise RuntimeError(msg)
@@ -331,7 +331,7 @@ class ZarrVolumeService(VolumeServiceWriter):
 
     def _write_subvolume(self, subvolume, box, scale):
         assert (subvolume.shape == box[1] - box[0]).all(), \
-            f"shape (XYZ) {subvolume.shape[::-1]} doesn't match box (XYZ) {box[:, ::-1].tolist()}"
+            f"shape (XYZ) {subvolume.shape[::-1]} doesn't match box (XYZ) {box[:, ::-1].tolist()} (scale={scale})"
 
         if self._write_empty_blocks:
             self.zarr_dataset(scale)[box_to_slicing(*box)] = subvolume
