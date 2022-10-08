@@ -286,7 +286,8 @@ class BrickWall:
 
     
     def persist_and_execute(self, description=None, logger=None, optimize_graph=True):
-        self.bricks = persist_and_execute(self.bricks, description, logger, optimize_graph)
+        self.bricks, count, parts, histogram = persist_and_execute(self.bricks, description, logger, optimize_graph, return_counts=True)
+        self.num_bricks = count
     
 
     def map_brick_volumes(self, f):

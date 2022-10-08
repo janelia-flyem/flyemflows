@@ -327,11 +327,12 @@ class DvidVolumeService(VolumeServiceWriter):
             assert (bs_x == bs_y == bs_z), "Expected blocks to be cubes."
             block_width = bs_x
 
-        self._ingestion_mode = volume_config["dvid"]["ingestion-mode"]
-        if self._ingestion_mode and self._instance_type != 'labelmap':
-            raise RuntimeError(
-                f"Config problem: The 'ingestion-mode' setting only works with "
-                "'labelmap' instances, not '{self._instance_type}' instances.")
+        if "segmentation-name" in volume_config["dvid"]:
+            self._ingestion_mode = volume_config["dvid"]["ingestion-mode"]
+            if self._ingestion_mode and self._instance_type != 'labelmap':
+                raise RuntimeError(
+                    "Config problem: The 'ingestion-mode' setting only works with "
+                    f"'labelmap' instances, not '{self._instance_type}' instances.")
 
         if "disable-indexing" in volume_config["dvid"]:
             self.disable_indexing = volume_config["dvid"]["disable-indexing"]

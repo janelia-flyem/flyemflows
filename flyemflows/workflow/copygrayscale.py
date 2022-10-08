@@ -298,6 +298,9 @@ class CopyGrayscale(Workflow):
                 logger.info(f"Slab {slab_index}: STARTING. {slab_fullres_box_zyx[:,::-1].tolist()}")
                 slab_wall = None
                 for scale in range(0, max_scale+1):
+                    if slab_wall is not None and slab_wall.num_bricks == 0:
+                        logger.info(f"Slab {slab_index}: Aborting slab.  No bricks to process.")
+                        break
                     with Timer() as scale_timer:
                         slab_wall = self._process_slab(scale, slab_fullres_box_zyx, slab_index, len(slab_boxes), slab_wall, min_scale)
                     logger.info(f"Slab {slab_index}: Scale {scale} took {scale_timer.timedelta}")
@@ -328,6 +331,8 @@ class CopyGrayscale(Workflow):
             if options["drop-empty-bricks"]:
                 bricked_slab_wall = bricked_slab_wall.drop_empty()
             bricked_slab_wall.persist_and_execute(f"Slab {slab_index}: Downloading scale {scale}", logger)
+            if bricked_slab_wall.num_bricks == 0:
+                return bricked_slab_wall
         else:
             # Downsample from previous scale
             bricked_slab_wall = upscale_slab_wall.downsample( (2,2,2), downsample_method )

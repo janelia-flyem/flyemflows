@@ -240,7 +240,7 @@ def run_on_each_worker(func, client=None, once_per_machine=False, return_hostnam
     return final_results
 
 
-def persist_and_execute(bag, description=None, logger=None, optimize_graph=True):
+def persist_and_execute(bag, description=None, logger=None, optimize_graph=True, return_counts=False):
     """
     Persist and execute the given dask.Bag.
     The persisted Bag is returned.
@@ -262,7 +262,10 @@ def persist_and_execute(bag, description=None, logger=None, optimize_graph=True)
     if logger and description:
         logger.info(f"{description} (N={count}, P={parts}, P_hist={histogram}) took {timer.timedelta}")
     
-    return bag
+    if return_counts:
+        return bag, count, parts, histogram
+    else:
+        return bag
 
 
 def drop_empty_partitions(bag_or_df):

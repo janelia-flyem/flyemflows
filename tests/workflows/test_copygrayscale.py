@@ -1,4 +1,5 @@
 import os
+import copy
 import tempfile
 import textwrap
 from io import StringIO
@@ -200,7 +201,9 @@ def test_copygrayscale_from_hdf5_to_dvid_with_constrast_adjustment(setup_hdf5_gr
     """
     _template_dir, config, _volume, _dvid_address, _repo_uuid, _output_grayscale_name = setup_hdf5_grayscale_input
 
+    config = copy.deepcopy(config)
     config["input"]["geometry"]["bounding-box"] = [[0,0,0],[256,128,128]]
+    config["copygrayscale"]["slab-axis"] = "z"
     config["copygrayscale"]["contrast-adjustment"] = "hotknife-destripe"
     config["copygrayscale"]["hotknife-seams"] = [-1,50,100,150,256] # Note: These are X-coordinates.
 
