@@ -169,6 +169,37 @@ def test_findadjacencies_subset_edges(setup_findadjacencies):
     assert (output_df.query('label_a == 3')[['xa', 'xb']].values[0] == (2,2)).all()
 
 
+def test_findadjacencies_subset_edges_and_nudge(setup_findadjacencies):
+    template_dir, config, _volume = setup_findadjacencies
+
+    subset_edges = pd.DataFrame([[4,3]], columns=['label_a', 'label_b'])
+    subset_edges.to_csv(f'{template_dir}/subset-edges.csv', index=False, header=True)
+
+    # Overwrite config with updated settings.
+    config = copy.deepcopy(config)
+    config["findadjacencies"]["subset-edges"] = 'subset-edges.csv'
+    config["findadjacencies"]["nudge-points-apart"] = True
+
+    with open(f"{template_dir}/workflow.yaml", 'w') as f:
+        yaml.dump(config, f)
+
+    execution_dir, workflow = launch_flow(template_dir, 1)
+
+    final_config = workflow.config
+    output_df = pd.read_csv(f'{execution_dir}/{final_config["findadjacencies"]["output-table"]}')
+
+    label_pairs = output_df[['label_a', 'label_b']].values
+    assert 0 not in label_pairs.flat
+
+    label_pairs = list(map(tuple, label_pairs))
+    assert (1,2) not in label_pairs
+    assert (3,4) in label_pairs
+
+    assert (output_df.query('label_a == 3')[['za', 'zb']].values[0] == (0,0)).all()
+    assert (output_df.query('label_a == 3')[['ya', 'yb']].values[0] == (6,5)).all() # not 'forward'
+    assert (output_df.query('label_a == 3')[['xa', 'xb']].values[0] == (2,2)).all()
+
+
 def test_findadjacencies_solid_volume():
     """
     If the volume is solid or empty, an error is raised at the end of the workflow.
@@ -499,7 +530,7 @@ if __name__ == "__main__":
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_findadjacencies']
     #args += ['-x']
-    #args += ['-k append_group_col']
+    #args += ['-k test_findadjacencies_subset_edges_and_nudge']
     #args += ['-k', 'findadjacencies_from_dvid_sparse_groups'
     #         ' or findadjacencies_different_dvid_blocks_sparse_labels'
     #         ' or findadjacencies_from_dvid_sparse_edges'

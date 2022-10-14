@@ -149,6 +149,12 @@ class FindAdjacencies(Workflow):
                 "oneOf": [{"type": "integer"}, {"type": "null"}],
                 "default": None
             },
+            "nudge-points-apart": {
+                "description": "Optionally 'nudge' the points apart from eachother, away from the\n"
+                               "exact edge boundary and slightly towards the interior of each object.\n",
+                "type": "boolean",
+                "default": False
+            },
             "cc-distance-threshold": {
                 "description": "When computing the connected components, don't use edges that exceed this distance threshold.\n"
                                "A threshold of 1.0 indicates that only direct adjacencies should be used.\n"
@@ -241,6 +247,7 @@ class FindAdjacencies(Workflow):
         resource_config = self.config["resource-manager"]
         subset_requirement = options["subset-labels-requirement"]
         find_closest_using_scale = options["find-closest-using-scale"]
+        nudge = options["nudge-points-apart"]
 
         self.resource_mgr_client = ResourceManagerClient(resource_config["server"], resource_config["port"])
         volume_service = VolumeService.create_from_config(input_config, self.resource_mgr_client)
@@ -256,7 +263,7 @@ class FindAdjacencies(Workflow):
                 #        it might be better to distribute each brick's rows.
                 #        (But that will involve a dask join step...)
                 #        The subset_groups should generally be under 1 GB, anyway...
-                edges = find_edges_in_brick(brick, None, sg, subset_requirement)
+                edges = find_edges_in_brick(brick, None, sg, subset_requirement, nudge)
                 brick.compress()
                 return edges
             adjacent_edge_tables = brickwall.bricks.map(find_adj, sg=delayed(subset_groups)).compute()
@@ -285,7 +292,7 @@ class FindAdjacencies(Workflow):
         if find_closest_using_scale is not None:
             with Timer("Finding closest approaches", logger):
                 def find_closest(brick, sg):
-                    edges = find_edges_in_brick(brick, find_closest_using_scale, sg, subset_requirement)
+                    edges = find_edges_in_brick(brick, find_closest_using_scale, sg, subset_requirement, nudge)
                     brick.compress()
                     return edges
                 nonadjacent_edge_tables = brickwall.bricks.map(find_closest, sg=delayed(subset_groups)).compute()
@@ -453,7 +460,7 @@ def append_group_ccs(edges_df, subset_groups, max_distance=None):
         return edges_df, subset_groups
 
 
-def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requirement=2):
+def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requirement=2, nudge=False):
     """
     Find all pairs of adjacent labels in the given brick,
     and find the central-most point along the edge between them.
@@ -546,9 +553,36 @@ def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requ
         np.save(f'problematic-remapped-brick-{brick_name}.npy', remapped_volume)
         logger.error(f"Error in brick (XYZ): {brick_name}") # This will appear in the worker log.
         raise
-    
+
     if best_edges_df is None:
         return None
+
+    if nudge:
+        # sign of direction from a -> b
+        s = np.sign(
+              best_edges_df[['zb', 'yb', 'xb']].values.astype(np.int32)
+            - best_edges_df[['za', 'ya', 'xa']].values.astype(np.int32)
+        )
+
+        # Nudge by a single voxel away from edge.
+        nudged_a = best_edges_df[['za', 'ya', 'xa']].values.astype(np.int32) - s
+        nudged_b = best_edges_df[['zb', 'yb', 'xb']].values.astype(np.int32) + s
+
+        nudged_a = np.maximum(nudged_a, (0,0,0))
+        nudged_a = np.minimum(nudged_a, np.array(remapped_volume.shape) - 1)
+
+        nudged_b = np.maximum(nudged_b, (0,0,0))
+        nudged_b = np.minimum(nudged_b, np.array(remapped_volume.shape) - 1)
+
+        # Keep only the nudged coordinates which retain the correct label;
+        # revert the others to the original coordinate.
+        keep_a = (remapped_volume[(*nudged_a.T,)] == best_edges_df['label_a'])
+        keep_b = (remapped_volume[(*nudged_b.T,)] == best_edges_df['label_b'])
+
+        best_edges_df.loc[keep_a, ['za', 'ya', 'xa']] = nudged_a[keep_a.values]
+        best_edges_df.loc[keep_b, ['zb', 'yb', 'xb']] = nudged_b[keep_b.values]
+
+
 
     # Translate coordinates to global space
     best_edges_df.loc[:, ['za', 'ya', 'xa']] += brick.physical_box[0]
@@ -560,7 +594,7 @@ def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requ
 
     # Normalize
     swap_df_cols(best_edges_df, None, best_edges_df.eval('label_a > label_b'), ['a', 'b'])
-    
+
     return best_edges_df
 
 
