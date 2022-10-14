@@ -1056,7 +1056,8 @@ class CreateMeshes(Workflow):
                 #   it can have strage consequences for subsequent calls to this function.
                 #   If you're seeing weird errors here, like KeyError: 'sv',
                 #   that's probably a sign that something BELOW is failing.
-                #   Step through the code below in a debugger.
+                #   Step through the code below in a debugger,
+                #   or at least try 'cluster-type: synchronous' to see what the real error is.
                 np.save('failed-sv_brick_meshes_df.npy', sv_brick_meshes_df.to_records(index=True))
                 raise Exception('WrappedError:', type(ex), ex,
                                 sv_brick_meshes_df.index,
