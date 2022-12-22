@@ -260,6 +260,14 @@ JobQueueSchema = \
     }
 }
 
+FractionOrFalse = {
+    "oneOf": [
+        {"type": "number", "minValue": 0.01},
+        {"type": "boolean", "enum": [False]}
+    ],
+    "default": False
+}
+
 DistributedSchema = \
 {
     "description": "dask.distributed config section.",
@@ -290,10 +298,10 @@ DistributedSchema = \
                     "type": "object",
                     "default": {},
                     "properties": {
-                        "target":    {"type": "number", "default": 0.0},  # noqa
-                        "spill":     {"type": "number", "default": 0.0},  # noqa
-                        "pause":     {"type": "number", "default": 0.0},  # noqa
-                        "terminate": {"type": "number", "default": 0.0},  # noqa
+                        "target":    FractionOrFalse,
+                        "spill":     FractionOrFalse,
+                        "pause":     FractionOrFalse,
+                        "terminate": FractionOrFalse,
                     }
                 }
             }
