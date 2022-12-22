@@ -329,7 +329,8 @@ class CopySegmentation(Workflow):
                 existing_depth = self._read_pyramid_depth()
                 if pyramid_depth not in (-1, existing_depth) and not permit_inconsistent_pyramids:
                     raise Exception(f"Can't set pyramid-depth to {pyramid_depth}: "
-                                    f"Data instance '{output_service.instance_name}' already existed, with depth {existing_depth}")
+                                    f"Data instance '{output_service.instance_name}' already existed, with depth {existing_depth}. "
+                                    "If you're okay with writing a subset of pyramid levels, use permit-inconsistent-pyramids")
 
         # These services aren't supported because we copied some geometry (bounding-box)
         # directly from the input service.
