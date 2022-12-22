@@ -464,5 +464,5 @@ if __name__ == "__main__":
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_createmeshes']
     args += ['-x']
     #args += ['-Werror']
-    args += ['-k', 'createmeshes_max_svs_per_brick']
+    #args += ['-k', 'createmeshes_max_svs_per_brick']
     pytest.main(args)
