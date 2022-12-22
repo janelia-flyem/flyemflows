@@ -47,7 +47,7 @@ N5CreationSettingsSchema = \
                            "If unset (-1), then a default max-scale will be chosen automatically \n "
                            "based on a heuristic involving the volume shape.\n",
             "type": "integer",
-            "minValue": -1,
+            "minimum": -1,
             "maxValue": 10, # arbitrary limit, but if you're using a higher value, you're probably mistaken.
             "default": -1
         },

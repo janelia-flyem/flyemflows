@@ -262,7 +262,7 @@ JobQueueSchema = \
 
 FractionOrFalse = {
     "oneOf": [
-        {"type": "number", "minValue": 0.01},
+        {"type": "number", "exclusiveMinimum": 0.0},
         {"type": "boolean", "enum": [False]}
     ],
     "default": False

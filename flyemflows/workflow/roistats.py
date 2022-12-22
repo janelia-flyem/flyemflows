@@ -55,7 +55,7 @@ class RoiStats(Workflow):
                                "Make sure the difference between your input data scale and the ROI scale in DVID is (2**5).\n"
                                "Then use this parameter to specify a downsampling scale to use when reading the input.\n",
                 "type": "integer",
-                "minValue": 0,
+                "minimum": 0,
                 "maxValue": 10,
                 "default": 0
             },

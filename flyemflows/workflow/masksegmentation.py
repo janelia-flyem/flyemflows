@@ -50,7 +50,7 @@ class MaskSegmentation(Workflow):
             "min-pyramid-scale": {
                 "type": "integer",
                 "default": 0,
-                "minValue": 0
+                "minimum": 0
             },
             "max-pyramid-scale": {
                 "type": "integer",
@@ -104,7 +104,7 @@ class MaskSegmentation(Workflow):
                     "batch-index": {
                         "type": "integer",
                         "default": 0,
-                        "minValue": 0
+                        "minimum": 0
                     }
                 }
             }

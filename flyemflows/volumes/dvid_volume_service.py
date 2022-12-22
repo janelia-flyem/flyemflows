@@ -75,7 +75,7 @@ DvidInstanceCreationSettingsSchema = \
                            "Note: For now, you are still requried to specify the 'available-scales'\n"
                            "setting in the volume geometry, too.\n",
             "type": "integer",
-            "minValue": -1,
+            "minimum": -1,
             "maxValue": 10, # Arbitrary max; larger than 10 is probably a sign that the user is just confused or made a typo.
             "default": -1
         },

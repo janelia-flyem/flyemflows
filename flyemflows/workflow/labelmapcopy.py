@@ -39,14 +39,14 @@ class LabelmapCopy(Workflow):
             "min-scale": {
                 "description": "Minimum pyramid scale to copy from input to output.",
                 "type": "integer",
-                "minValue": 0,
+                "minimum": 0,
                 "maxValue": 10,
                 "default": 0
                 },
             "max-scale": {
                 "description": "Maximum pyramid scale to copy from input to output.  -1 means 'choose automatically.'",
                 "type": "integer",
-                "minValue": -1,
+                "minimum": -1,
                 "maxValue": 10,
                 "default": -1
             },

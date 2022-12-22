@@ -89,7 +89,7 @@ class ConnectedComponents(Workflow):
             "halo": {
                 "description": "How much overlapping context between bricks in the grid (in voxels)\n",
                 "type": "integer",
-                "minValue": 1,
+                "minimum": 1,
                 "default": 1
             },
             "orig-max-label": {

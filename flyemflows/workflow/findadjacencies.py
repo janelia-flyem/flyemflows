@@ -115,7 +115,7 @@ class FindAdjacencies(Workflow):
                                "Bigger halos than 1 are only useful if you are using 'find-closest'.\n"
                                "(But even then, you may not capture everything you're looking for.)\n",
                 "type": "integer",
-                "minValue": 0,
+                "minimum": 0,
                 "default": 0
             },
             "subset-label-groups": LabelGroupSchema,
@@ -128,7 +128,7 @@ class FindAdjacencies(Workflow):
                 "description": "When using subset-labels, use this setting to specify whether\n"
                                "each edge must include 1 or 2 of the listed labels.\n",
                 "type": "integer",
-                "minValue": 1,
+                "minimum": 1,
                 "maxValue": 2,
                 "default": 2
             },

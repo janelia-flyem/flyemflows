@@ -186,7 +186,7 @@ class SVDecimate(Workflow):
                                "Bodies are processed in a single dask task, but further parallelism may be desirable within that task.\n",
                 "type": "integer",
                 "default": 1,
-                "minValue": 1
+                "minimum": 1
             },
             "format": {
                 "description": "Format in which to save the meshes",

@@ -128,7 +128,7 @@ class CreateMeshes(Workflow):
             "max-vertices": {
                 "description": "If necessary, decimate the mesh even further to avoid exceeding this maximum vertex count.\n",
                 "type": "number",
-                "minValue": 0,
+                "minimum": 0,
                 "default": 0 # no max
             },
             "compute-normals": {
@@ -187,7 +187,7 @@ class CreateMeshes(Workflow):
             "halo": {
                 "description": "How much overlapping context between bricks in the grid (in voxels)\n",
                 "type": "integer",
-                "minValue": 1,
+                "minimum": 1,
                 "default": 0
             },
 
