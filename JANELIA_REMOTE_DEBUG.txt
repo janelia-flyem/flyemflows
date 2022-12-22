@@ -7,11 +7,13 @@ Reserve a slot and start up the remote debugger server, with the program argumen
 
     $ ssh login1
     $ interactive-job.sh
+    $ conda install -c conda-forge debugpy
     $ echo "Starting remote debugging server on $(uname -n)"
-    $ python3 -m ptvsd --host 0.0.0.0 --port 3000 --wait $(which launchflow) ${TEMPLATE_DIR}
+    $ python3 -m debugpy --listen 0.0.0.0:3000 --wait-for-client $(which launchflow) ${TEMPLATE_DIR}
 
 # Then, locally:
-$ ssh -L 3000:${REMOTE_MACHINE}:3000 bergs@login1
+
+    $ ssh -L 3000:${REMOTE_MACHINE}:3000 bergs@login1
 
 In VSCode, add an "attach" run configuration if necessary.  Configure it with "localhost" and port 3000.
 
