@@ -151,7 +151,8 @@ class FindAdjacencies(Workflow):
             },
             "nudge-points-apart": {
                 "description": "Optionally 'nudge' the points apart from eachother, away from the\n"
-                               "exact edge boundary and slightly towards the interior of each object.\n",
+                               "exact edge boundary and slightly towards the interior of each object.\n"
+                               "Note: the 'distance' associated with the edge is NOT updated to reflect the 'nudged' locations.\n",
                 "type": "boolean",
                 "default": False
             },
