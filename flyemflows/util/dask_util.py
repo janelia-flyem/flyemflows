@@ -14,7 +14,7 @@ import dask.dataframe
 from dask.bag import Bag
 
 import distributed.config
-from distributed.utils import parse_bytes
+from dask.utils import parse_bytes
 from distributed.client import futures_of
 
 from neuclease.util import Timer
