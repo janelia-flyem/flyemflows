@@ -12,7 +12,7 @@ import distributed
 import dask.config
 from dask.delayed import delayed
 
-from neuclease.dvid import (default_dvid_session_template, clear_default_dvid_sessions,
+from neuclease.dvid import (set_default_dvid_session_timeout,
                             fetch_repo_instances, create_tarsupervoxel_instance,
                             create_instance, is_locked, post_load, post_keyvalues, fetch_exists, fetch_key,
                             fetch_server_info, fetch_mapping, resolve_ref)
@@ -240,8 +240,7 @@ class GridMeshes(Workflow):
             self._prepare_output()
 
         # Increase global DVID timeout to 10 minutes
-        default_dvid_session_template().adapters['http://'].timeout = (3.05, 600.0)
-        clear_default_dvid_sessions()
+        set_default_dvid_session_timeout(3.05, 600.0)
 
         slab_shape = self.config["gridmeshes"]["slab-shape"][::-1]
         grid_shape = self.input_service.preferred_message_shape
