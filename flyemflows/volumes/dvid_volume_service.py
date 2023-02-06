@@ -19,7 +19,7 @@ from neuclease.dvid import ( fetch_repo_instances, resolve_ref, fetch_instance_i
                              encode_labelarray_volume, post_labelmap_blocks,
                              update_extents, extend_list_value, create_voxel_instance, create_labelmap_instance,
                              fetch_mapping, fetch_mappings, fetch_labelindex, convert_labelindex_to_pandas,
-                             read_kafka_messages, filter_kafka_msgs_by_timerange, compute_affected_bodies )
+                             fetch_mutations, read_kafka_messages, filter_kafka_msgs_by_timerange, compute_affected_bodies )
 
 from ..util import auto_retry, replace_default_entries
 from . import GeometrySchema, VolumeServiceReader, VolumeServiceWriter, GrayscaleAdapters, SegmentationAdapters
@@ -577,9 +577,9 @@ class DvidVolumeService(VolumeServiceWriter):
             # Higher-levels of the pyramid should not appear in the DVID console.
             extend_list_value(self.server, self.uuid, '.meta', 'restrictions', [scaled_instance_name])
 
-    def determine_changed_labelmap_bodies(self, kafka_timestamp_string):
+    def determine_changed_labelmap_bodies(self, mutation_timestamp_string):
         """
-        Read the entire labelmap kafka log, and determine
+        Read the entire labelmap mutation log (or kafka log), and determine
         which bodies have changed since the given timestamp (a string).
 
         Example timestamps:
@@ -589,27 +589,30 @@ class DvidVolumeService(VolumeServiceWriter):
         Returns:
             list of body IDs
         """
-        logger.info(f"Determining which bodies have changed since {kafka_timestamp_string}")
+        logger.info(f"Determining which bodies have changed since {mutation_timestamp_string}")
 
         try:
-            kafka_timestamp = parse_timestamp(kafka_timestamp_string)
+            timestamp = parse_timestamp(mutation_timestamp_string)
         except:
-            raise RuntimeError(f"Could not parse your subset-bodies config setting ({kafka_timestamp_string}) "
-                               "as either a body list or a kafka timestamp")
+            raise RuntimeError(f"Could not parse your subset-bodies config setting ({mutation_timestamp_string}) "
+                               "as either a body list or a mutation timestamp")
 
         seg_instance = self.instance_triple
 
-        kafka_msgs = read_kafka_messages(*seg_instance)
-        filtered_kafka_msgs = filter_kafka_msgs_by_timerange(kafka_msgs, min_timestamp=kafka_timestamp)
+        try:
+            mutations = fetch_mutations(*seg_instance)
+        except Exception as ex:
+            mutations = read_kafka_messages(*seg_instance)
 
-        new_bodies, changed_bodies, _removed_bodies, new_supervoxels, _deleted_svs = compute_affected_bodies(filtered_kafka_msgs)
+        filtered_mutations = filter_kafka_msgs_by_timerange(mutations, min_timestamp=timestamp)
+        new_bodies, changed_bodies, _removed_bodies, new_supervoxels, _deleted_svs = compute_affected_bodies(filtered_mutations)
         sv_split_bodies = set(fetch_mapping(*seg_instance, new_supervoxels)) - set([0])
 
         subset_bodies = set(chain(new_bodies, changed_bodies, sv_split_bodies))
         subset_bodies = np.fromiter(subset_bodies, np.uint64)
         subset_bodies = np.sort(subset_bodies).tolist()
 
-        logger.info(f"The kafka log shows that {len(subset_bodies)} bodies have changed since ({kafka_timestamp_string})")
+        logger.info(f"The mutation log shows that {len(subset_bodies)} bodies have changed since ({mutation_timestamp_string})")
         return subset_bodies
 
     def _log_read_errors(f):
