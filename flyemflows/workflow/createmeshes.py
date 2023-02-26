@@ -17,7 +17,7 @@ from distributed import get_client, worker_client
 from neuclease.util import Timer, SparseBlockMask, compute_nonzero_box, box_intersection, extract_subvol, switch_cwd, iter_batches, box_shape
 from neuclease.dvid import (fetch_mappings, fetch_repo_instances, create_tarsupervoxel_instance,
                             create_instance, is_locked, post_load, post_keyvalues, fetch_exists, fetch_keys,
-                            fetch_supervoxels, fetch_server_info, fetch_mapping, resolve_ref)
+                            fetch_supervoxels, fetch_server_info, fetch_mapping, resolve_ref, set_default_dvid_session_timeout)
 
 from dvid_resource_manager.client import ResourceManagerClient
 from dvidutils import LabelMapper
@@ -66,6 +66,11 @@ class CreateMeshes(Workflow):
                                "Give the instance name here.",
                 "type": "string",
                 "default": ""
+            },
+            "timeout": {
+                "description": "",
+                "type": "number",
+                "default": 120.0
             },
             "create-if-necessary": {
                 "description": "Whether or not to create the instance if it doesn't already exist.\n"
@@ -381,6 +386,8 @@ class CreateMeshes(Workflow):
         ## DVID output (either keyvalue or tarsupervoxels)
         ##
         (instance_type,) = output_cfg.keys()
+
+        set_default_dvid_session_timeout(10.0, output_cfg[instance_type]["timeout"])
 
         server = output_cfg[instance_type]['server']
         uuid = output_cfg[instance_type]['uuid']
