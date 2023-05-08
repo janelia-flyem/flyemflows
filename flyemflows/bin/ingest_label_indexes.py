@@ -14,7 +14,9 @@ import numpy as np
 import pandas as pd
 from numba import jit
 
-from neuclease.dvid import fetch_repo_info, fetch_instance_info, fetch_repo_instances, post_labelindices, fetch_labelindex, fetch_complete_mappings, post_mappings, convert_labelindex_to_pandas
+from neuclease.dvid import (set_default_dvid_session_timeout, fetch_repo_info, fetch_instance_info, fetch_repo_instances,
+                            post_labelindices, fetch_labelindex, fetch_complete_mappings, post_mappings,
+                            convert_labelindex_to_pandas)
 from neuclease.dvid.labelmap.labelops_pb2 import LabelIndex
 
 from dvidutils import LabelMapper # Fast label mapping in C++
@@ -93,6 +95,8 @@ def main():
 
 
 def main_impl(args):
+    set_default_dvid_session_timeout(3.05, 30*60)
+
     # Read agglomeration file
     segment_to_body_df = None
     if args.agglomeration_mapping:
