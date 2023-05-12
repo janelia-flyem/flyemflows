@@ -755,6 +755,12 @@ class DvidVolumeService(VolumeServiceWriter):
         assert (not self.enable_downres) or (scale == 0), \
             "When using enable-downres, you can only write scale-0 data."
 
+        ingestion_mode = self._ingestion_mode
+        if (box_zyx[0] <= self.bounding_box_zyx[0]).all() or (box_zyx[1] >= self.bounding_box_zyx[1]).all():
+            # The first and last block of a labelmap instance should use the ordinary /blocks
+            # endpoint to ensure that `MinPoint` and `MaxPoint` metadata are updated.
+            ingestion_mode = False
+
         # Labelarray data can be posted very efficiently if the request is block-aligned
         if self._instance_type in ('labelarray', 'labelmap') and is_block_aligned:
             # Encode and post in two separate steps, so that the compression
@@ -764,7 +770,7 @@ class DvidVolumeService(VolumeServiceWriter):
                 # Post pre-encoded data with 'is_raw'
                 post_labelmap_blocks( self._server, self._uuid, instance_name, None, encoded, scale,
                                         self.enable_downres, self.disable_indexing, self._throttle,
-                                        is_raw=True, ingestion_mode=self._ingestion_mode )
+                                        is_raw=True, ingestion_mode=ingestion_mode )
         else:
             assert not self.enable_downres, \
                 "Can't use enable-downres: You are attempting to post non-block-aligned data."
