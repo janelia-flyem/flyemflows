@@ -71,6 +71,11 @@ class GridMeshes(Workflow):
                 "type": "string",
                 "default": ""
             },
+            "timeout": {
+                "description": "",
+                "type": "number",
+                "default": 600.0  # 10 minutes!
+            },
             "create-if-necessary": {
                 "description": "Whether or not to create the instance if it doesn't already exist.\n"
                                "If you expect the instance to exist on the server already, leave this\n"
@@ -238,9 +243,6 @@ class GridMeshes(Workflow):
 
         with Timer("Initializing output", logger):
             self._prepare_output()
-
-        # Increase global DVID timeout to 10 minutes
-        set_default_dvid_session_timeout(3.05, 600.0)
 
         slab_shape = self.config["gridmeshes"]["slab-shape"][::-1]
         grid_shape = self.input_service.preferred_message_shape
@@ -418,6 +420,8 @@ class GridMeshes(Workflow):
         ## DVID output (either keyvalue or tarsupervoxels)
         ##
         (instance_type,) = output_cfg.keys()
+
+        set_default_dvid_session_timeout(10.0, output_cfg[instance_type]["timeout"])
 
         server = output_cfg[instance_type]['server']
         uuid = output_cfg[instance_type]['uuid']
