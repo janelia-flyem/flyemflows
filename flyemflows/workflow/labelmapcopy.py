@@ -18,10 +18,17 @@ from . import Workflow
 
 logger = logging.getLogger(__name__)
 
+
 class LabelmapCopy(Workflow):
     """
     Workflow to copy compressed labelmap blocks directly from one repo to another.
-    
+
+    Note:
+        Although this workflow reads from every location in the input,
+        DVID only returns non-empty blocks.  (If a requested region has no non-zero voxels,
+        then the response from DVID is an empty buffer.)  Since we copy the direct raw buffer
+        response from one server to another, empty space does not result in extra data.
+
     - No non-block-aligned copies
     - No coordinate changes
     - No block statistics computation
