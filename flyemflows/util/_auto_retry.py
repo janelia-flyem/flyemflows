@@ -53,8 +53,8 @@ def auto_retry(total_tries=2, pause_between_tries=10.0, logging_name=None, predi
                         raise
                     if logging_name:
                         logger = logging.getLogger(logging_name)
-                        logger.warn("Call to '{}' failed with error: {}.".format(func.__name__, repr(ex)))
-                        logger.warn("Retrying {} more times".format( remaining_tries ))
+                        logger.warning("Call to '{}' failed with error: {}.".format(func.__name__, repr(ex)))
+                        logger.warning("Retrying {} more times".format( remaining_tries ))
                     import time
                     time.sleep(pause_between_tries)
         wrapper.__wrapped__ = func # Emulate python 3 behavior of @functools.wraps

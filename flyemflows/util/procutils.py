@@ -106,11 +106,11 @@ def kill_if_running(pid, escalation_delay_seconds=10.0):
         logger.info("Terminated process was: " + proc_cmd)
         return True
 
-    logger.warn("Process {} did not respond to SIGINT or SIGTERM.  Killing!".format(pid))
+    logger.warning("Process {} did not respond to SIGINT or SIGTERM.  Killing!".format(pid))
     
     # No more Mr. Nice Guy
     _try_kill(pid, SIGKILL, kill_children=True)
-    logger.warn("Killed process was: " + proc_cmd)
+    logger.warning("Killed process was: " + proc_cmd)
     return False
 
 

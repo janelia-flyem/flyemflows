@@ -473,9 +473,9 @@ class GridMeshes(Workflow):
         if is_locked(server, uuid):
             info = fetch_server_info(server)
             if "Mode" in info and info["Mode"] == "allow writes on committed nodes":
-                logger.warn(f"Output is a locked node ({uuid}), but server is in full-write mode. Proceeding.")
+                logger.warning(f"Output is a locked node ({uuid}), but server is in full-write mode. Proceeding.")
             elif os.environ.get("DVID_ADMIN_TOKEN", ""):
-                logger.warn(f"Output is a locked node ({uuid}), but you defined DVID_ADMIN_TOKEN. Proceeding.")
+                logger.warning(f"Output is a locked node ({uuid}), but you defined DVID_ADMIN_TOKEN. Proceeding.")
             else:
                 raise RuntimeError(f"Can't write to node {uuid} because it is locked.")
 

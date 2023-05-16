@@ -109,7 +109,7 @@ class ClusterContext:
                 if not m:
                     raise
 
-                logger.warn("Failed to kill cluster with bkill, trying one more time...")
+                logger.warning("Failed to kill cluster with bkill, trying one more time...")
                 time.sleep(2.0)
                 result = subprocess.run(m.group(), shell=True)
                 if result.returncode != 0:

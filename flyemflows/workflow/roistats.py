@@ -119,7 +119,7 @@ class RoiStats(Workflow):
                                                                           bounding_box // 2**5 )
 
         if len(overlaps) > 0:
-            logger.warn(f"Some of your ROIs overlap!  Here's an incomplete list:\n{overlaps}")
+            logger.warning(f"Some of your ROIs overlap!  Here's an incomplete list:\n{overlaps}")
 
         with Timer("Determining brick set", logger):
             # Determine which bricks intersect our ROIs

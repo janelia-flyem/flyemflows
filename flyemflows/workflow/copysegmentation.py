@@ -381,9 +381,9 @@ class CopySegmentation(Workflow):
         output_sbm = None
         if len(output_mask_labels) > 0:
             if (self.output_service.preferred_message_shape != self.input_service.preferred_message_shape).any():
-                logger.warn("Not using output mask to reduce data fetching: Your input service and output service don't have the same brick shape")
+                logger.warning("Not using output mask to reduce data fetching: Your input service and output service don't have the same brick shape")
             elif (self.output_service.bounding_box_zyx != self.input_service.bounding_box_zyx).any():
-                logger.warn("Not using output mask to reduce data fetching: Your input service and output service don't have the same bounding box")
+                logger.warning("Not using output mask to reduce data fetching: Your input service and output service don't have the same bounding box")
             else:
                 try:
                     output_sbm = self.output_service.sparse_block_mask_for_labels(output_mask_labels)
