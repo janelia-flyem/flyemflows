@@ -447,7 +447,8 @@ class GridMeshes(Workflow):
         ##
         (instance_type,) = output_cfg.keys()
 
-        set_default_dvid_session_timeout(10.0, output_cfg[instance_type]["timeout"])
+        timeout = output_cfg[instance_type]["timeout"]
+        set_default_dvid_session_timeout(timeout, timeout)
 
         server = output_cfg[instance_type]['server']
         uuid = output_cfg[instance_type]['uuid']
