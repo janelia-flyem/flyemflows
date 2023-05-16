@@ -1,8 +1,11 @@
 import os
 import re
 import time
+import logging
 from subprocess import check_output, Popen, CalledProcessError
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 def nice_call(*popenargs, timeout=None, **kwargs):
     """
@@ -103,14 +106,14 @@ class Bjob(object):
         
         self.bsub_cmd = self.construct_bsub_command(suspend or write_log_header)
         
-        print(self.bsub_cmd + "\n")
+        logger.info(self.bsub_cmd + "\n")
         bsub_output = check_output(self.bsub_cmd, shell=True).decode()
-        print(bsub_output)
+        logger.info(bsub_output)
         self.job_id, self.queue_name = parse_bsub_output(bsub_output)
         
         self.rtm_url = construct_rtm_url(self.job_id)
-        print ("Job graphs:")
-        print(self.rtm_url + "\n")
+        logger.info("Job graphs:")
+        logger.info(self.rtm_url + "\n")
     
         if write_log_header:
             self.write_logfile_header()
@@ -153,11 +156,17 @@ class Bjob(object):
 
     def resume(self):
         check_output(f"bresume {self.job_id}", shell=True).decode()
-    
+
     def wait_for_start(self):
         name = self.name or str(self.job_id)
-        print(f"Waiting for {name} to start...")
+        logger.info(f"Waiting for {name} to start...")
         self.hostname = wait_for_job_start(self.job_id)
+
+    def wait_for_complete(self):
+        state = None
+        while state not in ("DONE", "EXIT"):
+            state = check_output(f"bjobs -X -noheader -o STAT {self.job_id}", shell=True).decode('utf-8').strip()
+        return state
 
     def write_logfile_header(self):
         assert self.rtm_url, "Job not submitted yet."
@@ -249,6 +258,13 @@ def wait_for_job_start(job_id):
 
 def kill_job(job_id):
     nice_check_call(f"bkill {job_id}", shell=True)
+
+
+def wait_for_job_complete(job_id):
+    state = None
+    while state not in ("DONE", "EXIT"):
+        state = check_output(f"bjobs -X -noheader -o STAT {job_id}", shell=True).decode('utf-8').strip()
+    return state
 
 if __name__ == "__main__":
     import os
