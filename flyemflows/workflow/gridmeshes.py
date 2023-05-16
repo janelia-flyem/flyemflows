@@ -15,7 +15,7 @@ from dask.delayed import delayed
 from neuclease.dvid import (set_default_dvid_session_timeout,
                             fetch_repo_instances, create_tarsupervoxel_instance,
                             create_instance, is_locked, post_load, post_keyvalues, fetch_exists, fetch_key,
-                            fetch_server_info, fetch_mapping, resolve_ref)
+                            fetch_server_info, fetch_mapping, resolve_ref, create_tar_from_dict)
 from neuclease.util import Timer, meshes_from_volume, tqdm_proxy as tqdm, boxes_from_grid, SparseBlockMask, compute_parallel, round_coord
 
 from dvid_resource_manager.client import ResourceManagerClient
@@ -108,6 +108,20 @@ class GridMeshes(Workflow):
         "properties": {
             "directory": {
                 "description": "Directory to write supervoxel meshes into.",
+                "type": "string",
+                #"default": "" # Must not have default. (Appears below in a 'oneOf' context.)
+            }
+        }
+    }
+
+    DirectoryOfTarfilesOutputSchema = \
+    {
+        "additionalProperties": False,
+        "properties": {
+            "directory-of-tarfiles": {
+                "description": "Directory in which to dump batches of supervoxel meshes to.\n"
+                               "Each batch is written as a single tarfile, suitable for subsequent\n"
+                               "upload into a DVID tarsupervoxels instance via POST /load\n",
                 "type": "string",
                 #"default": "" # Must not have default. (Appears below in a 'oneOf' context.)
             }
@@ -221,6 +235,7 @@ class GridMeshes(Workflow):
         "output": {
             "oneOf": [
                 DirectoryOutputSchema,
+                DirectoryOfTarfilesOutputSchema,
                 KeyvalueOutputSchema,
                 TarsupervoxelsOutputSchema
             ],
@@ -333,6 +348,9 @@ class GridMeshes(Workflow):
             if not self.config['input']['dvid']['supervoxels']:
                 raise RuntimeError("Your input dvid source should specify supervoxels: true")
 
+        if self.config['gridmeshes']['skip-existing'] and 'directory-of-tarfiles' in self.config['output']:
+            raise RuntimeError("Can't use skip-existing with the 'directory-of-tarfiles output format. (Not yet implemented.)")
+
     def _init_input_service(self):
         """
         Initialize the input and output services,
@@ -414,6 +432,12 @@ class GridMeshes(Workflow):
             # Convert to absolute so we can chdir with impunity later.
             output_cfg['directory'] = os.path.abspath(output_cfg['directory'])
             os.makedirs(output_cfg['directory'], exist_ok=True)
+            return
+
+        if 'directory-of-tarfiles' in output_cfg:
+            # Convert to absolute so we can chdir with impunity later.
+            output_cfg['directory-of-tarfiles'] = os.path.abspath(output_cfg['directory-of-tarfiles'])
+            os.makedirs(output_cfg['directory-of-tarfiles'], exist_ok=True)
             return
 
         ##
@@ -500,6 +524,7 @@ class GridMeshes(Workflow):
 
         create_tarsupervoxel_instance(server, uuid, instance, sync_instance, output_fmt)
 
+
 def _determine_existing(resource_mgr, config, all_svs):
     """
     Determine which of the given supervoxels already have
@@ -534,13 +559,14 @@ def _determine_existing(resource_mgr, config, all_svs):
 
     return np.asarray(existing_svs)
 
-def _write_meshes(config, resource_mgr, meshes):
+
+def _write_meshes(config, resource_mgr, meshes, box):
     options = config["gridmeshes"]
     fmt = options["format"]
     destination = config["output"]
 
     (destination_type,) = destination.keys()
-    assert destination_type in ('directory', 'keyvalue', 'tarsupervoxels')
+    assert destination_type in ('directory', 'directory-of-tarfiles', 'keyvalue', 'tarsupervoxels')
 
     binary_meshes = {f"{sv}.{fmt}": serialize_mesh(sv, mesh, None, fmt=fmt)
                         for (sv, mesh) in meshes.items()}
@@ -550,6 +576,11 @@ def _write_meshes(config, resource_mgr, meshes):
             path = destination['directory'] + "/" + name
             with open(path, 'wb') as f:
                 f.write(mesh_bytes)
+    elif destination_type == 'directory-of-tarfiles':
+        brick_dir = f"{destination['directory-of-tarfiles']}/z{box[0,0]}/y{box[0,1]}"
+        brick_name = "brick-z{:06d}-y{:06d}-x{:06d}-z{:06d}-y{:06d}-x{:06d}".format(*box[0], *box[1])
+        os.makedirs(brick_dir, exist_ok=True)
+        create_tar_from_dict(binary_meshes, f"{brick_dir}/{brick_name}")
     else:
         total_bytes = sum(map(len, binary_meshes.values()))
         instance = [destination[destination_type][k] for k in ('server', 'uuid', 'instance')]
@@ -558,6 +589,7 @@ def _write_meshes(config, resource_mgr, meshes):
                 post_load_with_retry(*instance, binary_meshes)
             elif 'keyvalue' in destination:
                 post_keyvalues_with_retry(*instance, binary_meshes)
+
 
 def _process_brick(config, resource_mgr, input_service, brick, *, subset_supervoxels, subset_bodies):
     options = config["gridmeshes"]
@@ -610,7 +642,7 @@ def _process_brick(config, resource_mgr, input_service, brick, *, subset_supervo
     # Discard immediately.
     brick.destroy()
 
-    _write_meshes(config, resource_mgr, meshes)
+    _write_meshes(config, resource_mgr, meshes, brick.logical_box)
 
     if len(label_df):
         label_df = label_df.rename_axis('sv')
@@ -646,6 +678,7 @@ def _meshes_from_volume(brick, subset_supervoxels, options):
 
     return label_df, meshes
 
+
 def serialize_mesh(sv, mesh, path=None, fmt=None):
     """
     Call mesh.serialize(), but if an error occurs,
@@ -671,4 +704,3 @@ def serialize_mesh(sv, mesh, path=None, fmt=None):
             logger.error(msg)
 
         return b''
-
