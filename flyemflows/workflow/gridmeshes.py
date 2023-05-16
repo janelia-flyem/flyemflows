@@ -109,7 +109,7 @@ class GridMeshes(Workflow):
             "directory": {
                 "description": "Directory to write supervoxel meshes into.",
                 "type": "string",
-                #"default": "" # Must not have default. (Appears below in a 'oneOf' context.)
+                # "default": "" # Must not have default. (Appears below in a 'oneOf' context.)
             }
         }
     }
@@ -123,7 +123,7 @@ class GridMeshes(Workflow):
                                "Each batch is written as a single tarfile, suitable for subsequent\n"
                                "upload into a DVID tarsupervoxels instance via POST /load\n",
                 "type": "string",
-                #"default": "" # Must not have default. (Appears below in a 'oneOf' context.)
+                # "default": "" # Must not have default. (Appears below in a 'oneOf' context.)
             }
         }
     }
@@ -143,7 +143,7 @@ class GridMeshes(Workflow):
                                "To disable decimation, use 1.0.\n",
                 "type": "number",
                 "minimum": 0.0000001,
-                "maximum": 1.0, # 1.0 == disable
+                "maximum": 1.0,  # 1.0 == disable
                 "default": 1.0
             },
             "compute-normals": {
@@ -199,9 +199,9 @@ class GridMeshes(Workflow):
                                "      For example, use rescale-before-write: [16,16,16] if your volume is stored at is at 8nm resolution,\n"
                                "      and you are fetching from scale 1 (2x).\n",
                 "type": "string",
-                "enum": ["obj",     # Wavefront OBJ (.obj)
-                         "drc",     # Draco (compressed) (.drc)
-                         "ngmesh"], # "neuroglancer mesh" format -- a custom binary format.  See note above about scaling.
+                "enum": ["obj",      # Wavefront OBJ (.obj)
+                         "drc",      # Draco (compressed) (.drc)
+                         "ngmesh"],  # "neuroglancer mesh" format -- a custom binary format.  See note above about scaling.
                 "default": "obj"
             },
             "skip-existing": {
@@ -217,9 +217,9 @@ class GridMeshes(Workflow):
                 "default": "",
             },
             "slab-shape": {
-               "type": "array",
-               "items": {"type": "number"},
-               "default": [-1, -1, -1]
+                "type": "array",
+                "items": {"type": "number"},
+                "default": [-1, -1, -1]
             },
             "restart-at-slab": {
                 "type": "integer",
@@ -292,7 +292,9 @@ class GridMeshes(Workflow):
             try:
                 # Just one brick per partition, for better work stealing and responsive dashboard progress updates.
                 target_partition_size_voxels = np.prod(self.input_service.preferred_message_shape)
-                brickwall = BrickWall.from_volume_service(self.input_service, 0, slab_box, self.client, target_partition_size_voxels, 0, slab_sbm, compression='lz4_2x')
+                brickwall = BrickWall.from_volume_service(self.input_service, 0, slab_box, self.client,
+                                                          target_partition_size_voxels, 0, slab_sbm,
+                                                          compression='lz4_2x')
             except RuntimeError as ex:
                 if 'SparseBlockMask selects no blocks at all' in str(ex):
                     logger.info(f"Slab {slab_index}: SKIPPING (no bricks to process)")
