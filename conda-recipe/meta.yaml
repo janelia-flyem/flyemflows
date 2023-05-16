@@ -28,9 +28,13 @@ requirements:
     - scipy
     - scikit-image
     - fabric
+    - pyarrow
 
     # FlyEM mesh library
     - vol2mesh >=0.1.post5
+
+    # neuprint
+    - neuprint-python
 
     # Simple python-only RAG data structure.
     - ilastikrag
