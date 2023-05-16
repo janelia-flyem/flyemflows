@@ -582,7 +582,7 @@ def _write_meshes(config, resource_mgr, meshes, box):
         brick_dir = f"{destination['directory-of-tarfiles']}/z{box[0,0]}/y{box[0,1]}"
         brick_name = "brick-z{:06d}-y{:06d}-x{:06d}-z{:06d}-y{:06d}-x{:06d}".format(*box[0], *box[1])
         os.makedirs(brick_dir, exist_ok=True)
-        create_tar_from_dict(binary_meshes, f"{brick_dir}/{brick_name}")
+        create_tar_from_dict(binary_meshes, f"{brick_dir}/{brick_name}.tar")
     else:
         total_bytes = sum(map(len, binary_meshes.values()))
         instance = [destination[destination_type][k] for k in ('server', 'uuid', 'instance')]
