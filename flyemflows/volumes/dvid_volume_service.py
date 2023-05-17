@@ -224,6 +224,12 @@ DvidSegmentationServiceSchema = \
                            "Note: This is unrelated to the accept-throttling setting above.\n",
             "type": "boolean",
             "default": True
+        },
+        "read-as-dtype": {
+            "description": "Convert fetched subvolumes to this dtype. Not used when writing subvolumes.",
+            "type": "string",
+            "enum": ['bool', 'uint8', 'uint16', 'uint32', 'uint64', 'int8', 'int16', 'int32', 'int64', 'float32', 'float64'],
+            "default": "uint64"
         }
     }
 }
@@ -289,9 +295,11 @@ class DvidVolumeService(VolumeServiceWriter):
         if "segmentation-name" in volume_config["dvid"]:
             self._instance_name = volume_config["dvid"]["segmentation-name"]
             self._dtype = np.uint64
+            self._read_as_dtype = volume_config["dvid"]["read-as-dtype"]
         elif "grayscale-name" in volume_config["dvid"]:
             self._instance_name = volume_config["dvid"]["grayscale-name"]
             self._dtype = np.uint8
+            self._read_as_dtype = "uint8"
 
         self._dtype_nbytes = np.dtype(self._dtype).type().nbytes
 
@@ -661,13 +669,15 @@ class DvidVolumeService(VolumeServiceWriter):
 
         with self._resource_manager_client.access_context(self._server, True, 1, req_bytes):
             if self._instance_type not in ('labelarray', 'labelmap'):
-                return fetch_raw(self._server, self._uuid, instance_name, box_zyx, self._throttle, dtype=self._dtype)
+                vol = fetch_raw(self._server, self._uuid, instance_name, box_zyx, self._throttle, dtype=self._dtype)
+                return np.asarray(vol, dtype=self._read_as_dtype)
 
             # Fetch compressed data while we have the resource token
             vol_proxy = self._fetch_lazy_array(instance_name, box_zyx, scale)
 
         # Inflate after releasing resource token
-        return vol_proxy()
+        vol = vol_proxy()
+        return np.asarray(vol, self._read_as_dtype)
 
     def _fetch_lazy_array(self, instance_name, box_zyx, scale):
         """
@@ -675,19 +685,22 @@ class DvidVolumeService(VolumeServiceWriter):
         but return it without compressing it first.
         """
         aligned_box = round_box(box_zyx, 64, 'out')
-        if 8*np.prod(aligned_box[1] - aligned_box[0]) < 2**31:
+        GB = 2**30
+        if 8 * np.prod(aligned_box[1] - aligned_box[0]) < (2 * GB):
             return fetch_labelmap_voxels( self._server,
-                                          self._uuid,
-                                          instance_name,
-                                          box_zyx,
-                                          scale,
-                                          self._throttle,
-                                          supervoxels=self.supervoxels,
-                                          format='lazy-array' )
+                                         self._uuid,
+                                         instance_name,
+                                         box_zyx,
+                                         scale,
+                                         self._throttle,
+                                         supervoxels=self.supervoxels,
+                                         format='lazy-array' )
 
         # Requested subvolume is too large to download in one request.
         # Download it in chunks, with a somewhat arbitrary chunkshape
         chunk_shape = (64, 128, 10240)
+        vol_shape = box_zyx[1] - box_zyx[0]
+        vol = np.zeros(vol_shape, self._read_as_dtype)
         return fetch_labelmap_voxels_chunkwise( self._server,
                                                 self._uuid,
                                                 instance_name,
@@ -696,7 +709,8 @@ class DvidVolumeService(VolumeServiceWriter):
                                                 self._throttle,
                                                 supervoxels=self.supervoxels,
                                                 format='lazy-array',
-                                                chunk_shape=chunk_shape )
+                                                chunk_shape=chunk_shape,
+                                                out=vol )
 
     def _log_write_errors(f):
         @wraps(f)
