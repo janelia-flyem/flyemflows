@@ -287,6 +287,9 @@ class GridMeshes(Workflow):
             slab_sbm = None
         else:
             slab_sbm = SparseBlockMask.create_from_sbm_box(self.sbm, slab_box)
+            if slab_sbm is None:
+                logger.info(f"Slab {slab_index}: SKIPPING (no bricks to process)")
+                return
 
         with Timer(f"Slab {slab_index}: Initializing BrickWall", logger):
             try:
