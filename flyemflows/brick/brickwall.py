@@ -98,66 +98,70 @@ class BrickWall:
         bricks, num_bricks = generate_bricks_from_volume_source(bounding_box, grid, volume_accessor_func, client, rdd_partition_length, sparse_boxes, lazy, compression=compression)
         return BrickWall( bounding_box, grid, bricks, num_bricks )
 
-
     @classmethod
-    def from_volume_service(cls, volume_service, scale=0, bounding_box_zyx=None, client=None, target_partition_size_voxels=None, halo=0, sparse_block_mask=None, lazy=False, compression=None):
+    def from_volume_service(cls, volume_service, scale=0, bounding_box_zyx=None, client=None, target_partition_size_voxels=None, halo=0,
+                            sparse_block_mask=None, lazy=False, compression=None):
         """
         Convenience constructor, initialized from a VolumeService object.
-        
+
         Args:
             volume_service:
                 An instance of a VolumeService
-        
+
             bounding_box_zyx:
                 (start, stop) Optional.
                 Bounding box to restrict the region of fetched blocks, always
                 specified in FULL-RES coordinates, even if you are passing scale > 0
                 If not provided, volume_service.bounding_box_zyx is used.
-     
+
             scale:
                 Brick data will be fetched at this scale.
                 (Note: The bricks' sizes will still be the the full volume_service.preferred_message_shape,
                        but the overall bounding-box of the BrickWall be scaled down.) 
-     
+
             client:
                 dask distributed.Client
-     
+
             target_partition_size_voxels:
                 Optional. If provided, the RDD partition lengths (i.e. the number of bricks per RDD partition)
                 will be chosen to have (approximately) this many total voxels in each partition.
-            
+
             halo:
                 If provided, add a halo to the brick grid that will be used to fetch the data.
                 Depending on your use-case and/or input source, this can be faster than applying
                 a halo after-the-fact, which involves shuffling data across the cluster.
-            
+
             sparse_block_mask:
                 Instance of SparseBlockMask
-            
+
             lazy:
                 If True, the bricks' data will not be created until their 'volume' member is first accessed.
-            
+
             compression:
                 If provided, the brick volume data will be serialized/stored in a compressed format.
                 See ``flyemflows.util.compressed_volume.COMPRESSION_METHODS``
         """
-        grid = Grid(volume_service.preferred_message_shape, (0,0,0), halo)
-        
+        grid = Grid(
+            volume_service.preferred_message_shape,
+            volume_service.preferred_grid_offset,
+            halo
+        )
+
         if bounding_box_zyx is None:
             bounding_box_zyx = volume_service.bounding_box_zyx
 
         bounding_box_zyx = np.asarray(bounding_box_zyx)
-                
+
         if scale == 0:
             downsampled_box = bounding_box_zyx
         else:
             full_box = bounding_box_zyx
             downsampled_box = np.zeros((2,3), dtype=int)
-            downsampled_box[0] = full_box[0] // 2**scale # round down
-            
+            downsampled_box[0] = full_box[0] // 2**scale  # round down
+
             # Proper downsampled bounding-box would round up here...
             #downsampled_box[1] = (full_box[1] + 2**scale - 1) // 2**scale
-            
+
             # ...but some some services probably don't do that, so we'll
             # round down to avoid out-of-bounds errors for higher scales. 
             downsampled_box[1] = full_box[1] // 2**scale

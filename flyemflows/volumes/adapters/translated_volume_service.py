@@ -22,12 +22,6 @@ class TranslatedVolumeService(VolumeServiceReader):
     """
     Wraps an existing VolumeServiceReader and presents
     a translated view of it.
-
-    Note: Since VolumeServices have no notion of an offset block grid,
-          The translated service's grid will not necessarily be aligned to the original block grid.
-          If the translation is not block-aligned, then requests that appear block-aligned in the
-          translated volume will not actually be block-aligned with respect to the underlying data.
-          Depending on your use-case, that might be desirable, or might not.
     """
 
     def __init__(self, original_volume_service, translation_xyz=[0, 0, 0]):
@@ -55,6 +49,10 @@ class TranslatedVolumeService(VolumeServiceReader):
     @property
     def preferred_message_shape(self):
         return self.original_volume_service.preferred_message_shape
+
+    @property
+    def preferred_grid_offset(self):
+        return self.original_volume_service.preferred_grid_offset + self.translation_zyx
 
     @property
     def bounding_box_zyx(self):

@@ -95,6 +95,8 @@ class BrainMapsVolumeServiceReader(VolumeServiceReader):
         preferred_message_shape_zyx = np.array( volume_config["geometry"]["message-block-shape"][::-1] )
         replace_default_entries(preferred_message_shape_zyx, [64, 64, 6400])
 
+        preferred_grid_offset_zyx = np.array( volume_config["geometry"]["message-grid-offset"][::-1] )
+
         bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
         replace_default_entries(bounding_box_zyx, self._brainmaps_client.bounding_box)
 
@@ -110,6 +112,7 @@ class BrainMapsVolumeServiceReader(VolumeServiceReader):
         self._bounding_box_zyx = bounding_box_zyx
         self._resource_manager_client = resource_manager_client
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
+        self._preferred_grid_offset_zyx = preferred_grid_offset_zyx
         self._block_width = block_width
         self._available_scales = available_scales
         self._fetch_blockwise = fetch_blockwise
@@ -118,6 +121,7 @@ class BrainMapsVolumeServiceReader(VolumeServiceReader):
         volume_config["geometry"]["block-width"] = self._block_width
         volume_config["geometry"]["bounding-box"] = self._bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["message-block-shape"] = self._preferred_message_shape_zyx[::-1].tolist()
+        volume_config["geometry"]["message-grid-offset"] = self._preferred_grid_offset_zyx[::-1].tolist()
 
     @property
     def dtype(self):
@@ -126,6 +130,10 @@ class BrainMapsVolumeServiceReader(VolumeServiceReader):
     @property
     def preferred_message_shape(self):
         return self._preferred_message_shape_zyx
+
+    @property
+    def preferred_grid_offset(self):
+        return self._preferred_grid_offset_zyx
 
     @property
     def block_width(self):

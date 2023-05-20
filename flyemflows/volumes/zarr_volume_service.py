@@ -199,6 +199,9 @@ class ZarrVolumeService(VolumeServiceWriter):
         chunk_shape = np.array(self.zarr_dataset(0).chunks)
         assert len(chunk_shape) == 3
 
+        ##
+        ## message-block-shape
+        ##
         preferred_message_shape_zyx = np.array(volume_config["geometry"]["message-block-shape"])[::-1]
 
         # Replace -1's in the message-block-shape with the corresponding chunk_shape dimensions.
@@ -210,6 +213,11 @@ class ZarrVolumeService(VolumeServiceWriter):
             msg = (f"zarr volume: Expected message-block-shape ({preferred_message_shape_zyx[::-1]}) "
                   f"to be a multiple of the chunk shape ({chunk_shape[::-1]})")
             logger.warning(msg)
+
+        ##
+        ## message-grid-offset
+        ##
+        preferred_grid_offset_zyx = np.array( volume_config["geometry"]["message-grid-offset"][::-1] )
 
         # The notion of 'block-width' doesn't really make sense if the chunks aren't cubes,
         # but we'll assume the user has chosen something reasonable and just use the minimum chunk dimension.
@@ -231,6 +239,7 @@ class ZarrVolumeService(VolumeServiceWriter):
         # Store members
         self._bounding_box_zyx = bounding_box_zyx
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
+        self._preferred_grid_offset_zyx = preferred_grid_offset_zyx
         self._block_width = block_width
         self._available_scales = volume_config["geometry"]["available-scales"]
         self._global_offset = global_offset
@@ -240,6 +249,7 @@ class ZarrVolumeService(VolumeServiceWriter):
         volume_config["geometry"]["block-width"] = int(self._block_width)
         volume_config["geometry"]["bounding-box"] = self._bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["message-block-shape"] = self._preferred_message_shape_zyx[::-1].tolist()
+        volume_config["geometry"]["message-grid-offset"] = self._preferred_grid_offset_zyx[::-1].tolist()
 
     @property
     def dtype(self):
@@ -248,6 +258,10 @@ class ZarrVolumeService(VolumeServiceWriter):
     @property
     def preferred_message_shape(self):
         return self._preferred_message_shape_zyx
+
+    @property
+    def preferred_grid_offset(self):
+        return self._preferred_grid_offset_zyx
 
     @property
     def block_width(self):

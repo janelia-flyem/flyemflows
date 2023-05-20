@@ -107,6 +107,10 @@ class LabelmappedVolumeService(VolumeServiceWriter):
         return self.original_volume_service.preferred_message_shape
 
     @property
+    def preferred_grid_offset(self):
+        return self.original_volume_service.preferred_message_shape
+
+    @property
     def bounding_box_zyx(self):
         return self.original_volume_service.bounding_box_zyx
 

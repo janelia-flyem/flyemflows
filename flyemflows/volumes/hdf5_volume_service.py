@@ -129,7 +129,7 @@ class Hdf5VolumeService(VolumeServiceWriter):
         assert (bounding_box_zyx[0] >= 0).all()
         assert (bounding_box_zyx[1] <= self._dataset.shape).all(), \
             f"bounding box ({bounding_box_zyx.tolist()}) exceeds the stored hdf5 volume shape ({self._dataset.shape})"
-        
+
         ###
         ### dtype
         ###
@@ -149,12 +149,17 @@ class Hdf5VolumeService(VolumeServiceWriter):
             chunk_bytes = np.prod(chunk_shape) * dtype.itemsize
             chunks_per_brick = max(1, 256*MB // chunk_bytes)
             preferred_message_shape_zyx = np.array((*chunk_shape[:2], chunk_shape[2]*chunks_per_brick))
-        
+
         if block_width == -1:
             block_width = chunk_shape[0]
         else:
             assert block_width == chunk_shape[0], \
                 "block-width does not match file chunk shape"
+
+        ##
+        ## message-grid-offset
+        ##
+        preferred_grid_offset_zyx = np.array( volume_config["geometry"]["message-grid-offset"][::-1] )
 
         ##
         ## Store members
@@ -164,6 +169,7 @@ class Hdf5VolumeService(VolumeServiceWriter):
         self._dataset_name = dataset_name
         self._bounding_box_zyx = bounding_box_zyx
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
+        self._preferred_grid_offset_zyx = preferred_grid_offset_zyx
         self._dtype = self._dataset.dtype
 
         ##
@@ -173,7 +179,7 @@ class Hdf5VolumeService(VolumeServiceWriter):
         volume_config["geometry"]["block-width"] = chunk_shape[0]
         volume_config["geometry"]["bounding-box"] = self._bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["message-block-shape"] = self._preferred_message_shape_zyx[::-1].tolist()
-        
+        volume_config["geometry"]["message-grid-offset"] = self._preferred_grid_offset_zyx[::-1].tolist()
 
     def __getstate__(self):
         """
@@ -207,6 +213,10 @@ class Hdf5VolumeService(VolumeServiceWriter):
     @property
     def preferred_message_shape(self):
         return self._preferred_message_shape_zyx
+
+    @property
+    def preferred_grid_offset(self):
+        return self._preferred_grid_offset_zyx
 
     @property
     def block_width(self):

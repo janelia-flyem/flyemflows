@@ -390,6 +390,11 @@ class DvidVolumeService(VolumeServiceWriter):
         replace_default_entries(preferred_message_shape_zyx, [block_width, block_width, 100*block_width])
 
         ##
+        ## message-grid-offset
+        ##
+        preferred_grid_offset_zyx = np.array( volume_config["geometry"]["message-grid-offset"][::-1] )
+
+        ##
         ## available-scales
         ##
         available_scales = list(volume_config["geometry"]["available-scales"])
@@ -417,6 +422,7 @@ class DvidVolumeService(VolumeServiceWriter):
         self._block_width = block_width
         self._bounding_box_zyx = bounding_box_zyx
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
+        self._preferred_grid_offset_zyx = preferred_grid_offset_zyx
         self._available_scales = available_scales
         self._use_resource_manager_for_sparse_coords = use_resource_manager_for_sparse_coords
         self.write_empty_blocks = volume_config["dvid"]["write-empty-blocks"]
@@ -427,13 +433,13 @@ class DvidVolumeService(VolumeServiceWriter):
         volume_config["geometry"]["block-width"] = self._block_width
         volume_config["geometry"]["bounding-box"] = self._bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["message-block-shape"] = self._preferred_message_shape_zyx[::-1].tolist()
+        volume_config["geometry"]["message-grid-offset"] = self._preferred_grid_offset_zyx[::-1].tolist()
 
         # TODO: Check the server for available scales and overwrite in the config?
         #volume_config["geometry"]["available-scales"] = [0]
 
         if volume_config["dvid"]["create-if-necessary"]:
             self._create_instance(volume_config)
-
 
     @property
     def server(self):
@@ -462,6 +468,10 @@ class DvidVolumeService(VolumeServiceWriter):
     @property
     def preferred_message_shape(self):
         return self._preferred_message_shape_zyx
+
+    @property
+    def preferred_grid_offset(self):
+        return self._preferred_grid_offset_zyx
 
     @property
     def block_width(self):

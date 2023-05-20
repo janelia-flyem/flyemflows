@@ -24,6 +24,10 @@ class VolumeService(metaclass=ABCMeta):
         raise NotImplementedError
 
     @abstractproperty
+    def preferred_grid_offset(self):
+        raise NotImplementedError
+
+    @abstractproperty
     def block_width(self):
         raise NotImplementedError
 

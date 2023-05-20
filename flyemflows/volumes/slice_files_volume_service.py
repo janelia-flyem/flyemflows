@@ -108,6 +108,8 @@ class SliceFilesVolumeService(VolumeServiceWriter):
             f"Preferred message shape for slice files must be a single Z-slice, and a complete XY output plane ({output_slice_shape}), "\
             f"not {preferred_message_shape_zyx}"
 
+        preferred_grid_offset_zyx = np.array( volume_config["geometry"]["message-grid-offset"][::-1] )
+
         available_scales = volume_config["geometry"]["available-scales"]
         assert available_scales == [0], \
             "Bad config: slice-files reader supports only scale zero."
@@ -118,12 +120,14 @@ class SliceFilesVolumeService(VolumeServiceWriter):
         self._dtype_nbytes = np.dtype(dtype).type().nbytes
         self._bounding_box_zyx = bounding_box_zyx
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
+        self._preferred_grid_offset_zyx = preferred_grid_offset_zyx
         self._available_scales = available_scales
 
         # Overwrite config entries that we might have modified
         volume_config["slice-files"]["slice-path-format"] = slice_fmt
         volume_config["geometry"]["bounding-box"] = bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["message-block-shape"] = preferred_message_shape_zyx[::-1].tolist()
+        volume_config["geometry"]["message-grid-offset"] = self._preferred_grid_offset_zyx[::-1].tolist()
 
         # Forbid unsupported config entries
         assert volume_config["geometry"]["block-width"] == -1, \
@@ -140,9 +144,13 @@ class SliceFilesVolumeService(VolumeServiceWriter):
         return self._preferred_message_shape_zyx
 
     @property
+    def preferred_grid_offset(self):
+        return self._preferred_grid_offset_zyx
+
+    @property
     def block_width(self):
         return -1
-    
+
     @property
     def bounding_box_zyx(self):
         return self._bounding_box_zyx

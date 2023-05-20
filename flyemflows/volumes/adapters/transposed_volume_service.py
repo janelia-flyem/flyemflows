@@ -153,6 +153,10 @@ class TransposedVolumeService(VolumeServiceReader):
         return self.original_volume_service.preferred_message_shape[(self.transpose_order,)]
 
     @property
+    def preferred_grid_offset(self):
+        return self.original_volume_service.preferred_grid_offset[(self.transpose_order,)]
+
+    @property
     def bounding_box_zyx(self):
         return self.original_volume_service.bounding_box_zyx[:, self.transpose_order]
 

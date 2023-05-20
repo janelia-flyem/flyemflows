@@ -162,6 +162,8 @@ class N5VolumeService(VolumeServiceWriter):
             f"Expected message-block-shape ({preferred_message_shape_zyx}) "\
             f"to be a multiple of the chunk shape ({chunk_shape})"
 
+        preferred_grid_offset_zyx = np.array( volume_config["geometry"]["message-grid-offset"][::-1] )
+
         if chunk_shape[0] == chunk_shape[1] == chunk_shape[2]:
             block_width = int(chunk_shape[0])
         else:
@@ -181,6 +183,7 @@ class N5VolumeService(VolumeServiceWriter):
         # Store members
         self._bounding_box_zyx = bounding_box_zyx
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
+        self._preferred_grid_offset_zyx = preferred_grid_offset_zyx
         self._block_width = block_width
         self._available_scales = volume_config["geometry"]["available-scales"]
 
@@ -188,6 +191,7 @@ class N5VolumeService(VolumeServiceWriter):
         volume_config["geometry"]["block-width"] = self._block_width
         volume_config["geometry"]["bounding-box"] = self._bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["message-block-shape"] = self._preferred_message_shape_zyx[::-1].tolist()
+        volume_config["geometry"]["message-grid-offset"] = self._preferred_grid_offset_zyx[::-1].tolist()
 
     @property
     def dtype(self):
@@ -198,9 +202,13 @@ class N5VolumeService(VolumeServiceWriter):
         return self._preferred_message_shape_zyx
 
     @property
+    def preferred_grid_offset(self):
+        return self._preferred_grid_offset_zyx
+
+    @property
     def block_width(self):
         return self._block_width
-    
+
     @property
     def bounding_box_zyx(self):
         return self._bounding_box_zyx
@@ -212,13 +220,11 @@ class N5VolumeService(VolumeServiceWriter):
     def get_subvolume(self, box_zyx, scale=0):
         box_zyx = np.asarray(box_zyx)
         return self.n5_dataset(scale)[box_to_slicing(*box_zyx.tolist())]
-    
 
     def write_subvolume(self, subvolume, offset_zyx, scale=0):
         offset_zyx = np.asarray(offset_zyx)
         box = np.array([offset_zyx, offset_zyx+subvolume.shape])
         self.n5_dataset(scale)[box_to_slicing(*box)] = subvolume
-
 
     @property
     def n5_file(self):

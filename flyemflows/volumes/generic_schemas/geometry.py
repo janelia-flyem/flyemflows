@@ -39,12 +39,29 @@ GeometrySchema = \
             "default": flow_style([-1,-1,-1])
         },
 
+        "message-grid-offset": {
+            "description": "The preferred access pattern grid offset.\n"
+                           "If this service should be accessed in a block grid\n"
+                           "that doesn't start at (0,0,0), this setting specifies\n"
+                           "what the starting offset for the grid should be.\n"
+                           "Note: Some workflows might not respect this setting appropriately,\n"
+                           "      but in general workflows which load their input data via a\n"
+                           "      'BrickWall' should work as expected.\n"
+                           "Note: Grid offsets and sparse-block-masks (SBMs) can generally be combined\n"
+                           "      only if the grid offset is divisible by the SBM resolution.\n",
+            "type": "array",
+            "items": { "type": "integer" },
+            "minItems": 3,
+            "maxItems": 3,
+            "default": flow_style([0,0,0])
+        },
+
         "block-width": {
             "description": "The block size of the underlying volume storage, if applicable.",
             "type": "integer",
             "default": -1
         },
-        
+
         "available-scales": {
             "description": "The list of available scales for the volume source.",
             "type": "array",

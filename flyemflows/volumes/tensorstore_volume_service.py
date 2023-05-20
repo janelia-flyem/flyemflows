@@ -307,6 +307,8 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         preferred_message_shape_zyx = np.array( volume_config["geometry"]["message-block-shape"][::-1] )
         replace_default_entries(preferred_message_shape_zyx, [256, 256, 256])
 
+        preferred_grid_offset_zyx = np.array( volume_config["geometry"]["message-grid-offset"][::-1] )
+
         # Convert box from xyzc -> zyx
         store_box_zyx = np.array([spec.domain.inclusive_min, spec.domain.exclusive_max])[:, :3][:, ::-1]
         bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
@@ -325,6 +327,7 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         self._bounding_box_zyx = bounding_box_zyx
         self._resource_manager_client = resource_manager_client
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
+        self._preferred_grid_offset_zyx = preferred_grid_offset_zyx
         self._available_scales = available_scales
         self._reinitialize_via = volume_config["tensorstore"]["reinitialize-via"]
         self._out_of_bounds_access = volume_config["tensorstore"]["out-of-bounds-access"]
@@ -333,6 +336,7 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         volume_config["geometry"]["block-width"] = self._block_width
         volume_config["geometry"]["bounding-box"] = self._bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["message-block-shape"] = self._preferred_message_shape_zyx[::-1].tolist()
+        volume_config["geometry"]["message-grid-offset"] = self._preferred_grid_offset_zyx[::-1].tolist()
 
         self._ensure_scales_exist()
 
@@ -407,6 +411,10 @@ class TensorStoreVolumeService(VolumeServiceWriter):
     @property
     def preferred_message_shape(self):
         return self._preferred_message_shape_zyx
+
+    @property
+    def preferred_grid_offset(self):
+        return self._preferred_grid_offset_zyx
 
     @property
     def block_width(self):

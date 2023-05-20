@@ -112,8 +112,20 @@ class ScaledVolumeService(VolumeServiceWriter):
         orig = self.original_volume_service.preferred_message_shape
         ms = (orig // 2**self.scale_delta)
         ms = ms.astype(np.int32)
-        ms = np.maximum(ms, 1) # Never shrink below 1 pixel in each dimension
+
+        # Never shrink below 1 pixel in each dimension
+        ms = np.maximum(ms, 1)
         return ms
+
+    @property
+    def preferred_grid_offset(self):
+        orig = self.original_volume_service.preferred_grid_offset
+        if (orig % 2**self.scale_delta).any():
+            raise RuntimeError("message-grid-offset is not divisible by the rescale factor")
+
+        offset = (orig // 2**self.scale_delta)
+        offset = offset.astype(np.int32)
+        return offset
 
     @property
     def bounding_box_zyx(self):
