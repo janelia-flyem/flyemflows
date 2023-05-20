@@ -12,20 +12,19 @@ import distributed
 import dask.config
 from dask.delayed import delayed
 
+from neuclease.util import Timer, meshes_from_volume, tqdm_proxy as tqdm, compute_parallel
 from neuclease.dvid import (set_default_dvid_session_timeout,
                             fetch_repo_instances, create_tarsupervoxel_instance,
                             create_instance, is_locked, post_load, post_keyvalues, fetch_exists, fetch_key,
                             fetch_server_info, fetch_mapping, resolve_ref, create_tar_from_dict)
-from neuclease.util import Timer, meshes_from_volume, tqdm_proxy as tqdm, boxes_from_grid, SparseBlockMask, compute_parallel, round_coord
 
 from dvid_resource_manager.client import ResourceManagerClient
 
-from flyemflows.util import replace_default_entries, auto_retry
-
 from ..util.dask_util import as_completed_synchronous, FakeFuture
-from .util.config_helpers import BodyListSchema, load_body_list
 from ..volumes import VolumeService, SegmentationVolumeSchema, DvidVolumeService
 from ..brick import BrickWall
+from ..util import auto_retry
+from .util.config_helpers import BodyListSchema, load_body_list
 from . import Workflow
 
 logger = logging.getLogger(__name__)
@@ -215,15 +214,6 @@ class GridMeshes(Workflow):
                                "pickled SparseBlockMask here.\n",
                 "type": "string",
                 "default": "",
-            },
-            "slab-shape": {
-                "type": "array",
-                "items": {"type": "number"},
-                "default": [-1, -1, -1]
-            },
-            "restart-at-slab": {
-                "type": "integer",
-                "default": 0
             }
         }
     }
@@ -259,82 +249,41 @@ class GridMeshes(Workflow):
         with Timer("Initializing output", logger):
             self._prepare_output()
 
-        slab_shape = self.config["gridmeshes"]["slab-shape"][::-1]
-        grid_shape = self.input_service.preferred_message_shape
-        bb_rounded = round_coord(self.input_service.bounding_box_zyx[1], grid_shape, 'up')
-        replace_default_entries(slab_shape, bb_rounded)
-        if (slab_shape % grid_shape).any():
-            raise RuntimeError(f"Your slab shape (XYZ {slab_shape[::-1]}) isn't a multiple of your grid shape (XYZ {grid_shape[::-1]})")
+        # Process each box.
+        # Pass subset_supervoxels via dask delayed to achieve better
+        # data sharing rather than duplicating it within each task.
+        brickwall = BrickWall.from_volume_service(
+            self.input_service,
+            client=self.client,
+            sparse_block_mask=self.sbm,
+            lazy=True
+        )
 
-        slab_boxes = boxes_from_grid(self.input_service.bounding_box_zyx, slab_shape, clipped=False)
-        logger.info(f"Splitting job into {len(slab_boxes)} slabs (each XYZ {slab_shape[::-1]})")
+        process_brick = partial(_process_brick, self.config, self.mgr_client, self.input_service)
+        results_bag = brickwall.bricks.map(
+            process_brick,
+            subset_supervoxels=delayed(self.subset_supervoxels),
+            subset_bodies=delayed(self.subset_bodies)
+        )
 
-        for slab_index, slab_box in enumerate(slab_boxes):
-            if slab_index < self.config["gridmeshes"]["restart-at-slab"]:
-                logger.info(f"Slab {slab_index}: SKIPPING (restart)")
-                continue
-            with Timer(f"Slab {slab_index}: Processing (XYZ: {slab_box[:, ::-1].tolist()})", logger, log_start=False):
-                self.process_slab(slab_index, slab_box)
-
-    def process_slab(self, slab_index, slab_box):
-        config = self.config
-        input_service = self.input_service
-        resource_mgr = self.mgr_client
-        subset_supervoxels = self.subset_supervoxels
-        subset_bodies = self.subset_bodies
-
-        if self.sbm is None:
-            slab_sbm = None
+        # Support synchronous testing with a fake 'as_completed' object
+        if hasattr(self.client, 'DEBUG'):
+            partition_futures = [FakeFuture([r]) for r in results_bag.compute()]
+            ac = as_completed_synchronous(partition_futures, with_results=True)
         else:
-            slab_sbm = SparseBlockMask.create_from_sbm_box(self.sbm, slab_box)
-            if slab_sbm is None:
-                logger.info(f"Slab {slab_index}: SKIPPING (no bricks to process)")
-                return
+            # https://stackoverflow.com/questions/52135188/how-to-get-future-object-from-dask-bag
+            partition_futures = distributed.futures_of(results_bag.persist())
+            ac = distributed.as_completed(partition_futures, with_results=True)
 
-        with Timer(f"Slab {slab_index}: Initializing BrickWall", logger):
-            try:
-                # Just one brick per partition, for better work stealing and responsive dashboard progress updates.
-                target_partition_size_voxels = np.prod(self.input_service.preferred_message_shape)
-                brickwall = BrickWall.from_volume_service(self.input_service, 0, slab_box, self.client,
-                                                          target_partition_size_voxels, 0, slab_sbm,
-                                                          compression='lz4_2x')
-            except RuntimeError as ex:
-                if 'SparseBlockMask selects no blocks at all' in str(ex):
-                    logger.info(f"Slab {slab_index}: SKIPPING (no bricks to process)")
-                    return
-                raise
-
-            if brickwall.num_bricks == 0:
-                logger.info(f"Slab {slab_index}: SKIPPING (no bricks to process)")
-                return
-
-        with Timer(f"Slab {slab_index}: Processing {brickwall.num_bricks} bricks", logger):
-
-            # Pass subset_supervoxels via dask delayed to achieve better
-            # data sharing rather than duplicating it within each task.
-            process_brick = partial(_process_brick, config, resource_mgr, input_service)
-            results_bag = brickwall.bricks.map(process_brick,
-                                               subset_supervoxels=delayed(subset_supervoxels),
-                                               subset_bodies=delayed(subset_bodies))
-
-            # Support synchronous testing with a fake 'as_completed' object
-            if hasattr(self.client, 'DEBUG'):
-                partition_futures = [FakeFuture([r]) for r in results_bag.compute()]
-                ac = as_completed_synchronous(partition_futures, with_results=True)
-            else:
-                # https://stackoverflow.com/questions/52135188/how-to-get-future-object-from-dask-bag
-                partition_futures = distributed.futures_of(results_bag.persist())
-                ac = distributed.as_completed(partition_futures, with_results=True)
-
-            try:
-                sv_counts = []
-                for _, partition in tqdm(ac, total=len(partition_futures)):
-                    sv_counts.extend(partition)
-            except BaseException as ex:
-                logger.error(f"Slab {slab_index}: Exiting early due to {type(ex)}")
-                raise
-            finally:
-                logger.info(f"Slab {slab_index}: Wrote {sum(sv_counts)} supervoxel meshes.")
+        try:
+            sv_counts = []
+            for _, partition in tqdm(ac, total=len(partition_futures), miniters=len(partition_futures)//1000):
+                sv_counts.extend(partition)
+        except BaseException as ex:
+            logger.error(f"Exiting early due to {type(ex)}")
+            raise
+        finally:
+            logger.info(f"Wrote {sum(sv_counts)} supervoxel meshes.")
 
     def _sanitize_config(self):
         rescale_factor = self.config["gridmeshes"]["rescale-before-write"]
@@ -642,13 +591,11 @@ def _process_brick(config, resource_mgr, input_service, brick, *, subset_supervo
     # to get a child process -- no work is being processed in parallel.
     ((label_df, meshes),) = compute_parallel(
         _meshes_from_volume,
-        [(brick, subset_supervoxels, options)],
+        [(brick.volume, brick.physical_box, subset_supervoxels, options)],
         starmap=True, processes=1, shutdown_delay=0.1,
     )
-    # Discard immediately.
-    brick.destroy()
 
-    _write_meshes(config, resource_mgr, meshes, brick.logical_box)
+    _write_meshes(config, resource_mgr, meshes, brick.physical_box)
 
     if len(label_df):
         label_df = label_df.rename_axis('sv')
@@ -664,9 +611,9 @@ def _process_brick(config, resource_mgr, input_service, brick, *, subset_supervo
     return len(label_df)
 
 
-def _meshes_from_volume(brick, subset_supervoxels, options):
+def _meshes_from_volume(volume, box, subset_supervoxels, options):
     label_df, mesh_gen = meshes_from_volume(
-        brick.volume, brick.physical_box, subset_supervoxels,
+        volume, box, subset_supervoxels,
         cuffs=True, capped=True,
         min_voxels=options["minimum-supervoxel-size"],
         max_voxels=options["maximum-supervoxel-size"],

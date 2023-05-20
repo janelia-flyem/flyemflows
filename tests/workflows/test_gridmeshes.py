@@ -1,13 +1,11 @@
 import os
 import copy
-import pickle
 import tempfile
 import textwrap
 from io import StringIO
 
 import numpy as np
 import pandas as pd
-from scipy.ndimage import distance_transform_edt
 
 from neuclease.dvid import create_labelmap_instance, post_labelmap_voxels, fetch_supervoxel, fetch_key
 
@@ -16,7 +14,7 @@ from vol2mesh import Mesh
 import pytest
 from ruamel.yaml import YAML
 from flyemflows.bin.launchflow import launch_flow
-from neuclease.util import box_to_slicing, extract_subvol, overwrite_subvol, boxes_from_grid, place_sphere, region_features
+from neuclease.util import extract_subvol, overwrite_subvol, boxes_from_grid, place_sphere, region_features
 
 yaml = YAML()
 yaml.default_flow_style = False
@@ -98,7 +96,6 @@ def setup_gridmeshes_config(setup_segmentation_input, disable_auto_retry):
           directory: meshes
 
         gridmeshes:
-          slab-shape: [128, 256, 256]
           subset-supervoxels: []
 
           mesh-parameters:
@@ -458,5 +455,5 @@ if __name__ == "__main__":
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_gridmeshes']
     args += ['-x']
     #args += ['-Werror']
-    #args += ['-k', 'gridmeshes_basic']
+    args += ['-k', 'gridmeshes_subset_svs']
     pytest.main(args)
