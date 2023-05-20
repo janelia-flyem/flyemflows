@@ -81,10 +81,15 @@ def _launch_dvid_server():
     with open(DVID_CONFIG_PATH, 'w') as f:
         f.write(DVID_CONFIG)
 
-    dvid_proc = subprocess.Popen(f'dvid -verbose -fullwrite serve {DVID_CONFIG_PATH}',
-                                 shell=True, stdout=subprocess.PIPE) # Hide output ("Sending log messages to...")
+    dvid_proc = subprocess.Popen(f'{sys.prefix}/bin/dvid -verbose -fullwrite serve {DVID_CONFIG_PATH}',
+                                 shell=True, stdout=subprocess.PIPE)  # Hide output ("Sending log messages to...")
     time.sleep(1.0)
     if dvid_proc.poll() is not None:
+        stdout, stderr = dvid_proc.communicate(timeout=1.0)
+        dvid_proc.kill()
+        print(stdout)
+        stdout, stderr = dvid_proc.communicate(timeout=1.0)
+        print(stdout)
         raise RuntimeError(f"dvid couldn't be launched.  Exited with code: {dvid_proc.returncode}")
     return dvid_proc, DVID_ADDRESS
 
