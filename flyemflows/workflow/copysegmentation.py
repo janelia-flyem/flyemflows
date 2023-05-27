@@ -289,8 +289,8 @@ class CopySegmentation(Workflow):
             logger.warning(f"Your slab-shape {slab_shape} is not a multiple of the input's brick shape {brick_shape}")
 
         if isinstance(self.input_service.base_service, DvidVolumeService):
-            assert input_config["dvid"]["supervoxels"], \
-                'DVID input service config must use "supervoxels: true"'
+            if not input_config["dvid"]["supervoxels"]:
+                logger.warning("Your DVID input service config doesn't use 'supervoxels: true' -- was that intentional?")
 
         # Special handling for creation of multi-scale outputs:
         # auto-configure the pyramid depths
