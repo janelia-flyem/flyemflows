@@ -55,7 +55,7 @@ def main():
 
     # Set long timeout by modifying the global session template.
     # (The code in this file doesn't use any custom sessions, so the global default is used.)
-    set_default_dvid_session_timeout(3.05, 600.0)
+    set_default_dvid_session_timeout(600.0, 600.0)
 
     logger.setLevel(logging.INFO)
     
@@ -95,8 +95,6 @@ def main():
 
 
 def main_impl(args):
-    set_default_dvid_session_timeout(3.05, 30*60)
-
     # Read agglomeration file
     segment_to_body_df = None
     if args.agglomeration_mapping:
