@@ -366,7 +366,7 @@ def setup_dvid_segmentation_input(setup_dvid_repo):
 def test_findadjacencies_from_dvid_sparse_labels(setup_dvid_segmentation_input):
     template_dir, config, _volume, _dvid_address, _repo_uuid = setup_dvid_segmentation_input
     config = copy.deepcopy(config)
-    config["findadjacencies"]["subset-labels"] = [1,2,3,4,6,7,8]
+    config["findadjacencies"]["subset-labels"] = [1,2,3,4, 6,7,8]
     _impl_test_findadjacencies_from_dvid_sparse(template_dir, config)
 
 
@@ -380,7 +380,14 @@ def test_findadjacencies_from_dvid_sparse_edges(setup_dvid_segmentation_input):
     config = copy.deepcopy(config)
     config["findadjacencies"]["subset-edges"] = 'subset-edges.csv'
 
-    _impl_test_findadjacencies_from_dvid_sparse(template_dir, config)
+    execution_dir, workflow = _impl_test_findadjacencies_from_dvid_sparse(template_dir, config)
+
+    final_config = workflow.config
+    output_df = pd.read_csv(f'{execution_dir}/{final_config["findadjacencies"]["output-table"]}')
+
+    # More checks
+    label_pairs = output_df[['label_a', 'label_b']].values
+    label_pairs = list(map(tuple, label_pairs))
 
 
 def test_findadjacencies_from_dvid_sparse_groups(setup_dvid_segmentation_input):
@@ -394,13 +401,16 @@ def test_findadjacencies_from_dvid_sparse_groups(setup_dvid_segmentation_input):
 
     final_config = workflow.config
     output_df = pd.read_csv(f'{execution_dir}/{final_config["findadjacencies"]["output-table"]}')
+    output_df = output_df.set_index(['label_a', 'label_b'])
 
     # More checks
-    label_pairs = output_df[['label_a', 'label_b']].values
-    label_pairs = list(map(tuple, label_pairs))
-    assert (1,2) in label_pairs
-    assert (2,7) in label_pairs
-    assert (6,8) in label_pairs
+    assert (1,2) in output_df.index
+    assert (2,7) in output_df.index
+    assert (6,8) in output_df.index
+    assert (output_df.loc[(1,6), 'distance'] > 1).all()
+    assert (output_df.loc[(1,7), 'distance'] > 1).all()
+    assert (5,7) not in output_df.index
+    assert (3,8) not in output_df.index
 
 
 def _impl_test_findadjacencies_from_dvid_sparse(template_dir, config):
@@ -414,6 +424,10 @@ def _impl_test_findadjacencies_from_dvid_sparse(template_dir, config):
     label_pairs = output_df[['label_a', 'label_b']].values
     assert 0 not in label_pairs.flat
 
+    print()
+    print(output_df)
+    print()
+
     assert output_df[['label_a', 'label_b', 'group']].duplicated().sum() == 0
 
     label_pairs = list(map(tuple, label_pairs))
@@ -421,8 +435,6 @@ def _impl_test_findadjacencies_from_dvid_sparse(template_dir, config):
     assert (3,4) in label_pairs
     assert (6,7) in label_pairs
     assert (2,8) in label_pairs
-    assert (1,6) not in label_pairs
-    assert (1,7) not in label_pairs
     
     assert (output_df.query('label_a == 3')[['za', 'zb']].values[0] == 31).all()
     assert (output_df.query('label_a == 3')[['ya', 'yb']].values[0] == (7*16, 7*16-1)).all() # not 'forward'
@@ -529,12 +541,13 @@ if __name__ == "__main__":
     
     CLUSTER_TYPE = os.environ['CLUSTER_TYPE'] = "synchronous"
     args = ['-s', '--tb=native', '--pyargs', 'tests.workflows.test_findadjacencies']
-    #args += ['-x']
-    #args += ['-k test_findadjacencies_subset_edges_and_nudge']
-    #args += ['-k', 'findadjacencies_from_dvid_sparse_groups'
-    #         ' or findadjacencies_different_dvid_blocks_sparse_labels'
-    #         ' or findadjacencies_from_dvid_sparse_edges'
-    #         ' or findadjacencies_different_dvid_blocks_sparse_edges'
-    #         ' or findadjacencies_different_dvid_blocks_sparse_labels'
-    #         ]
+    args += ['-x']
+    # #args += ['-k findadjacencies_from_dvid_sparse_groups']
+    # args += ['-k findadjacencies_from_dvid_sparse_labels'
+    #          ' or findadjacencies_from_dvid_sparse_edges'
+    #          ' or findadjacencies_from_dvid_sparse_groups'
+    # #         ' or findadjacencies_different_dvid_blocks_sparse_labels'
+    # #         ' or findadjacencies_different_dvid_blocks_sparse_edges'
+    # #         ' or findadjacencies_different_dvid_blocks_sparse_labels'
+    #          ]
     pytest.main(args)

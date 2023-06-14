@@ -278,6 +278,9 @@ class FindAdjacencies(Workflow):
             else:
                 all_adjacent_edges_df = pd.concat(adjacent_edge_tables, ignore_index=True)
                 best_adjacent_edges_df = select_central_edges(all_adjacent_edges_df, ['za', 'ya', 'xa'])
+
+                # Technically we don't need this yet, but this is nice to have in the output
+                # if the job gets killed early (before non-adjacent edges are processed).
                 best_adjacent_edges_df, subset_groups = append_group_ccs(best_adjacent_edges_df, subset_groups, None)
 
         logger.info(f"Found {len(all_adjacent_edges_df)} direct intra-group adjacencies ({len(best_adjacent_edges_df)} after selection)")
@@ -417,6 +420,7 @@ def append_group_ccs(edges_df, subset_groups, max_distance=None):
         the CC computation (but include them in the resulting dataframe).
         For such excluded edges, group_cc == -1.
     """
+    edges_df = edges_df.drop_duplicates()
     with Timer("Computing group_cc", logger):
         edges_df = append_group_col(edges_df, subset_groups)
 
