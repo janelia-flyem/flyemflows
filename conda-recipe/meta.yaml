@@ -36,9 +36,6 @@ requirements:
     # neuprint
     - neuprint-python
 
-    # Simple python-only RAG data structure.
-    - ilastikrag
-
     - dask
     - dask-jobqueue
     - distributed

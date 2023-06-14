@@ -12,7 +12,6 @@ from dvid_resource_manager.client import ResourceManagerClient
 from neuclease.util import (Timer, swap_df_cols, approximate_closest_approach, SparseBlockMask,
                             connected_components_nonconsecutive, apply_mask_for_labels)
 
-from ilastikrag import Rag
 from dvidutils import LabelMapper
 
 from ..util import stdout_redirected
@@ -531,8 +530,8 @@ def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requ
 
     # Contruct a mapper that includes only the labels we'll keep.
     # (Other labels will be mapped to 0).
-    # Also, the mapper converts to uint32 (required by _find_and_select_central_edges,
-    # but also just good for RAM reasons).
+    # Also, the mapper converts to uint32 (no longer required by _find_and_select_central_edges,
+    # but still just good for RAM reasons).
     kept_labels = np.sort(np.unique(subset_groups['label'].values))
     remapped_kept_labels = np.arange(1, len(kept_labels)+1, dtype=np.uint32)
     mapper = LabelMapper(kept_labels, remapped_kept_labels)
@@ -752,12 +751,6 @@ def _find_and_select_central_edges(volume, subset_groups, subset_requirement):
     The coordinates in the returned DataFrame will be in terms of the
     local volume's coordinates (i.e. between (0,0,0) and volume.shape).
     
-    TODO:
-        Right now this function uses ilastikrag.Rag to find the adjacencies,
-        because it's convenient.  But it does *slightly* more work than necessary,
-        and it would be easy to copy the functions we need into this code base.
-        Plus, the conversion to uint32 is probably unnecessary...
-        
     FIXME: subset_requirement is not respected.
     """
     edges_df = compute_dense_rag_table(volume)
@@ -812,7 +805,7 @@ def compute_dense_rag_table(volume):
     """
     Find all voxel-level adjacencies in the volume,
     except for adjacencies to ID 0.
-    
+
     Returns:
         dataframe with columns:
         ['label_a', 'label_b', 'forwardness', 'z', 'y', 'x', 'axis']
@@ -820,30 +813,41 @@ def compute_dense_rag_table(volume):
         label_a is on the 'left' (upper) or on the 'right' (lower) side
         of the voxel boundary.
     """
-    assert volume.dtype == np.uint32
-    rag = Rag(vigra.taggedView(volume, 'zyx'))
-    
-    # Edges are stored by axis -- concatenate them all.
-    edges_z, edges_y, edges_x = rag.dense_edge_tables.values()
+    all_edges = []
+    for axis in (0,1,2):
+        v = np.moveaxis(volume, axis, 0)
+        order = 'zyx'[axis] + 'zyx'[:axis] + 'zyx'[axis+1:]
 
-    del rag
+        mask = (v[:-1] != v[1:])
+        left = v[:-1][mask]
+        right = v[1:][mask]
+        forwardness = (left < right)
+        a = np.where(forwardness, left, right)
+        b = np.where(forwardness, right, left)
 
-    if len(edges_z) == len(edges_y) == len(edges_x) == 0:
-        return None # No edges detected
-    
-    edges_z['axis'] = 'z'
-    edges_y['axis'] = 'y'
-    edges_x['axis'] = 'x'
-    
-    all_edges = list(filter(len, [edges_z, edges_y, edges_x]))
+        edges = pd.DataFrame({
+            'label_a': a,
+            'label_b': b,
+            'forwardness': forwardness,
+            **dict(zip(order, mask.nonzero())),
+            'axis': 'zyx'[axis]
+        })
+        all_edges.append(edges)
+
     edges_df = pd.concat(all_edges, ignore_index=True)
-    edges_df.rename(columns={'sp1': 'label_a', 'sp2': 'label_b'}, inplace=True)
-    del edges_df['edge_label']
+    if len(edges_df) == 0:
+        # No edges detected
+        return None
 
     # Filter: not interested in label 0
-    edges_df.query("label_a != 0 and label_b != 0", inplace=True)
-
+    edges_df = edges_df.query('label_a != 0 and label_b != 0')
+    edges_df = edges_df.sort_values(
+        ['axis', *'zyx'],
+        ascending=[False, True, True, True],
+        ignore_index=True
+    )
     return edges_df
+
 
 def select_central_edges(all_edges_df, coord_cols=['za', 'ya', 'xa']):
     """
