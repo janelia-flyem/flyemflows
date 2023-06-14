@@ -22,7 +22,6 @@ from neuclease.dvid.labelmap.labelops_pb2 import LabelIndex
 from dvidutils import LabelMapper # Fast label mapping in C++
 
 from neuclease import configure_default_logging
-from neuclease.dvid import set_default_dvid_session_timeout
 from neuclease.util import Timer, groupby_presorted, groupby_spans_presorted, tqdm_proxy
 from neuclease.logging_setup import initialize_excepthook
 from neuclease.merge_table import load_edge_csv

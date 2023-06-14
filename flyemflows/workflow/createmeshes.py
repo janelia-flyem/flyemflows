@@ -69,7 +69,7 @@ class CreateMeshes(Workflow):
             "timeout": {
                 "description": "",
                 "type": "number",
-                "default": 120.0
+                "default": 600.0
             },
             "create-if-necessary": {
                 "description": "Whether or not to create the instance if it doesn't already exist.\n"
@@ -386,7 +386,10 @@ class CreateMeshes(Workflow):
         ##
         (instance_type,) = output_cfg.keys()
 
-        set_default_dvid_session_timeout(10.0, output_cfg[instance_type]["timeout"])
+        set_default_dvid_session_timeout(
+            output_cfg[instance_type]["timeout"],
+            output_cfg[instance_type]["timeout"]
+        )
 
         server = output_cfg[instance_type]['server']
         uuid = output_cfg[instance_type]['uuid']
