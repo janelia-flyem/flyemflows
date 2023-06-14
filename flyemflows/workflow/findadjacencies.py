@@ -817,24 +817,34 @@ def compute_dense_rag_table(volume):
         label_a is on the 'left' (upper) or on the 'right' (lower) side
         of the voxel boundary.
     """
-    all_edges = []
-    for axis in (0,1,2):
-        v = np.moveaxis(volume, axis, 0)
-        order = 'zyx'[axis] + 'zyx'[:axis] + 'zyx'[axis+1:]
+    # Just for kicks, we support ND input (up to 3D).
+    assert 1 <= volume.ndim <= 3
+    axis_names = {3: 'zyx', 2: 'yx', 1: 'x'}[volume.ndim]
 
-        mask = (v[:-1] != v[1:])
-        left = v[:-1][mask]
-        right = v[1:][mask]
-        forwardness = (left < right)
-        a = np.where(forwardness, left, right)
-        b = np.where(forwardness, right, left)
+    all_edges = []
+    for axis in range(volume.ndim):
+        # Create two slicings, offset by 1 voxel along the current axis.
+        left_slicing = ((slice(None),) * axis) + (np.s_[:-1],)
+        right_slicing = ((slice(None),) * axis) + (np.s_[1:],)
+
+        # Two views, offset by 1 voxel
+        left_vol = volume[left_slicing]
+        right_vol = volume[right_slicing]
+
+        mask = (left_vol != right_vol)
+        left_labels = left_vol[mask]
+        right_labels = right_vol[mask]
+
+        forwardness = (left_labels < right_labels)
+        labels_a = np.where(forwardness, left_labels, right_labels)
+        labels_b = np.where(forwardness, right_labels, left_labels)
 
         edges = pd.DataFrame({
-            'label_a': a,
-            'label_b': b,
+            'label_a': labels_a,
+            'label_b': labels_b,
             'forwardness': forwardness,
-            **dict(zip(order, mask.nonzero())),
-            'axis': 'zyx'[axis]
+            **dict(zip(axis_names, mask.nonzero())),
+            'axis': axis_names[axis]
         })
         all_edges.append(edges)
 
@@ -846,8 +856,8 @@ def compute_dense_rag_table(volume):
     # Filter: not interested in label 0
     edges_df = edges_df.query('label_a != 0 and label_b != 0')
     edges_df = edges_df.sort_values(
-        ['axis', *'zyx'],
-        ascending=[False, True, True, True],
+        ['axis', *axis_names],
+        ascending=[False] + [True] * len(axis_names),
         ignore_index=True
     )
     return edges_df
