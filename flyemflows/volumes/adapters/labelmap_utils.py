@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from neuclease.util import Timer
-from neuclease.merge_table import load_edge_csv
+from neuclease.cleave.merge_table import load_edge_csv
 
 import logging
 logger = logging.getLogger(__name__)

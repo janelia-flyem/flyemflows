@@ -24,7 +24,7 @@ from dvidutils import LabelMapper # Fast label mapping in C++
 from neuclease import configure_default_logging
 from neuclease.util import Timer, groupby_presorted, groupby_spans_presorted, tqdm_proxy
 from neuclease.logging_setup import initialize_excepthook
-from neuclease.merge_table import load_edge_csv
+from neuclease.cleave.merge_table import load_edge_csv
 
 from flyemflows.workflow.util.config_helpers import load_body_list
 from flyemflows.util import auto_retry
