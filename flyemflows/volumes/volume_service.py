@@ -117,30 +117,32 @@ class VolumeService(metaclass=ABCMeta):
         if 'labelmap' in adapter_config:
             raise RuntimeError("Bad key for volume service: 'labelmap' -- did you mean 'apply-labelmap'?")
 
-        ## TODO: It would be nice to require the user to specify these adapters in the
-        #        exact order that they are applied here, to avoid confusion about that.
-        #        The ordering of 'transpose-axes' and `translate` changes the semantics,
-        #        so the user had better not be confused!
-
         # Ensure config entries are listed in the canonical order.
         expected_adapter_order = [*filter(lambda k: k in ADAPTER_ORDER, adapter_config.keys())]
         if [*adapter_config.keys()] != expected_adapter_order:
             msg = ("Your config lists adapters in a different order than the order in which they will be constructed.\n"
-                   "To avoid confusion, you must specify your adapters in the proper order: {ADAPTER_ORDER}")
+                   f"To avoid confusion, you must specify your adapters in the proper order: {ADAPTER_ORDER}")
             raise RuntimeError(msg)
+
+        # With some fancy assertions, we'll prove that the
+        # instantiation order is consistent with ADAPTER_ORDER.
+        adapter_index = -1
 
         # Wrap with labelmap service
         from . import LabelmappedVolumeService
+        assert ADAPTER_ORDER[(adapter_index := adapter_index + 1)] == 'apply-labelmap'
         if ("apply-labelmap" in adapter_config) and (adapter_config["apply-labelmap"]["file-type"] != "__invalid__"):
             service = LabelmappedVolumeService(service, adapter_config["apply-labelmap"])
 
         # Wrap with transpose service
         from . import TransposedVolumeService
+        assert ADAPTER_ORDER[(adapter_index := adapter_index + 1)] == 'transpose-axes'
         if ("transpose-axes" in adapter_config) and (adapter_config["transpose-axes"] != TransposedVolumeService.NO_TRANSPOSE):
             service = TransposedVolumeService(service, adapter_config["transpose-axes"])
 
         # Wrap with translate service
         from . import TranslatedVolumeService
+        assert ADAPTER_ORDER[(adapter_index := adapter_index + 1)] == 'translate'
         if "translate" in adapter_config and adapter_config["translate"] != [0,0,0]:
             service = TranslatedVolumeService(service, adapter_config["translate"])
 
@@ -148,6 +150,7 @@ class VolumeService(metaclass=ABCMeta):
         # it enables more 'available-scales'.
         # We only avoid the ScaledVolumeService adapter if rescale-level is None.
         from . import ScaledVolumeService
+        assert ADAPTER_ORDER[(adapter_index := adapter_index + 1)] == 'rescale-level'
         if "rescale-level" in adapter_config and adapter_config["rescale-level"] is not None:
             rescale_cfg = adapter_config["rescale-level"]
             if isinstance(rescale_cfg, Mapping):
