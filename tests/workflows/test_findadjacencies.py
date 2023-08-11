@@ -68,7 +68,6 @@ def setup_findadjacencies():
 
     return template_dir, config, volume
 
-@pytest.mark.xfail # For now, you must specify a subset of labels to consider.
 def test_findadjacencies(setup_findadjacencies):
     template_dir, _config, _volume = setup_findadjacencies
     
@@ -92,7 +91,7 @@ def test_findadjacencies(setup_findadjacencies):
     assert (output_df.query('label_a == 1')[['xa', 'xb']].values[0] == (2,3)).all()
 
     assert (output_df.query('label_a == 3')[['za', 'zb']].values[0] == 0).all()
-    assert (output_df.query('label_a == 3')[['ya', 'yb']].values[0] == (6,5)).all() # not 'forward'
+    assert (output_df.query('label_a == 3')[['ya', 'yb']].values[0] == (6,5)).all()  # not 'forward'
     assert (output_df.query('label_a == 3')[['xa', 'xb']].values[0] == 2).all()
 
     # Check CC groups
@@ -103,7 +102,8 @@ def test_findadjacencies(setup_findadjacencies):
     assert set(cc_sets) == { frozenset({1,2,8}), frozenset({4,3}) }
 
 
-@pytest.mark.xfail # For now, subset-labels-requirement must be 2.  (1 is not supported any more)
+# For now, subset-labels-requirement must be 2.  (1 is not supported any more)
+@pytest.mark.xfail
 def test_findadjacencies_subset_bodies(setup_findadjacencies):
     template_dir, config, _volume = setup_findadjacencies
     
@@ -200,6 +200,9 @@ def test_findadjacencies_subset_edges_and_nudge(setup_findadjacencies):
     assert (output_df.query('label_a == 3')[['xa', 'xb']].values[0] == (2,2)).all()
 
 
+# This used to be true, but at some point I removed the error.
+# I'm considering adding it back, so I'll keep this test for now.
+@pytest.mark.xfail
 def test_findadjacencies_solid_volume():
     """
     If the volume is solid or empty, an error is raised at the end of the workflow.
@@ -235,7 +238,7 @@ def test_findadjacencies_solid_volume():
     with open(f"{template_dir}/workflow.yaml", 'w') as f:
         yaml.dump(config, f)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match=r".*No edges were found.*"):
         _execution_dir, _workflow = launch_flow(template_dir, 1)
 
 

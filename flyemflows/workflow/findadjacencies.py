@@ -1,11 +1,13 @@
 import os
 import copy
+import pickle
 import logging
 from itertools import combinations
 
 import vigra
 import numpy as np
 import pandas as pd
+import pyarrow.feather as feather
 from dask.delayed import delayed
 
 from dvid_resource_manager.client import ResourceManagerClient
@@ -117,6 +119,13 @@ class FindAdjacencies(Workflow):
                 "minimum": 0,
                 "default": 0
             },
+            "sparse-block-mask": {
+                "description": "Optionally provide a mask which limits the set of bricks to be processed.\n"
+                               "If you already have a map of where the valid data is, you can provide a\n"
+                               "pickled SparseBlockMask here.\n",
+                "type": "string",
+                "default": ""
+            },
             "subset-label-groups": LabelGroupSchema,
             "subset-labels": {
                 **BodyListSchema,
@@ -125,9 +134,10 @@ class FindAdjacencies(Workflow):
             },
             "subset-labels-requirement": {
                 "description": "When using subset-labels, use this setting to specify whether\n"
-                               "each edge must include 1 or 2 of the listed labels.\n",
+                               "each edge must include 1 or 2 of the listed labels.\n"
+                               "For now, this must be 2.",
                 "type": "integer",
-                "minimum": 1,
+                "minimum": 2,
                 "maxValue": 2,
                 "default": 2
             },
@@ -166,6 +176,12 @@ class FindAdjacencies(Workflow):
                 "description": "Results file.  Must be .csv for now, and must contain at least columns x,y,z",
                 "type": "string",
                 "default": "adjacencies.csv"
+            },
+            "no-brick-aggregation": {
+                "description": "If true, compute only the brickwise direct adjacencies,\n"
+                               "export a separate table for each brick, and stop.\n",
+                "type": "boolean",
+                "default": False
             }
         }
     }
@@ -219,7 +235,7 @@ class FindAdjacencies(Workflow):
                            and volume_service.base_service.supervoxels )
         subset_labels = load_body_list(options["subset-labels"], is_supervoxels)
 
-        # (sanitize_config guarantees that only one of the subset options is selected.)        
+        # (sanitize_config guarantees that only one of the subset options is selected.)
         if len(subset_edges) > 0:
             label_pairs = np.asarray(subset_edges)
             subset_groups = pd.DataFrame({'label': label_pairs.reshape(-1)})
@@ -229,10 +245,16 @@ class FindAdjacencies(Workflow):
             subset_groups = pd.DataFrame({'label': subset_labels, 'group': np.uint32(1)})
 
         if len(subset_groups) == 0:
-            # No subset -- this is probably an error.
-            # (Currently, this workflow is intended for finding only sparse adjacencies.)
+            # No subset -- this might be an error.
+            # This workflow is not efficient for non-sparse adjacencies,
+            # since it collects all edge results onto the driver.
+            # But for small volumes or for the special 'no-brick-aggregation' mode,
+            # it can be used without specifying a subset of labels.
             msg = "Your config does not specify any subset of labels to find adjacencies for, or that subset is empty."
-            raise RuntimeError(msg)
+            logger.warning(msg)
+
+        if subset_groups.eval('label == 0').any():
+            raise RuntimeError("Your subset groups must not include label 0.")
 
         subset_requirement = options["subset-labels-requirement"]
         if len(subset_groups) == 1 and subset_requirement == 2:
@@ -251,11 +273,21 @@ class FindAdjacencies(Workflow):
 
         self.resource_mgr_client = ResourceManagerClient(resource_config["server"], resource_config["port"])
         volume_service = VolumeService.create_from_config(input_config, self.resource_mgr_client)
+        max_extents = volume_service.bounding_box_zyx
 
         subset_groups = self._load_label_groups(volume_service)
         subset_groups["group_cc"] = np.arange(len(subset_groups), dtype=np.uint32)
 
         brickwall = self.init_brickwall(volume_service, subset_groups)
+
+        if options['no-brick-aggregation']:
+            with Timer("Finding direct adjacencies", logger):
+                def find_adj(brick, sg):
+                    find_edges_in_brick(brick, None, sg, subset_requirement, nudge, True, max_extents)
+                    brick.destroy()
+                brickwall.bricks.map(find_adj, sg=delayed(subset_groups)).compute()
+                # In no-agg mode, workflow exits early.
+                return
 
         with Timer("Finding direct adjacencies", logger):
             def find_adj(brick, sg):
@@ -263,9 +295,10 @@ class FindAdjacencies(Workflow):
                 #        it might be better to distribute each brick's rows.
                 #        (But that will involve a dask join step...)
                 #        The subset_groups should generally be under 1 GB, anyway...
-                edges = find_edges_in_brick(brick, None, sg, subset_requirement, nudge)
+                edges = find_edges_in_brick(brick, None, sg, subset_requirement, nudge, export=False)
                 brick.compress()
                 return edges
+
             adjacent_edge_tables = brickwall.bricks.map(find_adj, sg=delayed(subset_groups)).compute()
 
         with Timer("Combining/filtering direct adjacencies", logger):
@@ -333,29 +366,55 @@ class FindAdjacencies(Workflow):
             npy_path = options["output-table"][:-4] + '.npy'
             np.save(npy_path, final_edges_df.to_records(index=False))
 
-
     def init_brickwall(self, volume_service, subset_groups):
-        try:
-            brick_coords_df = volume_service.sparse_brick_coords_for_label_groups(subset_groups)
-            np.save('brick-coords.npy', brick_coords_df.to_records(index=False))
+        sbm = None
+        sbm_path = self.config["findadjacencies"]["sparse-block-mask"]
+        if len(subset_groups) > 0:
+            try:
+                brick_coords_df = volume_service.sparse_brick_coords_for_label_groups(subset_groups)
+                np.save('brick-coords.npy', brick_coords_df.to_records(index=False))
 
-            brick_shape = volume_service.preferred_message_shape
-            brick_indexes = brick_coords_df[['z', 'y', 'x']].values // brick_shape
-            sbm = SparseBlockMask.create_from_lowres_coords(brick_indexes, brick_shape)
-        except NotImplementedError:
-            logger.warning("The volume service does not support sparse fetching.  All bricks will be analyzed.")
-            sbm = None
-            
+                brick_shape = volume_service.preferred_message_shape
+                brick_indexes = brick_coords_df[['z', 'y', 'x']].values // brick_shape
+                sbm = SparseBlockMask.create_from_lowres_coords(brick_indexes, brick_shape)
+            except NotImplementedError:
+                if not sbm_path:
+                    logger.warning("The input volume service does not support sparse fetching.  All bricks will be analyzed.")
+
+        if sbm_path and sbm:
+            msg = (
+                "Currently, this workflow does not support using a sparse-block-mask "
+                "in conjunction with label subsets, unless the data source doesn't "
+                "support label-based sparse fetching.\n"
+                "Remove the sparse-block-mask from your config, and the subset-groups "
+                "will be used to determine which blocks to analyze."
+            )
+            raise RuntimeError(msg)
+
+        if sbm_path:
+            with open(self.config["findadjacencies"]["sparse-block-mask"], 'rb') as f:
+                sbm = pickle.load(f)
+
         with Timer("Initializing BrickWall", logger):
             # Aim for 2 GB RDD partitions when loading segmentation
             GB = 2**30
             target_partition_size_voxels = 2 * GB // np.uint64().nbytes
-            
+
             # Apply halo WHILE downloading the data.
             # TODO: Allow the user to configure whether or not the halo should
             #       be fetched from the outset, or added after the blocks are loaded.
             halo = self.config["findadjacencies"]["halo"]
-            brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.client, target_partition_size_voxels, halo, sbm, compression='lz4_2x')
+            brickwall = BrickWall.from_volume_service(
+                volume_service,
+                0,
+                None,
+                self.client,
+                target_partition_size_voxels,
+                halo,
+                sbm,
+                lazy=True,
+                compression='lz4_2x'
+            )
 
         return brickwall
 
@@ -377,6 +436,11 @@ def append_group_col(edges_df, subset_groups):
     Note:
         There is a test for this function in test_findadjacencies.py
     """
+    # If no subset was specified, then all labels belong to one big group.
+    if len(subset_groups) == 0:
+        all_labels = np.sort(pd.unique(edges_df[['label_a', 'label_b']].values.reshape(-1)))
+        subset_groups = pd.DataFrame({'label': all_labels, 'group': 1})
+
     subset_groups = subset_groups[['label', 'group']]
 
     # Tag rows with a unique ID, which we'll use in the final inner-merge below
@@ -421,6 +485,12 @@ def append_group_ccs(edges_df, subset_groups, max_distance=None):
         For such excluded edges, group_cc == -1.
     """
     edges_df = edges_df.drop_duplicates()
+
+    # If no subset was specified, then all labels belong to one big group.
+    if len(subset_groups) == 0:
+        all_labels = np.sort(pd.unique(edges_df[['label_a', 'label_b']].values.reshape(-1)))
+        subset_groups = pd.DataFrame({'label': all_labels, 'group': 1})
+
     with Timer("Computing group_cc", logger):
         edges_df = append_group_col(edges_df, subset_groups)
 
@@ -464,20 +534,20 @@ def append_group_ccs(edges_df, subset_groups, max_distance=None):
         return edges_df, subset_groups
 
 
-def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requirement=2, nudge=False):
+def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requirement=2, nudge=False, export=False, brickwall_extents=None):
     """
     Find all pairs of adjacent labels in the given brick,
     and find the central-most point along the edge between them.
-    
+
     (Edges to/from label 0 are discarded.)
-    
+
     If closest_scale is not None, then non-adjacent pairs will be considered,
     according to a particular heuristic to decide which pairs to consider.
-    
+
     Args:
         brick:
             A Brick to analyze
-        
+
         closest_scale:
             If None, then consider direct (touching) adjacencies only.
             If not-None, then non-direct "adjacencies" (i.e. close-but-not-touching) are found.
@@ -485,68 +555,47 @@ def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requ
             the analysis will be performed.
             Higher scales are faster, but less precise.
             See ``neuclease.util.approximate_closest_approach`` for more information.
-        
+
         subset_groups:
             A DataFrame with columns [label, group].  Only the given labels will be analyzed
             for adjacencies.  Furthermore, edges (pairs) will only be returned if both labels
             in the edge are from the same group.
-            
+
         subset_requirement:
             Whether or not both labels in each edge must be in subset_groups, or only one in each edge.
             (Currently, subset_requirement must be 2.)
-        
+
     Returns:
         If the brick contains no edges at all (other than edges to label 0), return None.
-        
+
         Otherwise, returns pd.DataFrame with columns:
             [label_a, label_b, forwardness, z, y, x, axis, edge_area, distance]. # fixme
-        
+
         where label_a < label_b,
         'axis' indicates which axis the edge crosses at the chosen coordinate,
-        
+
         (z,y,x) is always given as the coordinate to the left/above/front of the edge
         (depending on the axis).
-        
+
         If 'forwardness' is True, then the given coordinate falls on label_a and
         label_b is one voxel "after" it (to the right/below/behind the coordinate).
         Otherwise, the coordinate falls on label_b, and label_a is "after".
-        
+
         And 'edge_area' is the total count of the voxels touching both labels.
     """
-    # Profiling indicates that query('... in ...') spends
-    # most of its time in np.unique, believe it or not.
-    # After looking at the implementation, I think it might help a
-    # little if we sort the array first.
-    brick_labels = np.sort(pd.unique(brick.volume.reshape(-1)))
-    if (len(brick_labels) == 1) or (len(brick_labels) == 2 and (0 in brick_labels)):
-        return None # brick is solid -- no possible edges
+    remapped_volume, reverse_mapper, remapped_subset_groups = \
+         _filter_and_remap_brick(brick, subset_groups, subset_requirement)
 
-    # Drop labels that aren't even present
-    subset_groups = subset_groups.query('label in @brick_labels').copy()
+    if export:
+        brick.destroy()
+    else:
+        brick.compress()
 
-    # Drop groups that don't have enough members (usually 2) in this brick.
-    group_counts = subset_groups['group'].value_counts()
-    _kept_groups = group_counts.loc[(group_counts >= subset_requirement)].index
-    subset_groups = subset_groups.query('group in @_kept_groups').copy()
+    if remapped_volume is None:
+        return None
 
-    if len(subset_groups) == 0:
-        return None # No possible edges to find in this brick.
-
-    # Contruct a mapper that includes only the labels we'll keep.
-    # (Other labels will be mapped to 0).
-    # Also, the mapper converts to uint32 (no longer required by _find_and_select_central_edges,
-    # but still just good for RAM reasons).
-    kept_labels = np.sort(np.unique(subset_groups['label'].values))
-    remapped_kept_labels = np.arange(1, len(kept_labels)+1, dtype=np.uint32)
-    mapper = LabelMapper(kept_labels, remapped_kept_labels)
-    reverse_mapper = LabelMapper(remapped_kept_labels, kept_labels)
-
-    # Construct RAG -- finds all edges in the volume, on a per-pixel basis.
-    remapped_volume = mapper.apply_with_default(brick.volume, 0)
-    brick.compress()
-    remapped_subset_groups = subset_groups.copy()
-    remapped_subset_groups['label'] = mapper.apply(subset_groups['label'].values)
-
+    # Construct RAG -- finds all edges in the volume, on a per-pixel basis,
+    # then selects the 'most central' edge for each distinct label pair.
     try:
         if closest_scale is None:
             best_edges_df = _find_and_select_central_edges(remapped_volume, remapped_subset_groups, subset_requirement)
@@ -555,38 +604,15 @@ def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requ
     except:
         brick_name = f"{brick.logical_box[:,::-1].tolist()}"
         np.save(f'problematic-remapped-brick-{brick_name}.npy', remapped_volume)
-        logger.error(f"Error in brick (XYZ): {brick_name}") # This will appear in the worker log.
+        # This will appear in the worker log.
+        logger.error(f"Error in brick (XYZ): {brick_name}")
         raise
 
     if best_edges_df is None:
         return None
 
     if nudge:
-        # sign of direction from a -> b
-        s = np.sign(
-              best_edges_df[['zb', 'yb', 'xb']].values.astype(np.int32)
-            - best_edges_df[['za', 'ya', 'xa']].values.astype(np.int32)
-        )
-
-        # Nudge by a single voxel away from edge.
-        nudged_a = best_edges_df[['za', 'ya', 'xa']].values.astype(np.int32) - s
-        nudged_b = best_edges_df[['zb', 'yb', 'xb']].values.astype(np.int32) + s
-
-        nudged_a = np.maximum(nudged_a, (0,0,0))
-        nudged_a = np.minimum(nudged_a, np.array(remapped_volume.shape) - 1)
-
-        nudged_b = np.maximum(nudged_b, (0,0,0))
-        nudged_b = np.minimum(nudged_b, np.array(remapped_volume.shape) - 1)
-
-        # Keep only the nudged coordinates which retain the correct label;
-        # revert the others to the original coordinate.
-        keep_a = (remapped_volume[(*nudged_a.T,)] == best_edges_df['label_a'])
-        keep_b = (remapped_volume[(*nudged_b.T,)] == best_edges_df['label_b'])
-
-        best_edges_df.loc[keep_a, ['za', 'ya', 'xa']] = nudged_a[keep_a.values]
-        best_edges_df.loc[keep_b, ['zb', 'yb', 'xb']] = nudged_b[keep_b.values]
-
-
+        _nudge_edges_inward(best_edges_df, remapped_volume)
 
     # Translate coordinates to global space
     best_edges_df.loc[:, ['za', 'ya', 'xa']] += brick.physical_box[0]
@@ -599,7 +625,121 @@ def find_edges_in_brick(brick, closest_scale=None, subset_groups=[], subset_requ
     # Normalize
     swap_df_cols(best_edges_df, None, best_edges_df.eval('label_a > label_b'), ['a', 'b'])
 
+    if export:
+        _export_brick_edges(best_edges_df, brick.logical_box, brickwall_extents)
+
     return best_edges_df
+
+
+def _export_brick_edges(best_edges_df, logical_box, brickwall_extents):
+    """
+    Export the edge results for a single brick in feather format.
+    """
+    assert brickwall_extents is not None, \
+        "You must provide the brickwall extents if you want to export brickwise results."
+
+    digits = len(str(max(brickwall_extents)))
+    z, y, x = logical_box[0]
+    names = (
+        f"z{z:0{digits}d}",
+        f"y{y:0{digits}d}",
+        f"x{x:0{digits}d}"
+    )
+    dirname = '/'.join(names)
+    filename = '-'.join(names) + '.feather'
+    os.makedirs(f'brickwise-edges/{dirname}')
+    feather.write_feather(best_edges_df, filename)
+
+
+def _filter_and_remap_brick(brick, subset_groups, subset_requirement):
+    """
+    Helper for find_edges_in_brick().
+
+    Masks out any labels that are not in subset_groups,
+    then remaps the brick volume to have consecutive labels.
+
+    Returns the remapped volume, as well as a "reverse mapper" which
+    can be used to translate labels back from the consecutive label ID
+    space into the original labels.
+    """
+    # Profiling indicates that query('... in ...') spends
+    # most of its time in np.unique, believe it or not.
+    # After looking at the implementation, I think it might help a
+    # little if we sort the array first.
+    brick_labels = np.sort(pd.unique(brick.volume.reshape(-1)))
+
+    # Label 0 is always ignored.
+    if brick_labels[0] == 0:
+        brick_labels = brick_labels[1:]
+
+    if (len(brick_labels) <= 1):
+        # brick is solid -- no possible edges
+        return None, None, None
+
+    if len(subset_groups) == 0:
+        # If no label subset was specified, then we use ALL labels.
+        subset_groups = pd.DataFrame({'label': brick_labels, 'group': 1})
+    else:
+        # Drop labels that aren't even present
+        subset_groups = subset_groups.query('label in @brick_labels').copy()
+
+        # Drop groups that don't have enough members (usually 2) in this brick.
+        group_counts = subset_groups['group'].value_counts()
+        _kept_groups = group_counts.loc[(group_counts >= subset_requirement)].index  # noqa
+        subset_groups = subset_groups.query('group in @_kept_groups').copy()
+
+        if len(subset_groups) == 0:
+            # No possible edges to find in this brick.
+            return None, None, None
+
+    # Contruct a mapper that includes only the labels we'll keep.
+    # (Other labels will be mapped to 0).
+    # Also, the mapper converts to uint32 (no longer required by _find_and_select_central_edges,
+    # but still just good for RAM reasons).
+    kept_labels = np.sort(np.unique(subset_groups['label'].values))
+    remapped_kept_labels = np.arange(1, len(kept_labels)+1, dtype=np.uint32)
+    mapper = LabelMapper(kept_labels, remapped_kept_labels)
+    reverse_mapper = LabelMapper(remapped_kept_labels, kept_labels)
+    remapped_volume = mapper.apply_with_default(brick.volume, 0)
+    remapped_subset_groups = subset_groups.copy()
+    remapped_subset_groups['label'] = mapper.apply(subset_groups['label'].values)
+    return remapped_volume, reverse_mapper, remapped_subset_groups
+
+
+def _nudge_edges_inward(edge_df, vol):
+    """
+    Move the edge endpoints inward w.r.t. their
+    respective segments (i.e., away from each other),
+    by just 1 voxel along each axis if possible.
+
+    If the new point would land outside the original segment,
+    then don't nudge it at all.
+
+    Works in-place.
+    """
+    # sign of direction from a -> b
+    s = np.sign(
+          edge_df[['zb', 'yb', 'xb']].values.astype(np.int32)
+        - edge_df[['za', 'ya', 'xa']].values.astype(np.int32)  # noqa
+    )
+
+    # Nudge by a single voxel away from edge.
+    nudged_a = edge_df[['za', 'ya', 'xa']].values.astype(np.int32) - s
+    nudged_b = edge_df[['zb', 'yb', 'xb']].values.astype(np.int32) + s
+
+    nudged_a = np.maximum(nudged_a, (0,0,0))
+    nudged_a = np.minimum(nudged_a, np.array(vol.shape) - 1)
+
+    nudged_b = np.maximum(nudged_b, (0,0,0))
+    nudged_b = np.minimum(nudged_b, np.array(vol.shape) - 1)
+
+    # Keep only the nudged coordinates which retain the correct label;
+    # revert the others to the original coordinate.
+    keep_a = (vol[(*nudged_a.T,)] == edge_df['label_a'])
+    keep_b = (vol[(*nudged_b.T,)] == edge_df['label_b'])
+
+    edge_df.loc[keep_a, ['za', 'ya', 'xa']] = nudged_a[keep_a.values]
+    edge_df.loc[keep_b, ['zb', 'yb', 'xb']] = nudged_b[keep_b.values]
 
 
 def _find_closest_approaches(volume, closest_scale, subset_groups):
@@ -667,12 +807,12 @@ def _find_closest_approaches(volume, closest_scale, subset_groups):
     # (We don't bother looking for edges within a pre-established CC)
     # Therefore, if a group contains only 1 CC, we don't deal with it.
     cc_counts = subset_groups.groupby('group')['group_cc'].agg('nunique')
-    _kept_groups = cc_counts[cc_counts >= 2].index
+    _kept_groups = cc_counts[cc_counts >= 2].index  # noqa
     subset_groups = subset_groups.query('group in @_kept_groups')
 
     if len(subset_groups) == 0:
         return None
-    
+
     def distanceTransformUint8(volume):
         # For the watershed below, the distance transform input need not be super-precise,
         # and vigra's watersheds() function operates MUCH faster on uint8 data.
@@ -682,7 +822,7 @@ def _find_closest_approaches(volume, closest_scale, subset_groups):
 
     def fill_gaps(volume):
         dt = distanceTransformUint8(volume)
-        
+
         # The watersheds function annoyingly prints a bunch of useless messages to stdout,
         # so hide that stuff using this context manager.
         with stdout_redirected():
@@ -745,8 +885,10 @@ def _find_closest_approaches(volume, closest_scale, subset_groups):
 def _find_and_select_central_edges(volume, subset_groups, subset_requirement):
     """
     Helper function.
-    Comput the RAG of direct adjacencies among bodies in the given subset_groups,
+    Compute the RAG of direct adjacencies among bodies in the given subset_groups,
     and select the most central edge location for each.
+
+    Label 0 is ignored -- no adjacencies are returned for label 0.
     
     The volume must already be of type np.uint32.
     The caller may need to apply a mapping the volume, bodies, and edges
@@ -761,6 +903,8 @@ def _find_and_select_central_edges(volume, subset_groups, subset_requirement):
     subset_groups = subset_groups[['label', 'group']]
     
     # Keep only the edges that belong in the same group(s)
+    # Note: This implicitly enforces a hard-coded subset_requirement of 2!
+    assert subset_requirement == 2
     edges_df = edges_df.merge(subset_groups, 'inner', left_on='label_a', right_on='label').drop('label', axis=1)
     edges_df = edges_df.merge(subset_groups, 'inner', left_on='label_b', right_on='label',
                                         suffixes=['_a', '_b']).drop('label', axis=1)

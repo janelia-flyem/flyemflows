@@ -54,8 +54,10 @@ def load_body_list(config_data, is_supervoxels):
             # We assume that the user supplied the correct column (sv or body)
             return a.astype(np.uint64)
         if col not in a.dtype.names:
-            msg = (f"File contains a structured array, but it does not have a '{col}' column:\n"
-                   + bodies_path)
+            msg = (
+                f"File contains a structured array, but it does "
+                f"not have a '{col}' column:\n{bodies_path}"
+            )
             raise RuntimeError(msg)
         return a[col].astype(np.uint64)
 
@@ -101,22 +103,26 @@ def load_label_groups(config_data):
     if isinstance(config_data, list):
         groups = config_data
         return _groups_to_df(groups, 'config data')
-    
+
     assert isinstance(config_data, str)
     path = config_data
     assert path.endswith(".json") or path.endswith(".csv")
-    
+
     if path.endswith('.csv'):
         df = pd.read_csv(path, dtype=np.uint64)
         if not (set(df.columns) >= set(['label', 'group'])):
             msg = f"Label group CSV file does not have the expected columns 'label' and 'group':\n{path}"
             raise RuntimeError(msg)
-        return df[['label', 'group']].drop_duplicates().reset_index(drop=True)
+        df = df[['label', 'group']].drop_duplicates().reset_index(drop=True)
+    else:
+        with open(path, 'r') as f:
+            groups = ujson.load(f)
+        df = _groups_to_df(groups, path)
 
-    with open(path, 'r') as f:
-        groups = ujson.load(f)
+    if df.max() <= np.iinfo(np.uint32).max:
+        df = df.astype(np.uint32)
 
-    return _groups_to_df(groups, path)
+    return df
 
 
 def _groups_to_df(groups, path):
@@ -124,7 +130,7 @@ def _groups_to_df(groups, path):
         f"Label group JSON does not have the correct structure in:\n {path}"
     assert all( isinstance(group, list) for group in groups ), \
         f"Label group JSON does not have the correct structure in:\n {path}"
-    
+
     labels = np.fromiter(chain(*groups), np.uint64)
     lens = list(map(len, groups))
     flag_pos = np.add.accumulate(lens[:-1])
@@ -132,7 +138,7 @@ def _groups_to_df(groups, path):
     if len(start_flags) > 0:
         start_flags[flag_pos] = 1
     group_ids = 1+np.add.accumulate(start_flags, dtype=np.uint32)
-    
+
     df = pd.DataFrame({'label': labels, 'group': group_ids})
     return df.drop_duplicates().reset_index(drop=True)
 
