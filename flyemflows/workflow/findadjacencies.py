@@ -273,7 +273,7 @@ class FindAdjacencies(Workflow):
 
         self.resource_mgr_client = ResourceManagerClient(resource_config["server"], resource_config["port"])
         volume_service = VolumeService.create_from_config(input_config, self.resource_mgr_client)
-        max_extents = volume_service.bounding_box_zyx
+        max_extents = volume_service.bounding_box_zyx[1]
 
         subset_groups = self._load_label_groups(volume_service)
         subset_groups["group_cc"] = np.arange(len(subset_groups), dtype=np.uint32)
@@ -638,6 +638,14 @@ def _export_brick_edges(best_edges_df, logical_box, brickwall_extents):
     assert brickwall_extents is not None, \
         "You must provide the brickwall extents if you want to export brickwise results."
 
+    best_edges_df = best_edges_df.astype({
+        'za': np.int32,
+        'ya': np.int32,
+        'xa': np.int32,
+        'zb': np.int32,
+        'yb': np.int32,
+        'xb': np.int32,
+    })
     digits = len(str(max(brickwall_extents)))
     z, y, x = logical_box[0]
     names = (
@@ -648,7 +656,7 @@ def _export_brick_edges(best_edges_df, logical_box, brickwall_extents):
     dirname = '/'.join(names)
     filename = '-'.join(names) + '.feather'
     os.makedirs(f'brickwise-edges/{dirname}')
-    feather.write_feather(best_edges_df, filename)
+    feather.write_feather(best_edges_df, f'brickwise-edges/{dirname}/{filename}')
 
 
 def _filter_and_remap_brick(brick, subset_groups, subset_requirement):
