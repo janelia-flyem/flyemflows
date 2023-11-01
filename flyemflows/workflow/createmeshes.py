@@ -1144,6 +1144,12 @@ class CreateMeshes(Workflow):
                     with open(path, 'wb') as f:
                         f.write(mesh_bytes)
             else:
+                # Set the timeouts here, inside the worker process.
+                # (Is this necessary? Probably doesn't hurt.)
+                set_default_dvid_session_timeout(
+                    destination[destination_type]["timeout"],
+                    destination[destination_type]["timeout"]
+                )
                 instance = [destination[destination_type][k] for k in ('server', 'uuid', 'instance')]
                 with resource_mgr.access_context(instance[0], False, 1, sum(filesizes)):
                     if destination_type == 'tarsupervoxels':
