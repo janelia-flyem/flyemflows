@@ -611,7 +611,7 @@ class CreateMeshes(Workflow):
                 sbm = None
 
         with Timer(msg, logger):
-            # By defaut, aim for 1 GB RDD partitions when loading segmentation (see default above)
+            # By default, aim for 1 GB RDD partitions when loading segmentation (see default above)
             psize = self.config["createmeshes"]["partition-volume-size"]
             target_partition_size_voxels = psize // np.uint64().nbytes
 
@@ -619,7 +619,17 @@ class CreateMeshes(Workflow):
             # TODO: Allow the user to configure whether or not the halo should
             #       be fetched from the outset, or added after the blocks are loaded.
             halo = self.config["createmeshes"]["halo"]
-            brickwall = BrickWall.from_volume_service(volume_service, 0, None, self.client, target_partition_size_voxels, halo, sbm, compression='lz4_2x')
+            brickwall = BrickWall.from_volume_service(
+                volume_service,
+                0,
+                None,
+                self.client,
+                target_partition_size_voxels,
+                halo,
+                sbm,
+                lazy=True,
+                compression='lz4_2x'
+            )
 
         # Convert to dask.DataFrame, including logical scan-order position as the DataFrame index.
         with Timer("Loading bricks into dask DataFrame", logger):
