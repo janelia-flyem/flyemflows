@@ -246,12 +246,17 @@ class TensorStoreVolumeService(VolumeServiceWriter):
             if len(parts) == 3:
                 assert parts[0] == 'precomputed'
             if len(parts) >= 2:
-                assert parts[-2] == 'gs'
+                assert parts[-2] in ('gs', 'file')
 
-            bucket, *path_parts = parts[-1].split('/')
-            cfg['tensorstore']['spec']['kvstore']['driver'] = 'gcs'
-            cfg['tensorstore']['spec']['kvstore']['bucket'] = bucket
-            cfg['tensorstore']['spec']['kvstore']['path'] = '/'.join(path_parts)
+            if parts[-2] == 'gs':
+                bucket, *path_parts = parts[-1].split('/')
+                cfg['tensorstore']['spec']['kvstore']['driver'] = 'gcs'
+                cfg['tensorstore']['spec']['kvstore']['bucket'] = bucket
+                cfg['tensorstore']['spec']['kvstore']['path'] = '/'.join(path_parts)
+            elif parts[-2] == 'file':
+                del cfg['tensorstore']['spec']['kvstore']['bucket']
+                cfg['tensorstore']['spec']['kvstore']['driver'] = 'file'
+                cfg['tensorstore']['spec']['kvstore']['path'] = parts[-1]
 
         return cfg
 
@@ -447,7 +452,7 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         if (clipped_box == box_zyx).all():
             return self._get_subvolume(box_zyx, scale)
 
-        # Note that this message shows the true zarr storage bounds,
+        # Note that this message shows the true tenstorestore storage bounds,
         # and doesn't show the logical bounds according to global_offset (if any).
         msg = (f"TensorStore Request is out-of-bounds (XYZ): {box_zyx[:, ::-1].tolist()}"
                 " relative to volume extents (XYZC): {full_shape_xyzc.tolist()}")
@@ -514,7 +519,7 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         full_shape_zyx = full_shape_xyzc[-2::-1]
         clipped_box = box_intersection(box_zyx, [(0,0,0), full_shape_zyx])
         if (clipped_box == box_zyx).all():
-            # Box is fully contained within the Zarr volume bounding box.
+            # Box is fully contained within the output volume bounding box.
             self._write_subvolume(subvolume, box_zyx[0], scale)
             return
 
