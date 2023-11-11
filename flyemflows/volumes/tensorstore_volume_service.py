@@ -532,14 +532,19 @@ class TensorStoreVolumeService(VolumeServiceWriter):
             msg += " assuming the out-of-bounds portion is completely empty."
             raise RuntimeError(msg)
 
-        # If any of the out-of-bounds portion is non-empty, that's an error.
         subvol_copy = subvolume.copy()
-        subvol_copy[box_to_slicing(*(clipped_box - box_zyx[0]))] = 0
+        if (clipped_box[0] < clipped_box[1]).all():
+            subvol_copy[box_to_slicing(*(clipped_box - box_zyx[0]))] = 0
         if self._out_of_bounds_access == 'permit-empty' and subvol_copy.any():
             msg = ("Cannot write subvolume. Box extends beyond volume storage bounds (XYZ): "
                 f"{box_zyx[:, ::-1].tolist()} exceeds [(0,0,0), {full_shape_zyx[::-1]}\n"
                 "and the out-of-bounds portion is not empty (contains non-zero values).\n")
             raise RuntimeError(msg)
+
+        if (clipped_box[0] >= clipped_box[1]).any():
+            # The box_intersection was invalid;
+            # so the subvolume is completely outside the output volume box.
+            return
 
         logger.warning(msg)
         clipped_subvolume = subvolume[box_to_slicing(*clipped_box - box_zyx[0])]
@@ -554,5 +559,6 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         # regardless of the actual memory order.  So it's best to send a Fortran array.
         vol_xyzc = subvolume[None, ...].transpose()
         box_xyzc = box_czyx[:, ::-1]
-        fut = self.store(scale)[box_to_slicing(*box_xyzc)].write(vol_xyzc)
+        store = self.store(scale)
+        fut = store[box_to_slicing(*box_xyzc)].write(vol_xyzc)
         fut.result()
