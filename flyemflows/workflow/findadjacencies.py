@@ -916,9 +916,14 @@ def _find_and_select_central_edges(volume, subset_groups, subset_requirement):
     edges_df = edges_df.merge(subset_groups, 'inner', left_on='label_a', right_on='label').drop('label', axis=1)
     edges_df = edges_df.merge(subset_groups, 'inner', left_on='label_b', right_on='label',
                                         suffixes=['_a', '_b']).drop('label', axis=1)
+
+    return select_intragroup_edges(edges_df)
+
+
+def select_intragroup_edges(edges_df):
     edges_df = edges_df.query('group_a == group_b')
     edges_df = edges_df.drop(['group_a', 'group_b'], axis=1)
-    
+
     # Some coordinates may be listed twice for a given edge pair, since the
     # same coordinate might be "above" and "to the left" of the partner
     # object if the edge boundary "jagged".
@@ -929,11 +934,11 @@ def _find_and_select_central_edges(volume, subset_groups, subset_requirement):
     edges_df.drop_duplicates(['label_a', 'label_b', 'z', 'y', 'x'], inplace=True)
 
     if len(edges_df) == 0:
-        return None # No edges left after filtering
+        return None  # No edges left after filtering
 
     edges_df['distance'] = np.float32(1.0)
 
-    # Find most-central edge in each group    
+    # Find most-central edge in each group
     best_edges_df = select_central_edges(edges_df, ['z', 'y', 'x'])
 
     # Compute the 'right-hand' coordinates
