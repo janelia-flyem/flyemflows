@@ -267,6 +267,9 @@ def wait_for_job_complete(job_id):
     return state
 
 if __name__ == "__main__":
-    import os
-    job_id = os.environ["LSB_JOBID"]
-    print(f"RTM graphs for this job ({job_id}) can be found at:\n" + construct_rtm_url(job_id))
+    import sys
+    if len(sys.argv) > 1:
+        job_id = sys.argv[1]
+    else:
+        job_id = os.environ["LSB_JOBID"]
+    print(f"RTM graphs for job {job_id} can be found at:\n" + construct_rtm_url(job_id))
