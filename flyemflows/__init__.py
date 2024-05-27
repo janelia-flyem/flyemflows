@@ -25,6 +25,5 @@ signal.signal(signal.SIGTERM, lambda signum, stack_frame: sys.exit(0))
 # (The LSF cluster scheduler uses SIGUSR2 if the job's -W time limit has been exceeded.)
 signal.signal(signal.SIGUSR2, lambda signum, stack_frame: sys.exit("Exiting due to SIGUSR2 (related: see manpage for 'bsub -W')"))
 
-from ._version import get_versions
-__version__ = get_versions()['version']
-del get_versions
+from . import _version
+__version__ = _version.get_versions()['version']
