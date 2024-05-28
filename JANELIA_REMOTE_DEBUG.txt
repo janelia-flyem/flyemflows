@@ -9,11 +9,20 @@ https://code.visualstudio.com/docs/python/debugging#_remote-debugging
 Reserve a slot and start up the remote debugger server, with the program arguments.
 (And make note of the cluster node you end up on.)
 
-    $ ssh login1
-    $ interactive-job.sh
-    $ conda install -c conda-forge debugpy
-    $ echo "Starting remote debugging server on $(uname -n)"
-    $ python3 -m debugpy --listen 0.0.0.0:3000 --wait-for-client $(which launchflow) ${TEMPLATE_DIR}
+    ssh login1
+
+    # From login1, Launch an interactive LSF job (in this example, I use 4 slots)
+    bsub -n 4 -q interactive -Is /bin/bash
+
+    # Activate your conda environment
+    conda activate my-env
+
+    # Install the Visual Studio remote debugger
+    conda install -c conda-forge debugpy
+
+    echo "Starting remote debugging server on $(uname -n)"
+    ENTRYPOINT_SCRIPT=launchflow
+    python3 -m debugpy --listen 0.0.0.0:3000 --wait-for-client $(which ${ENTRYPOINT_SCRIPT}) -c my-config.yaml
 
 
 ## VSCode debugging configuration
@@ -31,8 +40,8 @@ In VSCode, edit launch.json to add the following to the "configurations" list:
         },
         "pathMappings": [
             {
-                "localRoot": "/Users/bergs/workspace/flyem-snapshot",
-                "remoteRoot": "/groups/flyem/proj/cluster/miniforge/workspace/flyem-snapshot"
+                "localRoot": "/Users/bergs/workspace/flyemflows",
+                "remoteRoot": "/groups/flyem/proj/cluster/miniforge/workspace/flyemflows"
             }
         ]
     },
@@ -42,6 +51,9 @@ In VSCode, edit launch.json to add the following to the "configurations" list:
 and replace the values for "localRoot" and "remoteRoot" to match the path of the git repo on
 the local and remote machines.
 
+
+After the debugging server is launched, select your new configuration
+from the VSCode debugging panel and hit 'run'.
 
 ## ssh tunnel
 
