@@ -1,4 +1,5 @@
 from .base.workflow import Workflow
+from .chunkedbodymeshes import ChunkedBodyMeshes
 from .connectedcomponents import ConnectedComponents
 from .contingencytable import ContingencyTable
 from .contingentrelabel import ContingentRelabel
@@ -24,6 +25,7 @@ from .svdecimate import SVDecimate
 
 BUILTIN_WORKFLOWS = [
     Workflow,  # Base class, used for unit testing only
+    ChunkedBodyMeshes,
     ConnectedComponents,
     ContingencyTable,
     ContingentRelabel,
