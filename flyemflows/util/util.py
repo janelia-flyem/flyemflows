@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 try:
     libc = ctypes.cdll.msvcrt # Windows
-except OSError:
+except (OSError, AttributeError):
     libc = ctypes.cdll.LoadLibrary(find_library('c'))
 
 def replace_default_entries(array, default_array, marker=-1):
