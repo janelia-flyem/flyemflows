@@ -6,7 +6,6 @@ import numpy as np
 from skimage.util import view_as_blocks
 
 from confiddler import flow_style
-from dvidutils import destripe
 from dvid_resource_manager.client import ResourceManagerClient
 
 from neuclease.util import Grid, slabs_from_box, Timer, box_to_slicing, boxes_from_grid
@@ -399,6 +398,8 @@ class CopyGrayscale(Workflow):
 
 
     def _hotknife_destripe(self, bricked_slab_wall, slab_index):
+        from dvidutils import destripe
+
         options = self.config["copygrayscale"]
         assert options["slab-axis"] == 'z', \
             "To use hotknife-destripe, processing slabs must be cut across the Z axis"
