@@ -11,6 +11,8 @@ from neuclease.util import tqdm_proxy, Timer
 from neuclease.dvid import set_default_dvid_session_timeout
 from neuclease.misc.bodymesh import (
     init_mesh_instances, BodyMeshParametersSchema, MeshChunkConfigSchema, update_body_mesh)
+
+from dvid_resource_manager.client import ResourceManagerClient
 from flyemflows.workflow.util.config_helpers import BodyListSchema, load_body_list
 
 from ..util.dask_util import as_completed_synchronous
@@ -113,6 +115,9 @@ class ChunkedBodyMeshes(Workflow):
         seg_instance = cbm_cfg['dvid']['segmentation-name']
         bodies = load_body_list(cbm_cfg['bodies'], False)
 
+        resource_config = self.config["resource-manager"]
+        resource_mgr = ResourceManagerClient(resource_config["server"], resource_config["port"])
+
         def _update_body_mesh(body):
             update_body_mesh(
                 server, uuid, seg_instance,
@@ -120,7 +125,8 @@ class ChunkedBodyMeshes(Workflow):
                 cbm_cfg['body-meshes'],
                 cbm_cfg['chunk-meshes'],
                 force=cbm_cfg['force-update'],
-                processes=cbm_cfg['chunk-processes']
+                processes=cbm_cfg['chunk-processes'],
+                resource_mgr=resource_mgr
             )
             return body
 
