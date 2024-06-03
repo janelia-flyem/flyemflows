@@ -131,7 +131,8 @@ class ChunkedBodyMeshes(Workflow):
             return body
 
         with Timer(f"Processing {len(bodies)} bodies", logger):
-            futures = self.client.map(_update_body_mesh, bodies)
+            task_names = [f'_update_body_mesh-{body}' for body in bodies]
+            futures = self.client.map(_update_body_mesh, bodies, key=task_names)
             if hasattr(self.client, 'DEBUG'):
                 ac = as_completed_synchronous(futures, with_results=True)
             else:
