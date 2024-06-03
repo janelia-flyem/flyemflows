@@ -70,9 +70,12 @@ class ChunkedBodyMeshes(Workflow):
                 "default": False
             },
             "chunk-processes": {
-                "description": "How many processes to use within each worker to generate chunk meshes.\n",
+                "description":
+                    "How many processes to use within each worker to generate chunk meshes.\n"
+                    "The special value -1 means 'schedule chunks onto the general cluster.\n'",
                 "type": "integer",
-                "minimum": 0,
+                "minimum": -1,
+                # FIXME: Using a magic value (-1) like this is awkward.
                 # FIXME: It would be nice to infer the default value from the dask config.
                 "default": 0
             }
@@ -118,6 +121,10 @@ class ChunkedBodyMeshes(Workflow):
         resource_config = self.config["resource-manager"]
         resource_mgr = ResourceManagerClient(resource_config["server"], resource_config["port"])
 
+        processes = cbm_cfg['chunk-processes']
+        if processes == -1:
+            processes = 'dask-worker-client'
+
         def _update_body_mesh(body):
             update_body_mesh(
                 server, uuid, seg_instance,
@@ -125,7 +132,7 @@ class ChunkedBodyMeshes(Workflow):
                 cbm_cfg['body-meshes'],
                 cbm_cfg['chunk-meshes'],
                 force=cbm_cfg['force-update'],
-                processes=cbm_cfg['chunk-processes'],
+                processes=processes,
                 resource_mgr=resource_mgr
             )
             return body
