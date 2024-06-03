@@ -69,6 +69,13 @@ class ChunkedBodyMeshes(Workflow):
                 "type": "boolean",
                 "default": False
             },
+            "body-batch-size": {
+                "description": "Bodies are processed in batches.\n",
+                "type": "integer",
+                "minimum": 1,
+                "maximum": int(1e6),
+                "default": 100,
+            },
             "chunk-processes": {
                 "description":
                     "How many processes to use within each worker to generate chunk meshes.\n"
@@ -117,6 +124,7 @@ class ChunkedBodyMeshes(Workflow):
         uuid = cbm_cfg['dvid']['uuid']
         seg_instance = cbm_cfg['dvid']['segmentation-name']
         bodies = load_body_list(cbm_cfg['bodies'], False)
+        batch_size = cbm_cfg['body-batch-size']
 
         resource_config = self.config["resource-manager"]
         resource_mgr = ResourceManagerClient(resource_config["server"], resource_config["port"])
@@ -139,7 +147,7 @@ class ChunkedBodyMeshes(Workflow):
 
         with Timer(f"Processing {len(bodies)} bodies", logger):
             task_names = [f'_update_body_mesh-{body}' for body in bodies]
-            futures = self.client.map(_update_body_mesh, bodies, key=task_names)
+            futures = self.client.map(_update_body_mesh, bodies, key=task_names, priority=0, batch_size=batch_size)
             if hasattr(self.client, 'DEBUG'):
                 ac = as_completed_synchronous(futures, with_results=True)
             else:
