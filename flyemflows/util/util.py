@@ -24,7 +24,7 @@ from skimage.measure import block_reduce
 from skimage.transform import downscale_local_mean
 
 from dvidutils import downsample_labels
-from neuclease.util import Timer, parse_timestamp, downsample_labels_3d_suppress_zero
+from neuclease.util import Timer, parse_timestamp, downsample_labels_3d_suppress_zero, bincount_last_axis
 
 logger = logging.getLogger(__name__)
 
@@ -88,13 +88,39 @@ def downsample(volume, factor, method):
 
     if method == 'mode':
         return downsample_labels(volume, factor, False)
-    if method in ('labels', 'label'): # synonyms
+    if method in ('labels', 'label'):  # synonyms
         return downsample_labels(volume, factor, True)
     if method == 'labels-numba':
         reduced_output, _reduced_box = downsample_labels_3d_suppress_zero(volume, factor)
         return reduced_output
+    if method == 'labels-numpy-lowval':
+        return block_mode_via_bincounts(volume, factor, True)
 
     raise AssertionError("Shouldn't get here.")
+
+
+def block_mode_via_bincounts(volume, factor, suppress_zero=False):
+    """
+    Same as dvidutils.downsample_labels(), but implemented using only numpy.
+    However, this relies on bincount, and therefore cannot handle inputs with
+    arbitrarily high label values.
+
+    And it's not as fast anyway.
+    """
+    assert (np.array(volume.shape) % factor == 0).all(), \
+        "Volume dimensions must be a multiple of the downsample factor."
+
+    if not isinstance(factor, Iterable):
+        factor = (factor,)*volume.ndim
+
+    view = view_as_blocks(volume, factor)
+    view = view.reshape((*view.shape[:3], np.prod(factor)))
+    bc = bincount_last_axis(view)
+
+    if suppress_zero:
+        return np.argmax(bc[..., 1:], axis=-1) + 1
+
+    return np.argmax(bc, axis=-1)
 
 
 def block_downsample(volume, factor):
