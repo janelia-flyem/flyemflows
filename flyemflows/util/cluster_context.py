@@ -186,9 +186,9 @@ class ClusterContext:
                         and len(self.client.cluster.scheduler.workers) < self.num_workers ):
 
                     if wait_timer.seconds > (60 * self.cluster_max_wait):
-                        msg = (f"Not all cluster workers could be launched within the "
-                                "allotted time ({self.cluster_max_wait} minutes).\n"
-                                "Try again or adjust the 'cluster-max-wait' setting.\n")
+                        msg = ("Not all cluster workers could be launched within the "
+                               f"allotted time ({self.cluster_max_wait} minutes).\n"
+                               "Try again or adjust the 'cluster-max-wait' setting.\n")
                         raise RuntimeError(msg)
                     time.sleep(0.1)
 
