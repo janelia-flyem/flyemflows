@@ -270,7 +270,7 @@ class LabelmapCopy(Workflow):
         assert not (input_service.preferred_message_shape % input_service.block_width).any(), \
             "Input message-block-shape should be a multiple of the block size in all dimensions."
 
-        assert all(not isinstance( svc, ScaledVolumeService ) or svc.scale_delta == 0 for svc in input_service.service_chain), \
+        assert all(not isinstance( svc, ScaledVolumeService ) or not svc.scale_delta.any() for svc in input_service.service_chain), \
             "For now, we don't support rescaled input, though it would be possible in theory."
 
         if options["record-only"]:
@@ -307,11 +307,11 @@ class LabelmapCopy(Workflow):
 
         assert all(not isinstance( svc, TransposedVolumeService ) for svc in output_service.service_chain)
         assert all(not isinstance( svc, LabelmappedVolumeService ) for svc in output_service.service_chain)
-        assert all(not isinstance( svc, ScaledVolumeService ) or svc.scale_delta == 0 for svc in output_service.service_chain)
+        assert all(not isinstance( svc, ScaledVolumeService ) or not svc.scale_delta.any() for svc in output_service.service_chain)
 
         # Output can't be a scaled service because we copied some geometry (bounding-box)
         # directly from the input service.
-        assert not isinstance( output_service, ScaledVolumeService ) or output_service.scale_delta == 0
+        assert not isinstance( output_service, ScaledVolumeService ) or not output_service.scale_delta.any()
 
         assert output_service.base_service.disable_indexing, \
             "During ingestion, indexing should be disabled.\n" \

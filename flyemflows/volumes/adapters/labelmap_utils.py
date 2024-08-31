@@ -32,7 +32,7 @@ LabelMapSchema = \
     "properties": {
         "file": {
             "description": "Path to a file of labelmap data",
-            "type": "string" ,
+            "type": "string",
             "default": ""
         },
         "file-type": {
@@ -41,7 +41,7 @@ LabelMapSchema = \
             "enum": [
                         # CSV file containing the direct mapping.  Columns: orig,new
                         "label-to-body",
-                        
+
                         # CSV file containing a list of merged edges between adjacent
                         # supervoxels within every body (but no inter-body edges).
                         # Rows are sv1,sv2
@@ -51,8 +51,8 @@ LabelMapSchema = \
                         # Same format as a body-rag file, but with only a subset of the edges.
                         # (A label-to-body mapping is derived from this, via connected components analysis.)
                         "equivalence-edges",
-                        
-                     "__invalid__"],
+
+                        "__invalid__"],
             "default": "__invalid__"
         },
         "apply-when": {

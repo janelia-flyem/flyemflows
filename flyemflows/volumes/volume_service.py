@@ -154,15 +154,15 @@ class VolumeService(metaclass=ABCMeta):
         if "rescale-level" in adapter_config and adapter_config["rescale-level"] is not None:
             rescale_cfg = adapter_config["rescale-level"]
             if isinstance(rescale_cfg, Mapping):
-                level = rescale_cfg["level"]
+                scale_delta = rescale_cfg["level"]
                 method = rescale_cfg["method"]
                 available_scales = rescale_cfg["available-scales"]
             else:
-                level = rescale_cfg
+                scale_delta = rescale_cfg
                 method = None
                 available_scales = None
 
-            service = ScaledVolumeService(service, level, method, available_scales)
+            service = ScaledVolumeService(service, scale_delta, method, available_scales)
 
         return service
 

@@ -179,7 +179,7 @@ class ContingencyTable(Workflow):
             final_right_sizes = pd.concat(batch_right_sizes, ignore_index=True).groupby('right')['voxel_count'].sum()
 
         def dump_table(table, p):
-            with Timer(f"Writing {p}", logger), open(p, 'wb') as f:
+            with Timer(f"Writing {p}", logger):
                 feather.write_feather(table, p)
 
         # feather doesn't write the index, so be sure to reset it if needed.
@@ -219,6 +219,11 @@ class ContingencyTable(Workflow):
                 "The 'roi' option doesn't support adapters other than 'rescale-level'"
             scale = 0
             if isinstance(volume_service, ScaledVolumeService):
+                scale = volume_service.scale_delta
+                if len(set(scale)) > 1:
+                    raise NotImplementedError("FIXME: Can't use anisotropic scaled volume with an roi")
+
+                scale = scale[0]
                 scale = volume_service.scale_delta
                 assert scale <= 5, \
                     "The 'roi' option doesn't support volumes downscaled beyond level 5"

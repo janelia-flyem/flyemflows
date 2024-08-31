@@ -763,6 +763,9 @@ class ConnectedComponents(Workflow):
                 scale = roi["scale"]
             elif isinstance(volume_service, ScaledVolumeService):
                 scale = volume_service.scale_delta
+                if len(set(scale)) > 1:
+                    raise NotImplementedError("FIXME: Can't use anisotropic scaled volume with an roi")
+                scale = scale[0]
                 assert scale <= 5, \
                     "The 'roi' option doesn't support volumes downscaled beyond level 5"
             else:

@@ -352,7 +352,7 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         self._available_scales = available_scales
         self._reinitialize_via = volume_config["tensorstore"]["reinitialize-via"]
         self._out_of_bounds_access = volume_config["tensorstore"]["out-of-bounds-access"]
-        self._read_as_dtype = volume_config["tesnorstore"]["read-as-dtype"]
+        self._read_as_dtype = volume_config["tensorstore"]["read-as-dtype"]
         if self._read_as_dtype is None:
             self._dtype = spec.dtype.numpy_dtype
         else:

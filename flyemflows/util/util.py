@@ -9,7 +9,7 @@ import getpass
 import logging
 import datetime
 import traceback
-from collections.abc import Iterable
+from collections.abc import Collection
 from email.mime.text import MIMEText
 from ctypes.util import find_library
 from contextlib import contextmanager
@@ -59,18 +59,28 @@ def replace_default_entries(array, default_array, marker=-1):
 
 DOWNSAMPLE_METHODS = ['subsample', 'zoom', 'grayscale', 'block-mean', 'mode', 'labels', 'label', 'labels-numba']
 def downsample(volume, factor, method):
+    if method is None:
+        # We assume these are labels
+        if volume.dtype in (np.uint64, np.uint32):
+            method = 'subsample'
+        else:
+            method = 'block-mean'
+
     assert method in DOWNSAMPLE_METHODS
     assert (np.array(volume.shape) % factor == 0).all(), \
         "Volume dimensions must be a multiple of the downsample factor."
     
+    if not isinstance(factor, Collection):
+        factor = (factor,)*volume.ndim
+
     if method == 'subsample':
-        sl = slice(None, None, factor)
-        return volume[(sl,)*volume.ndim].copy('C')
+        strided_slicing = tuple(slice(None, None, f) for f in factor)
+        return volume[strided_slicing].copy('C')
     
     if method == 'block-mean':
         return block_downsample(volume, factor)
 
-    if method in ('zoom', 'grayscale'): # synonyms
+    if method in ('zoom', 'grayscale'):
         # vigra is 2.7x faster than scipy, but it complains for small images:
         # 
         #  Precondition violation!
@@ -87,8 +97,12 @@ def downsample(volume, factor, method):
             return scipy.ndimage.zoom(volume, 1/factor)
 
     if method == 'mode':
+        if len(set(factor)) > 1:
+            raise RuntimeError("The 'mode' downsampling implementation doesn't support anisotric downsampling.")
         return downsample_labels(volume, factor, False)
     if method in ('labels', 'label'):  # synonyms
+        if len(set(factor)) > 1:
+            raise RuntimeError("The 'labels' downsampling implementation doesn't support anisotric downsampling.")
         return downsample_labels(volume, factor, True)
     if method == 'labels-numba':
         reduced_output, _reduced_box = downsample_labels_3d_suppress_zero(volume, factor)
@@ -110,7 +124,7 @@ def block_mode_via_bincounts(volume, factor, suppress_zero=False):
     assert (np.array(volume.shape) % factor == 0).all(), \
         "Volume dimensions must be a multiple of the downsample factor."
 
-    if not isinstance(factor, Iterable):
+    if not isinstance(factor, Collection):
         factor = (factor,)*volume.ndim
 
     view = view_as_blocks(volume, factor)
@@ -131,7 +145,7 @@ def block_downsample(volume, factor):
     assert (np.array(volume.shape) % factor == 0).all(), \
         "Volume dimensions must be a multiple of the downsample factor."
 
-    if not isinstance(factor, Iterable):
+    if not isinstance(factor, Collection):
         factor = (factor,)*volume.ndim
 
     # Special case for uint8 grayscale downsampling;
@@ -165,9 +179,14 @@ def upsample(volume, factor):
     Upsample the volume into a larger volume by duplicating values.
     """
     ndim = volume.ndim
+    if isinstance(factor, Collection):
+        factor = tuple(factor)
+    else:
+        factor = (factor,) * ndim
+
     upsampled_data = np.empty( np.array(volume.shape) * factor, dtype=volume.dtype )
-    v = view_as_blocks(upsampled_data, ndim * (factor,))
-    
+    v = view_as_blocks(upsampled_data, factor)
+
     slicing = ((slice(None),) * ndim) + ((None,) * ndim)
     v[:] = volume[slicing]
     return upsampled_data
