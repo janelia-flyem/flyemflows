@@ -157,8 +157,11 @@ class ChunkedBodyMeshes(Workflow):
                 completed_bodies = []
                 for _, body in tqdm_proxy(ac, total=len(futures)):
                     completed_bodies.append(body)
+                    if len(completed_bodies) % 100 == 0:
+                        cb = pd.Series(completed_bodies, name='body', dtype=np.uint64)
+                        cb.to_csv('completed-bodies.csv', index=False, header=True)
             finally:
-                cb = pd.Series(sorted(completed_bodies), name='body', dtype=np.uint64)
+                cb = pd.Series(completed_bodies, name='body', dtype=np.uint64)
                 cb.to_csv('completed-bodies.csv', index=False, header=True)
                 if incomplete_bodies := {*bodies} - {*completed_bodies}:
                     logger.warning(f"Did not complete {len(incomplete_bodies)} body meshes (out of {len(bodies)}).")
