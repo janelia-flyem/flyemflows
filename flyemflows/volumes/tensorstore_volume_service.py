@@ -152,6 +152,23 @@ TensorStoreServiceSchema = {
             "type": "string",
             "enum": ["unpickle", "reopen"],
             "default": "reopen"  # 'unpickle' doesn't seem to work consistently, at least in write mode.
+        },
+        "read-as-dtype": {
+            "description":
+                "A flyemflows-specific setting. Not used when writing subvolumes.\n"
+                "Converts fetched subvolumes to this dtype immediately after they are fetched from the cloud,\n"
+                "regardless of the actual dtype in storage.\n",
+            "default": None,
+            "oneOf": [
+                {
+                    "type": "null"
+                },
+                {
+                    "type": "string",
+                    "enum": ['bool', 'uint8', 'uint16', 'uint32', 'uint64', 'int8', 'int16', 'int32', 'int64', 'float32', 'float64'],
+                    "default": "uint64"
+                },
+            ]
         }
     }
 }
@@ -327,7 +344,6 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         available_scales = list(volume_config["geometry"]["available-scales"])
 
         # Store members
-        self._dtype = spec.dtype.numpy_dtype
         self._block_width = block_width
         self._bounding_box_zyx = bounding_box_zyx
         self._resource_manager_client = resource_manager_client
@@ -336,6 +352,11 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         self._available_scales = available_scales
         self._reinitialize_via = volume_config["tensorstore"]["reinitialize-via"]
         self._out_of_bounds_access = volume_config["tensorstore"]["out-of-bounds-access"]
+        self._read_as_dtype = volume_config["tesnorstore"]["read-as-dtype"]
+        if self._read_as_dtype is None:
+            self._dtype = spec.dtype.numpy_dtype
+        else:
+            self._dtype = np.dtype(self._read_as_dtype)
 
         # Overwrite config entries that we might have modified
         volume_config["geometry"]["block-width"] = self._block_width
@@ -493,7 +514,7 @@ class TensorStoreVolumeService(VolumeServiceWriter):
 
             assert (vol_zyx.shape == (box_zyx[1] - box_zyx[0])).all(), \
                 f"Fetched volume_zyx shape ({vol_zyx.shape} doesn't match box_zyx {box_zyx.tolist()}"
-            return vol_zyx
+            return vol_zyx.astype(self.dtype, copy=False)
 
     def write_subvolume(self, subvolume, offset_zyx, scale=0):
         """
