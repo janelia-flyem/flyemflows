@@ -466,6 +466,7 @@ class TensorStoreVolumeService(VolumeServiceWriter):
     @auto_retry(3, pause_between_tries=30.0, logging_name=__name__,
                 predicate=lambda ex: '503' not in str(ex.args[0]) and '504' not in str(ex.args[0]))
     def get_subvolume(self, box_zyx, scale=0):
+        logger.info(f"Tensorstore: Fetching {box_zyx[:, ::-1].tolist()} (XYZ)")
         box_zyx = np.asarray(box_zyx)
         full_shape_xyzc = self.store(scale).shape
         full_shape_zyx = full_shape_xyzc[-2::-1]
