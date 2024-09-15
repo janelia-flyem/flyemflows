@@ -121,8 +121,15 @@ class CopySegmentation(Workflow):
                                f"Options: {COMPRESSION_METHODS}"
                                "Note: This affects only in-memory storage while the workflow is running.\n"
                                "      It does NOT affect the compression used in DVID.\n",
-                "type": "string",
-                "enum": COMPRESSION_METHODS,
+                "oneOf": [
+                    {
+                        "type": "string",
+                        "enum": COMPRESSION_METHODS,
+                    },
+                    {
+                        "type": "null",
+                    }
+                ],
                 "default": "lz4_2x"
             },
             "write-empty-blocks": {
