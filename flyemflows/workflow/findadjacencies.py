@@ -221,11 +221,17 @@ class FindAdjacencies(Workflow):
         options = self.config["findadjacencies"]
 
         subset_edges = np.zeros((0,2), np.uint64)
-        if options["subset-edges"]:
-            subset_edges = pd.read_csv(options["subset-edges"], dtype=np.uint64, header=0, names=['label_a', 'label_b']).values
+        if (edges_path := options["subset-edges"]):
+            if edges_path.endswith('.csv'):
+                subset_edges = pd.read_csv(edges_path, dtype=np.uint64, header=0, names=['label_a', 'label_b']).values
+            elif edges_path.endswith('.feather'):
+                subset_edges = feather.read_feather(edges_path)[['label_a', 'label_b']].values
+
+            # Always normalize
             subset_edges.sort(axis=1)
+
         subset_edges = pd.DataFrame(subset_edges, columns=['label_a', 'label_b'], dtype=np.uint64)
-        subset_edges.query('label_a != label_b', inplace=True) # drop invalid
+        subset_edges.query('label_a != label_b', inplace=True)  # drop invalid
         subset_edges.drop_duplicates(inplace=True)
 
         subset_groups = load_label_groups(options["subset-label-groups"])
