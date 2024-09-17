@@ -2,6 +2,7 @@ import os
 import copy
 import pickle
 import logging
+from pathlib import Path
 from itertools import combinations
 
 import vigra
@@ -173,9 +174,9 @@ class FindAdjacencies(Workflow):
                 "default": 1.0
             },
             "output-table": {
-                "description": "Results file.  Must be .csv for now, and must contain at least columns x,y,z",
+                "description": "Results file.  Must be .csv or .feather",
                 "type": "string",
-                "default": "adjacencies.csv"
+                "default": "adjacencies.feather"
             },
             "no-brick-aggregation": {
                 "description": "If true, compute only the brickwise direct adjacencies,\n"
@@ -209,7 +210,6 @@ class FindAdjacencies(Workflow):
         if num_subsets > 1:
             raise RuntimeError("You cannot specify more than one subset mechanism. "
                                "Provide either subset-labels, subset-edges, or subset-label-groups.")
-
 
         if find_closest_using_scale is not None and subset_requirement != 2:
             raise RuntimeError("Can't use find-closest-using-scale unless subset-requirement == 2")
@@ -366,11 +366,11 @@ class FindAdjacencies(Workflow):
         final_edges_df, subset_groups = append_group_ccs(final_edges_df, subset_groups, options["cc-distance-threshold"])
 
         with Timer("Writing edges", logger):
-            final_edges_df.to_csv(options["output-table"], header=True, index=False)
-
-            # Save in numpy format, too.
-            npy_path = options["output-table"][:-4] + '.npy'
-            np.save(npy_path, final_edges_df.to_records(index=False))
+            # Always write feather, optionally write CSV, too.
+            output_path = Path(options['output-table'])
+            feather.write_feather(final_edges_df, output_path.with_suffix('.feather'))
+            if output_path.suffix == '.csv':
+                final_edges_df.to_csv(options["output-table"], header=True, index=False)
 
     def init_brickwall(self, volume_service, subset_groups):
         sbm = None
