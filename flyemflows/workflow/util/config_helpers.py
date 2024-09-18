@@ -1,10 +1,12 @@
 import os
 import logging
+from pathlib import Path
 from itertools import chain
 
 import ujson
 import numpy as np
 import pandas as pd
+import pyarrow.feather as feather
 
 from neuclease.util import read_csv_header, read_csv_col
 
@@ -61,6 +63,9 @@ def load_body_list(config_data, is_supervoxels):
             raise RuntimeError(msg)
         return a[col].astype(np.uint64)
 
+    if bodies_path.endswith('.feather'):
+        return feather.read_feather(bodies_path)[col].astype(np.uint64)
+
     header = read_csv_header(bodies_path)
     if header and col in header:
         bodies = pd.read_csv(bodies_path)[col].drop_duplicates()
@@ -85,7 +90,7 @@ LabelGroupSchema = {
             "default": []
         },
         {
-            "description": "Either a CSV file with 'label' and 'group' columns\n"
+            "description": "Either a CSV/feather file with 'label' and 'group' columns\n"
                            "or a JSON file structured as a list-of-lists\n",
             "type": "string",
             "default": ""
@@ -105,21 +110,23 @@ def load_label_groups(config_data):
         return _groups_to_df(groups, 'config data')
 
     assert isinstance(config_data, str)
-    path = config_data
-    assert path.endswith(".json") or path.endswith(".csv")
+    path = Path(config_data)
+    assert path.suffix in ('.json', '.csv', '.feather')
 
-    if path.endswith('.csv'):
+    if path.suffix == '.csv':
         df = pd.read_csv(path, dtype=np.uint64)
         if not (set(df.columns) >= set(['label', 'group'])):
             msg = f"Label group CSV file does not have the expected columns 'label' and 'group':\n{path}"
             raise RuntimeError(msg)
         df = df[['label', 'group']].drop_duplicates().reset_index(drop=True)
-    else:
+    elif path.suffix == '.json':
         with open(path, 'r') as f:
             groups = ujson.load(f)
         df = _groups_to_df(groups, path)
+    else:
+        df = feather.read_feather(path)
 
-    if df.max() <= np.iinfo(np.uint32).max:
+    if df.max().max() <= np.iinfo(np.uint32).max:
         df = df.astype(np.uint32)
 
     return df
@@ -144,6 +151,6 @@ def _groups_to_df(groups, path):
 
 
 if __name__ == "__main__":
-    groups = [[1,2], [3,4], [4,5,6]]
-    groups_df = load_label_groups(groups)
-    print(groups_df)
+    _groups = [[1,2], [3,4], [4,5,6]]
+    _groups_df = load_label_groups(_groups)
+    print(_groups_df)
