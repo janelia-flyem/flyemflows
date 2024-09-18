@@ -129,6 +129,9 @@ def load_label_groups(config_data):
     if df.max().max() <= np.iinfo(np.uint32).max:
         df = df.astype(np.uint32)
 
+    if not (set(df.columns) & {'label', 'group'}) and (set(df.columns) >= {'body', 'sv'}):
+        df = df.rename(columns={'sv': 'label', 'body': 'group'})[['label', 'group']]
+
     return df
 
 
