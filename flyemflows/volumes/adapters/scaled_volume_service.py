@@ -325,7 +325,8 @@ class ScaledVolumeService(VolumeServiceWriter):
         scale_delta = int(self.scale_delta[0])
 
         coords_df = self.original_volume_service.sparse_brick_coords_for_labels(labels, clip)
-        coords_df[['z', 'y', 'x']] //= (2.0**scale_delta)
+        coords_df[[*'zyx']] //= (2.0**scale_delta)
+        coords_df[[*'zyx']] = coords_df[[*'zyx']].astype(np.int32)
         return coords_df
 
 
