@@ -163,6 +163,45 @@ def block_downsample(volume, factor):
     return downscale_local_mean(volume, factor).astype(dtype, copy=False)
 
 
+def _block_downsample_2(volume, factor):
+    """
+    Do not use.
+
+    Alternative to block_downsample() that attempts to save time by
+    summing bins along each axis in turn, rather than summing across
+    entire blocks right away.
+
+    It turns out this is not usually as fast, probably due to the RAM
+    allocations needed for the intermediate results.  There are some inputs
+    for which this is better (especially high-dimensional volumes),
+    but alas, not for the common 3D, 2x downsampling case.
+    """
+    assert (np.array(volume.shape) % factor == 0).all(), \
+        "Volume dimensions must be a multiple of the downsample factor."
+
+    if not isinstance(factor, Collection):
+        factor = (factor,)*volume.ndim
+
+    dtype = volume.dtype
+    if volume.dtype == np.uint8 and np.prod(factor) <= 256:
+        volume = volume.astype(np.uint16)
+    elif np.issubdtype(volume.dtype, np.integer):
+        # Avoid overflow issues at the expense of precision
+        volume = volume.astype(np.float32, order='C')
+
+    for f in reversed(factor):
+        volume = np.rollaxis(volume, -1, 0)
+        binned_shape = (volume.shape[0] // f, f, *volume.shape[1:])
+        volume = volume.reshape(binned_shape).sum(1, volume.dtype)
+
+    if np.issubdtype(volume.dtype, np.integer):
+        volume //= np.prod(factor)
+    else:
+        volume /= np.prod(factor)
+
+    return volume.astype(dtype, copy=False)
+
+
 def vigra_sampling_resize(volume, newshape):
     newshape = tuple(newshape)
     volume_f = np.asarray(volume, dtype=np.float32)
