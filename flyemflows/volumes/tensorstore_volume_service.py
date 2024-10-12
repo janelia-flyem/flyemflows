@@ -195,7 +195,15 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         Currently, this class requires you to supply most of the tensorstore dataset configuration explicitly,
         even if you've also supplied redundant config paramters in the 'geometry' section of the volume config.
 
+
+    Note:
+        To double-check the shard size for a given chunk_size, preshift bits, etc., try:
+        cloudvolume.datasource.precomputed.ShardingSpecification(...).image_shard_shape()
+
     Here's an example config:
+
+
+
         tensorstore:
             spec: {
                 "driver": "neuroglancer_precomputed",
