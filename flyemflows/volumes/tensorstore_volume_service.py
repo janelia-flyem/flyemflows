@@ -5,7 +5,7 @@ import numpy as np
 
 from confiddler import validate, emit_defaults
 from dvid_resource_manager.client import ResourceManagerClient
-from neuclease.util import box_to_slicing, box_intersection
+from neuclease.util import Timer, box_to_slicing, box_intersection
 
 from ..util import auto_retry, replace_default_entries
 from . import VolumeServiceWriter, GeometrySchema, SegmentationAdapters
@@ -591,6 +591,7 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         # regardless of the actual memory order.  So it's best to send a Fortran array.
         vol_xyzc = subvolume[None, ...].transpose()
         box_xyzc = box_czyx[:, ::-1]
-        store = self.store(scale)
-        fut = store[box_to_slicing(*box_xyzc)].write(vol_xyzc)
-        fut.result()
+        with Timer(f"Tensorstore: Writing {box_xyzc[:, :-1].tolist()} (XYZ)", logger):
+            store = self.store(scale)
+            fut = store[box_to_slicing(*box_xyzc)].write(vol_xyzc)
+            fut.result()
