@@ -291,6 +291,8 @@ class ScaledVolumeService(VolumeServiceWriter):
         scale_delta = int(self.scale_delta[0])
 
         offset_zyx = np.asarray(offset_zyx)
+        if offset_zyx.shape != (3,):
+            raise ValueError(f"offset_zyx should be a single (Z,Y,X) tuple, not {offset_zyx}")
         offset_zyx = (offset_zyx * 2.0**scale_delta).astype(int)
         
         if scale_delta >= 0:

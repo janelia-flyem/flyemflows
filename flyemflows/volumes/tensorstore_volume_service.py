@@ -543,6 +543,8 @@ class TensorStoreVolumeService(VolumeServiceWriter):
             Out[1]: (2048, 2048, 2048, 1)
         """
         offset_zyx = np.array(offset_zyx)
+        if offset_zyx.shape != (3,):
+            raise ValueError(f"offset_zyx should be a single (Z,Y,X) tuple, not {offset_zyx}")
         box_zyx = np.array([offset_zyx, offset_zyx+subvolume.shape])
 
         full_shape_xyzc = self.store(scale).shape
