@@ -54,7 +54,7 @@ class CopySegmentation(Workflow):
         "properties": {
             "block-statistics-file": {
                 "description": "Where to store block statistics for the INPUT segmentation\n"
-                               "(but translated to output coordinates).\n"
+                               "(no adapters on the output affect the block stats).\n"
                                "If the file already exists, it will be appended to (for restarting from a failed job).\n"
                                "Supported formats: .csv and .h5",
                 "type": "string",
@@ -237,9 +237,6 @@ class CopySegmentation(Workflow):
         # (See note in _init_services() regarding output bounding boxes)
         input_bb_zyx = self.input_service.bounding_box_zyx
         output_bb_zyx = self.output_service.bounding_box_zyx
-        self.translation_offset_zyx = output_bb_zyx[0] - input_bb_zyx[0]
-        if self.translation_offset_zyx.any():
-            logger.info(f"Translation offset is {self.translation_offset_zyx[:, ::-1].tolist()}")
 
         pyramid_depth = self.config["copysegmentation"]["pyramid-depth"]
         slab_shape = self.config["copysegmentation"]["slab-shape"][::-1]
@@ -356,14 +353,14 @@ class CopySegmentation(Workflow):
 
         assert not any(np.array(output_service.preferred_message_shape) % output_service.block_width), \
             "Output message-block-shape should be a multiple of the block size in all dimensions."
-        assert (input_shape == output_shape).all(), \
-            "Input bounding box and output bounding box do not have the same dimensions"
+
+        if (input_shape != output_shape).any():
+            logger.warning("Input bounding box and output bounding box do not have the same shape")
 
         if ("apply-labelmap" in output_config["adapters"]) and (output_config["adapters"]["apply-labelmap"]["file-type"] != "__invalid__"):
             assert output_config["adapters"]["apply-labelmap"]["apply-when"] == "reading-and-writing", \
                 "Labelmap will be applied to voxels during pre-write and post-read (due to block padding).\n"\
                 "You cannot use this workflow with non-idempotent labelmaps, unless your data is already perfectly block aligned."
-
 
     def _init_masks(self):
         options = self.config["copysegmentation"]
@@ -579,21 +576,19 @@ class CopySegmentation(Workflow):
         Process a large slab of voxels:
 
         1. Read a 'slab' of bricks from the input as a BrickWall
-        2. Translate it to the output coordinates.
-        3. Splice & group the bricks so that they are aligned to the optimal output grid
-        4. 'Pad' the bricks on the edges of the wall by *reading* data from the output destination,
+        2. Splice & group the bricks so that they are aligned to the optimal output grid
+        3. 'Pad' the bricks on the edges of the wall by *reading* data from the output destination,
             so that all bricks are complete (i.e. they completely fill their grid block).
-        5. Write all bricks to the output destination.
-        6. Downsample the bricks and repeat steps 3-5 for the downsampled scale.
+        4. Write all bricks to the output destination.
+        5. Downsample the bricks and repeat steps 3-5 for the downsampled scale.
         """
         options = self.config["copysegmentation"]
         output_service = self.output_service
 
-        input_slab_box = output_slab_box - self.translation_offset_zyx
         if self.sbm is None:
             slab_sbm = None
         else:
-            slab_sbm = SparseBlockMask.create_from_sbm_box(self.sbm, input_slab_box)
+            slab_sbm = SparseBlockMask.create_from_sbm_box(self.sbm, output_slab_box)
 
         need_scale_0 = (
             not options["skip-scale-0-write"] or
@@ -602,14 +597,14 @@ class CopySegmentation(Workflow):
         )
         if not need_scale_0:
             # We can just write the pyramids and skip the rest of this function
-            logger.info(f"Slab {slab_index}: Starting pyramids for box {input_slab_box[:,::-1].tolist()} (xyz)")
-            self._write_pyramids(slab_index, input_slab_box, slab_sbm, None, output_service)
+            logger.info(f"Slab {slab_index}: Starting pyramids for box {output_slab_box[:,::-1].tolist()} (xyz)")
+            self._write_pyramids(slab_index, output_slab_box, slab_sbm, None, output_service)
             return
 
         try:
             input_wall = BrickWall.from_volume_service( self.input_service,
                                                         0,
-                                                        input_slab_box,
+                                                        output_slab_box,
                                                         self.client,
                                                         self.target_partition_size_voxels,
                                                         sparse_block_mask=slab_sbm,
@@ -623,13 +618,7 @@ class CopySegmentation(Workflow):
             if "SparseBlockMask selects no blocks" in str(ex):
                 return
 
-        input_wall.persist_and_execute(f"Slab {slab_index}: Reading from box {input_slab_box[:,::-1].tolist()} (xyz)", logger)
-
-        # Translate coordinates from input to output
-        # (which will leave the bricks in a new, offset grid)
-        # This has no effect on the brick volumes themselves.
-        if any(self.translation_offset_zyx):
-            input_wall = input_wall.translate(self.translation_offset_zyx)
+        input_wall.persist_and_execute(f"Slab {slab_index}: Reading from box {output_slab_box[:,::-1].tolist()} (xyz)", logger)
 
         input_wall = self._add_label_offset_to_wall(input_wall)
 
@@ -645,7 +634,7 @@ class CopySegmentation(Workflow):
         if options["compute-block-statistics"]:
             slab_block_stats_df = self._compute_block_statistics(slab_index, padded_wall)
 
-        self._write_pyramids(slab_index, input_slab_box, slab_sbm, padded_wall, output_service)
+        self._write_pyramids(slab_index, output_slab_box, slab_sbm, padded_wall, output_service)
         del padded_wall
 
         # Now we append to the stats file, after successfully writing all scales.
@@ -705,9 +694,8 @@ class CopySegmentation(Workflow):
             # (unless skip-masking-step was given),
             # and select data from input or output according to the masks.
             output_service = self.output_service
-            translation_offset_zyx = self.translation_offset_zyx
             def combine_with_output(input_brick):
-                output_box = input_brick.physical_box + translation_offset_zyx
+                output_box = input_brick.physical_box
                 output_vol = output_service.get_subvolume(output_box, scale=0)
                 output_vol = np.asarray(output_vol, order='C')
 
@@ -876,9 +864,6 @@ class CopySegmentation(Workflow):
                         logger.info(f"Slab {slab_index}: Scale {new_scale}: SparseBlockMask selects no blocks.  Skipping.")
                         # We assume that there's no point in processing remaining scales, either.
                         return
-
-                if any(self.translation_offset_zyx):
-                    downsampled_wall = downsampled_wall.translate(self.translation_offset_zyx // 2**new_scale)
 
                 downsampled_wall = self._add_label_offset_to_wall(downsampled_wall)
                 downsampled_wall.persist_and_execute(f"Slab {slab_index}: Scale {new_scale}: Downloading pre-downsampled bricks", logger)
