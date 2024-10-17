@@ -154,7 +154,7 @@ class ClusterContext:
             cluster.scale(self.num_workers)
 
         elif self.cluster_type == "local-cluster":
-            cluster = LocalCluster(self.num_workers, threads_per_worker=1, processes=True)
+            cluster = LocalCluster(n_workers=self.num_workers, threads_per_worker=1, processes=True)
 
         elif self.cluster_type in ("synchronous", "processes"):
             cluster = None
