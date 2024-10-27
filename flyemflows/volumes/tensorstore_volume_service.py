@@ -1,6 +1,10 @@
+import os
 import copy
 import pickle
 import logging
+import threading
+import multiprocessing as mp
+
 import numpy as np
 
 from confiddler import validate, emit_defaults
@@ -72,7 +76,7 @@ TensorStoreSpecSchema = \
                 {"type": "integer"}
             ],
             "default": False
-        },
+        }
 
         # Note:
         #   scale_index is configured on the fly, below.
@@ -169,6 +173,11 @@ TensorStoreServiceSchema = {
                     "default": "uint64"
                 },
             ]
+        },
+        "subprocess-timeout": {
+            "description": "If nonzero, make requests in a subprocess and retry them if they take longer than this many seconds.",
+            "type": "number",
+            "default": 0.0
         }
     }
 }
@@ -374,6 +383,41 @@ class TensorStoreVolumeService(VolumeServiceWriter):
 
         self._ensure_scales_exist()
 
+        self._pools = {}
+        self._pools_lock = threading.Lock()
+        self._subprocess_timeout = volume_config["tensorstore"]["subprocess-timeout"]
+
+    def _pool(self):
+        """
+        We maintain a dict of multiprocessing Pools
+        (one per thread of the main process).
+
+        This function returns the Pool we created for the current thread.
+        If it doesn't exist yet (or has been discarded via _reset_pool()),
+        we create a new Pool with a single Worker.
+        """
+        pid = os.getpid()
+        thread_id = threading.current_thread().ident
+        with self._pools_lock:
+            if pool := self._pools.get((pid, thread_id)):
+                return pool
+            pool = mp.get_context('spawn').Pool(1)
+            self._pools[(pid, thread_id)] = pool
+            return pool
+
+    def _reset_pool(self):
+        """
+        Discard the pool for the current process/thread.
+        Note:
+            This will simply leak the pool without closing it, but
+            that should be rare enough in practice that we don't care.
+        """
+        pid = os.getpid()
+        thread_id = threading.current_thread().ident
+        with self._pools_lock:
+            self._pools[(pid, thread_id)] = None
+            del self._pools[(pid, thread_id)]
+
     def store(self, scale):
         try:
             return self._stores[scale]
@@ -418,6 +462,10 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         # pickle/unpickle it explicitly so we can control the process and retry if necessary.
         d['_stores'] = pickle.dumps(d['_stores'])
 
+        # Don't pickle the process pool or the associated lock
+        d['_pools'] = {}
+        d['_pools_lock'] = None
+
         return d
 
     @auto_retry(3, pause_between_tries=5.0, logging_name=__name__)
@@ -435,6 +483,9 @@ class TensorStoreVolumeService(VolumeServiceWriter):
             d['_stores'] = {}
         else:
             d['_stores'] = pickle.loads(d['_stores'])
+
+        # Initialize the pool lock.
+        d['_pools_lock'] = threading.Lock()
 
         self.__dict__ = d
 
@@ -467,20 +518,39 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         return self._resource_manager_client
 
     # Two levels of auto-retry:
-    # If a failure is not 503, restart it up to three times, with a short delay.
+    # If a failure is NOT 503 (e.g. a non-503 TimeoutError), restart it up to three times with a short delay.
     # If the request fails due to 504 or 503 (probably cloud VMs warming up), wait 5 minutes and try again.
     @auto_retry(2, pause_between_tries=5*60.0, logging_name=__name__,
-                predicate=lambda ex: '503' in str(ex.args[0]) or '504' in str(ex.args[0]))
+                predicate=lambda ex: '503' in str(ex) or '504' in str(ex))
     @auto_retry(3, pause_between_tries=30.0, logging_name=__name__,
-                predicate=lambda ex: '503' not in str(ex.args[0]) and '504' not in str(ex.args[0]))
+                predicate=lambda ex: '503' not in str(ex) and '504' not in str(ex))
     def get_subvolume(self, box_zyx, scale=0):
+        if not self._subprocess_timeout:
+            return self._get_boundschecked_subvolume(box_zyx, scale)
+
+        try:
+            return (
+                self._pool()
+                .apply_async(self._get_boundschecked_subvolume, (box_zyx, scale))
+                .get(self._subprocess_timeout)
+            )
+        except mp.TimeoutError:
+            logger.warning(
+                "TensorStoreVolumeService.get_subvolume(): TimeoutError: "
+                f"{box_zyx[:, ::-1].tolist()} (XYZ), scale={scale}"
+            )
+            # That process could be corrupt now...
+            self._reset_pool()
+            raise
+
+    def _get_boundschecked_subvolume(self, box_zyx, scale=0):
         logger.info(f"Tensorstore: Fetching {box_zyx[:, ::-1].tolist()} (XYZ)")
         box_zyx = np.asarray(box_zyx)
         full_shape_xyzc = self.store(scale).shape
         full_shape_zyx = full_shape_xyzc[-2::-1]
         clipped_box = box_intersection(box_zyx, [(0,0,0), full_shape_zyx])
         if (clipped_box == box_zyx).all():
-            return self._get_subvolume(box_zyx, scale)
+            return self._get_subvolume_nocheck(box_zyx, scale)
 
         # Note that this message shows the true tenstorestore storage bounds,
         # and doesn't show the logical bounds according to global_offset (if any).
@@ -497,13 +567,13 @@ class TensorStoreVolumeService(VolumeServiceWriter):
             return np.zeros(box_zyx[1] - box_zyx[0], self.dtype)
 
         # Request is partially out-of-bounds; read what we can, zero-fill for the rest.
-        clipped_vol = self._get_subvolume(clipped_box, scale)
+        clipped_vol = self._get_subvolume_nocheck(clipped_box, scale)
         result = np.zeros(box_zyx[1] - box_zyx[0], self.dtype)
         localbox = clipped_box - box_zyx[0]
         result[box_to_slicing(*localbox)] = clipped_vol
         return result
 
-    def _get_subvolume(self, box_zyx, scale):
+    def _get_subvolume_nocheck(self, box_zyx, scale):
         box_zyx = np.asarray(box_zyx)
         req_bytes = 8 * np.prod(box_zyx[1] - box_zyx[0])
         try:
@@ -525,6 +595,13 @@ class TensorStoreVolumeService(VolumeServiceWriter):
                 f"Fetched volume_zyx shape ({vol_zyx.shape} doesn't match box_zyx {box_zyx.tolist()}"
             return vol_zyx.astype(self.dtype, copy=False)
 
+    # Two levels of auto-retry:
+    # If a failure is NOT 503 (e.g. a non-503 TimeoutError), restart it up to three times with a short delay.
+    # If the request fails due to 504 or 503 (probably cloud VMs warming up), wait 5 minutes and try again.
+    @auto_retry(2, pause_between_tries=5*60.0, logging_name=__name__,
+                predicate=lambda ex: '503' in str(ex) or '504' in str(ex))
+    @auto_retry(3, pause_between_tries=30.0, logging_name=__name__,
+                predicate=lambda ex: '503' not in str(ex) and '504' not in str(ex))
     def write_subvolume(self, subvolume, offset_zyx, scale=0):
         """
         Note:
@@ -542,6 +619,26 @@ class TensorStoreVolumeService(VolumeServiceWriter):
                ...: dset.chunk_layout.write_chunk.shape
             Out[1]: (2048, 2048, 2048, 1)
         """
+        if not self._subprocess_timeout:
+            return self._write_boundschecked_subvolume(subvolume, offset_zyx, scale)
+
+        try:
+            return (
+                self._pool()
+                .apply_async(self._write_boundschecked_subvolume, (subvolume, offset_zyx, scale))
+                .get(self._subprocess_timeout)
+            )
+        except mp.TimeoutError:
+            box_zyx = np.array([offset_zyx, subvolume.shape])
+            logger.warning(
+                "TensorStoreVolumeService.write_subvolume(): TimeoutError: "
+                f"{box_zyx[:, ::-1].tolist()} (XYZ), scale={scale}"
+            )
+            # That process could be corrupt now...
+            self._reset_pool()
+            raise
+
+    def _write_boundschecked_subvolume(self, subvolume, offset_zyx, scale=0):
         offset_zyx = np.array(offset_zyx)
         if offset_zyx.shape != (3,):
             raise ValueError(f"offset_zyx should be a single (Z,Y,X) tuple, not {offset_zyx}")
@@ -552,7 +649,7 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         clipped_box = box_intersection(box_zyx, [(0,0,0), full_shape_zyx])
         if (clipped_box == box_zyx).all():
             # Box is fully contained within the output volume bounding box.
-            self._write_subvolume(subvolume, box_zyx[0], scale)
+            self._write_subvolume_nocheck(subvolume, box_zyx[0], scale)
             return
 
         msg = (f"Box (XYZ): {box_zyx[:, ::-1].tolist()}"
@@ -580,9 +677,9 @@ class TensorStoreVolumeService(VolumeServiceWriter):
 
         logger.warning(msg)
         clipped_subvolume = subvolume[box_to_slicing(*clipped_box - box_zyx[0])]
-        self._write_subvolume(clipped_subvolume, clipped_box[0], scale)
+        self._write_subvolume_nocheck(clipped_subvolume, clipped_box[0], scale)
 
-    def _write_subvolume(self, subvolume, offset_zyx, scale):
+    def _write_subvolume_nocheck(self, subvolume, offset_zyx, scale):
         offset_czyx = np.array((0, *offset_zyx))
         shape_czyx = np.array((1, *subvolume.shape))
         box_czyx = np.array([offset_czyx, offset_czyx + shape_czyx])
