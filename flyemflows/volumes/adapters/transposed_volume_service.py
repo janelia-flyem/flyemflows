@@ -15,7 +15,7 @@ NewAxisOrderSchema = \
     "minItems": 3,
     "maxItems": 3,
     "items": { "type": "string", "enum": ["x", "y", "z", "1-x", "1-y", "1-z"] },
-    "default": flow_style(["x", "y", "z"]) # no transpose
+    "default": flow_style(["x", "y", "z"])  # no transpose
 }
 
 
@@ -170,10 +170,10 @@ class TransposedVolumeService(VolumeServiceReader):
             if inverted_name in self.new_axis_order_zyx:
                 assert orig_bb[0, i] == 0
                 Bw = _bounding_box_width = orig_bb[1, i]
-                orig_box[:, i] = Bw - orig_box[:, i]  # Invert start/stop coordinates.
-                orig_box[:, i] = orig_box[::-1, i]    # Now swap start/stop, since otherwise start > stop,
-                                                      # and we can't call get_subvolume() with a negative step size.
-                                                      # Below, we will reverse the data order for this axis after fetching it.
+                orig_box[:, i] = Bw - orig_box[:, i]    # Invert start/stop coordinates.
+                orig_box[:, i] = orig_box[::-1, i]      # Now swap start/stop, since otherwise start > stop,
+                                                        # and we can't call get_subvolume() with a negative step size.
+                                                        # Below, we will reverse the data order for this axis after fetching it.
 
         inversion_slices = tuple( { False: slice(None), True: slice(None, None, -1) }[inv]
                                   for inv in self.axis_inversions )
@@ -181,19 +181,4 @@ class TransposedVolumeService(VolumeServiceReader):
         data = self.original_volume_service.get_subvolume(orig_box, scale)
         data = data.transpose(self.transpose_order)
         data = data[inversion_slices]
-
-        # Force contiguous so caller doesn't have to worry about it.
-        try:
-            nonempty = numba_any(data)
-        except:
-            nonempty = data.any()
-
-        if nonempty:
-            # FIXME: This is actually pretty expensive, and probably not necessary for many use-cases.
-            #        Maybe we should add a config option to skip
-            #        this step in cases where we don't really need it.
-            return np.asarray(data, order='C')
-        else:
-            # Special optimization for completely empty arrays:
-            # It's much faster to just reshape the buffer instead of incurring a copy.
-            return data.ravel('K').reshape(data.shape, order='C')
+        return data
