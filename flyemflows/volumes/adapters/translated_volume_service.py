@@ -55,6 +55,10 @@ class TranslatedVolumeService(VolumeServiceReader):
         return self.original_volume_service.preferred_grid_offset + self.translation_zyx
 
     @property
+    def uncropped_bounding_box_zyx(self):
+        return self.original_volume_service.uncropped_bounding_box_zyx + self.translation_zyx
+
+    @property
     def bounding_box_zyx(self):
         return self.original_volume_service.bounding_box_zyx + self.translation_zyx
 

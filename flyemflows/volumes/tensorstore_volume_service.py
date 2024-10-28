@@ -349,19 +349,20 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         preferred_grid_offset_zyx = np.array( volume_config["geometry"]["message-grid-offset"][::-1] )
 
         # Convert box from xyzc -> zyx
-        store_box_zyx = np.array([spec.domain.inclusive_min, spec.domain.exclusive_max])[:, :3][:, ::-1]
+        uncropped_bounding_box_zyx = np.array([spec.domain.inclusive_min, spec.domain.exclusive_max])[:, :3][:, ::-1]
         bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
-        replace_default_entries(bounding_box_zyx, store_box_zyx)
+        replace_default_entries(bounding_box_zyx, uncropped_bounding_box_zyx)
 
-        assert (bounding_box_zyx[0] >= store_box_zyx[0]).all() and (bounding_box_zyx[1] <= store_box_zyx[1]).all(), \
+        assert (bounding_box_zyx[0] >= uncropped_bounding_box_zyx[0]).all() and (bounding_box_zyx[1] <= uncropped_bounding_box_zyx[1]).all(), \
             f"Specified bounding box ({bounding_box_zyx[:, ::-1].tolist()}) extends outside the "\
-            f"TensorStore volume geometry ({store_box_zyx[:, ::-1].tolist()})"
+            f"TensorStore volume geometry ({uncropped_bounding_box_zyx[:, ::-1].tolist()})"
 
         # FIXME: Figure out how to configure this automatically.
         available_scales = list(volume_config["geometry"]["available-scales"])
 
         # Store members
         self._block_width = block_width
+        self._uncropped_bounding_box_zyx = uncropped_bounding_box_zyx
         self._bounding_box_zyx = bounding_box_zyx
         self._resource_manager_client = resource_manager_client
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
@@ -504,6 +505,10 @@ class TensorStoreVolumeService(VolumeServiceWriter):
     @property
     def block_width(self):
         return self._block_width
+
+    @property
+    def uncropped_bounding_box_zyx(self):
+        return self._uncropped_bounding_box_zyx
 
     @property
     def bounding_box_zyx(self):

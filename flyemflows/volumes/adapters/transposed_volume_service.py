@@ -18,6 +18,7 @@ NewAxisOrderSchema = \
     "default": flow_style(["x", "y", "z"]) # no transpose
 }
 
+
 @njit
 def numba_any(a):
     """
@@ -122,18 +123,6 @@ class TransposedVolumeService(VolumeServiceReader):
         self.transpose_order = tuple('zyx'.index(a) for a in self.axis_names)  # where to find the new axis in the old order
         self.rev_transpose_order = tuple(self.axis_names.index(a) for a in 'zyx')  # where to find the original axis in the new order
         self.axis_inversions = [a.startswith('1-') for a in new_axis_order_zyx]
-
-        for i, new_axis in enumerate(new_axis_order_zyx):
-            if new_axis in {'1-z', '1-y', '1-x'}:
-                # FIXME: This assertion is necessary because of how the '1-x' axes are supported.
-                #        I need to reverse the voxel order between 0 and <max>,
-                #        which could (potentially) have unintended consequences if users try to
-                #        process a subvolume of a larger volume. For that reason, the logic in get_subvolume()
-                #        doesn't even attempt to handle non-zero bounding box starts.
-                #        I ought to just permit users to provide a 'global' bounding box as a separate config setting.
-                assert self.bounding_box_zyx[0, i] == 0, \
-                    "Inverted axes are only supported if the bounding box starts at the origin for those axes. \n"
-
         logger.info(f"Initialized TransposedVolumeService with bounding box (XYZ): {self.bounding_box_zyx[:,::-1].tolist()}")
 
     @property
@@ -157,6 +146,10 @@ class TransposedVolumeService(VolumeServiceReader):
         return self.original_volume_service.preferred_grid_offset[(self.transpose_order,)]
 
     @property
+    def uncropped_bounding_box_zyx(self):
+        return self.original_volume_service.uncropped_bounding_box_zyx[:, self.transpose_order]
+
+    @property
     def bounding_box_zyx(self):
         return self.original_volume_service.bounding_box_zyx[:, self.transpose_order]
 
@@ -171,7 +164,7 @@ class TransposedVolumeService(VolumeServiceReader):
         """
         new_box_zyx = np.asarray(new_box_zyx)
         orig_box = new_box_zyx[:, self.rev_transpose_order]
-        orig_bb = self.original_volume_service.bounding_box_zyx // 2**scale
+        orig_bb = self.original_volume_service.uncropped_bounding_box_zyx // 2**scale
 
         for i, inverted_name in enumerate(['1-z', '1-y', '1-x']):
             if inverted_name in self.new_axis_order_zyx:

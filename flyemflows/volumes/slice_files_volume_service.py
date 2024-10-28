@@ -86,14 +86,15 @@ class SliceFilesVolumeService(VolumeServiceWriter):
         bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
 
         # Determine complete bounding box
-        if -1 in bounding_box_zyx.flat:
-            default_bounding_box_zyx, dtype = determine_stack_attributes(slice_fmt)
-            default_bounding_box_zyx[:,1:] += self.slice_corner_yx
-            replace_default_entries(bounding_box_zyx, default_bounding_box_zyx)
+        uncropped_bounding_box_zyx, dtype = determine_stack_attributes(slice_fmt)
+        uncropped_bounding_box_zyx[:,1:] += self.slice_corner_yx
 
-            if (bounding_box_zyx[0] < default_bounding_box_zyx[0]).any() or (bounding_box_zyx[1] > default_bounding_box_zyx[1]).any():
+        if -1 in bounding_box_zyx.flat:
+            replace_default_entries(bounding_box_zyx, uncropped_bounding_box_zyx)
+
+            if (bounding_box_zyx[0] < uncropped_bounding_box_zyx[0]).any() or (bounding_box_zyx[1] > uncropped_bounding_box_zyx[1]).any():
                 msg = (f"The given bounding-box ({bounding_box_zyx[:,::-1].tolist()}) exceeds "
-                       f"the maximum possible bounding box for this image stack ({default_bounding_box_zyx[:,::-1].tolist()}).")
+                       f"the maximum possible bounding box for this image stack ({uncropped_bounding_box_zyx[:,::-1].tolist()}).")
                 raise RuntimeError(msg)
 
         assert (bounding_box_zyx[0,1:] >= self.slice_corner_yx).all(), \
@@ -118,6 +119,7 @@ class SliceFilesVolumeService(VolumeServiceWriter):
         self._slice_fmt = slice_fmt
         self._dtype = dtype
         self._dtype_nbytes = np.dtype(dtype).type().nbytes
+        self._uncropped_bounding_box_zyx = uncropped_bounding_box_zyx
         self._bounding_box_zyx = bounding_box_zyx
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
         self._preferred_grid_offset_zyx = preferred_grid_offset_zyx
@@ -150,6 +152,10 @@ class SliceFilesVolumeService(VolumeServiceWriter):
     @property
     def block_width(self):
         return -1
+
+    @property
+    def uncropped_bounding_box_zyx(self):
+        return self._uncropped_bounding_box_zyx
 
     @property
     def bounding_box_zyx(self):

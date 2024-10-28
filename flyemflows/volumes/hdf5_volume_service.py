@@ -125,10 +125,11 @@ class Hdf5VolumeService(VolumeServiceWriter):
         ###
         ### bounding_box_zyx
         ###
-        replace_default_entries(bounding_box_zyx, [(0,0,0), self._dataset.shape])
-        assert (bounding_box_zyx[0] >= 0).all()
-        assert (bounding_box_zyx[1] <= self._dataset.shape).all(), \
-            f"bounding box ({bounding_box_zyx.tolist()}) exceeds the stored hdf5 volume shape ({self._dataset.shape})"
+        uncropped_bounding_box_zyx = np.array([(0,0,0), self._dataset.shape])
+        replace_default_entries(bounding_box_zyx, uncropped_bounding_box_zyx)
+        assert (bounding_box_zyx[0] >= uncropped_bounding_box_zyx[0]).all()
+        assert (bounding_box_zyx[1] <= uncropped_bounding_box_zyx[1]).all(), \
+            f"bounding box ({bounding_box_zyx.tolist()}) exceeds the stored hdf5 volume shape {self._dataset.shape}"
 
         ###
         ### dtype
@@ -167,6 +168,7 @@ class Hdf5VolumeService(VolumeServiceWriter):
         self._mode = mode
         self._path = path
         self._dataset_name = dataset_name
+        self._uncropped_bounding_box_zyx = uncropped_bounding_box_zyx
         self._bounding_box_zyx = bounding_box_zyx
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
         self._preferred_grid_offset_zyx = preferred_grid_offset_zyx
@@ -225,6 +227,10 @@ class Hdf5VolumeService(VolumeServiceWriter):
             ("Dataset chunks are not isotropic. block-width shouldn't be used.")
         return chunk_shape[0]
     
+    @property
+    def uncropped_bounding_box_zyx(self):
+        return self._uncropped_bounding_box_zyx
+
     @property
     def bounding_box_zyx(self):
         return self._bounding_box_zyx

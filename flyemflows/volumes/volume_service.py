@@ -202,6 +202,10 @@ class VolumeService(metaclass=ABCMeta):
 class VolumeServiceReader(VolumeService):
 
     @abstractproperty
+    def uncropped_bounding_box_zyx(self):
+        raise NotImplementedError
+
+    @abstractproperty
     def bounding_box_zyx(self):
         raise NotImplementedError
 

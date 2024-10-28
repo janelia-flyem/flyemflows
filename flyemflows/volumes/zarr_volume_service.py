@@ -224,19 +224,20 @@ class ZarrVolumeService(VolumeServiceWriter):
         block_width = min(chunk_shape)
 
         global_offset = np.array(volume_config["zarr"]["global-offset"][::-1])
-        auto_bb = np.array([(0,0,0), self.zarr_dataset(0).shape])
-        auto_bb += global_offset
+        uncropped_bounding_box_zyx = np.array([(0,0,0), self.zarr_dataset(0).shape])
+        uncropped_bounding_box_zyx += global_offset
 
         bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
-        assert (auto_bb[1] >= bounding_box_zyx[1]).all() or volume_config["zarr"]["out-of-bounds-access"] != "forbid", \
-            f"Volume config bounding box ({bounding_box_zyx}) exceeds the bounding box of the data ({auto_bb}).\n"\
+        assert (uncropped_bounding_box_zyx[1] >= bounding_box_zyx[1]).all() or volume_config["zarr"]["out-of-bounds-access"] != "forbid", \
+            f"Volume config bounding box ({bounding_box_zyx}) exceeds the bounding box of the data ({uncropped_bounding_box_zyx}).\n"\
             f"If you want to enable reading out-of-bounds regions (as empty), add out-of-bounds-access: 'permit-empty' to your config."
 
         # Replace -1 bounds with auto
         missing_bounds = (bounding_box_zyx == -1)
-        bounding_box_zyx[missing_bounds] = auto_bb[missing_bounds]
+        bounding_box_zyx[missing_bounds] = uncropped_bounding_box_zyx[missing_bounds]
 
         # Store members
+        self._uncropped_bounding_box_zyx = uncropped_bounding_box_zyx
         self._bounding_box_zyx = bounding_box_zyx
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
         self._preferred_grid_offset_zyx = preferred_grid_offset_zyx
@@ -266,6 +267,10 @@ class ZarrVolumeService(VolumeServiceWriter):
     @property
     def block_width(self):
         return self._block_width
+
+    @property
+    def uncropped_bounding_box_zyx(self):
+        return self._uncropped_bounding_box_zyx
 
     @property
     def bounding_box_zyx(self):

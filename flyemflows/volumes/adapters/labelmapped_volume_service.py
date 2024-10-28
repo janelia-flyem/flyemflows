@@ -111,6 +111,10 @@ class LabelmappedVolumeService(VolumeServiceWriter):
         return self.original_volume_service.preferred_message_shape
 
     @property
+    def uncropped_bounding_box_zyx(self):
+        return self.original_volume_service.uncropped_bounding_box_zyx
+
+    @property
     def bounding_box_zyx(self):
         return self.original_volume_service.bounding_box_zyx
 

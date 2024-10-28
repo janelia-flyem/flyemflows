@@ -373,15 +373,20 @@ class DvidVolumeService(VolumeServiceWriter):
         ## bounding-box
         ##
         bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
+
         try:
-            stored_extents = fetch_volume_box(self._server, self.uuid, self._instance_name)
+            # Note:
+            #   If the instance has been created but not yet written to,
+            #   then uncropped_bounding_box_zyx will be [[0,0,0], [0,0,0]]
+            uncropped_bounding_box_zyx = fetch_volume_box(self._server, self.uuid, self._instance_name)
         except HTTPError:
-            assert -1 not in bounding_box_zyx.flat[:], \
+            uncropped_bounding_box_zyx = bounding_box_zyx
+            assert -1 not in uncropped_bounding_box_zyx.flat[:], \
                 f"Instance '{self._instance_name}' does not yet exist on the server, "\
                 "so your volume_config must specify explicit values for bounding-box"
         else:
-            if stored_extents is not None and stored_extents.any():
-                replace_default_entries(bounding_box_zyx, stored_extents)
+            if uncropped_bounding_box_zyx.any():
+                replace_default_entries(bounding_box_zyx, uncropped_bounding_box_zyx)
 
         ##
         ## message-block-shape
@@ -420,6 +425,7 @@ class DvidVolumeService(VolumeServiceWriter):
         ##
         self._resource_manager_client = resource_manager_client
         self._block_width = block_width
+        self._uncropped_bounding_box_zyx = uncropped_bounding_box_zyx
         self._bounding_box_zyx = bounding_box_zyx
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
         self._preferred_grid_offset_zyx = preferred_grid_offset_zyx
@@ -476,6 +482,10 @@ class DvidVolumeService(VolumeServiceWriter):
     @property
     def block_width(self):
         return self._block_width
+
+    @property
+    def uncropped_bounding_box_zyx(self):
+        return self._uncropped_bounding_box_zyx
 
     @property
     def bounding_box_zyx(self):

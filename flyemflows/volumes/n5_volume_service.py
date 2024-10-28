@@ -170,17 +170,17 @@ class N5VolumeService(VolumeServiceWriter):
             # The notion of 'block-width' doesn't really make sense if the chunks aren't cubes.
             block_width = -1
         
-        auto_bb = np.array([(0,0,0), self.n5_dataset(0).shape])
-
+        uncropped_bounding_box_zyx = np.array([(0,0,0), self.n5_dataset(0).shape])
         bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
-        assert (auto_bb[1] >= bounding_box_zyx[1]).all(), \
-            f"Volume config bounding box ({bounding_box_zyx}) exceeds the bounding box of the data ({auto_bb})."
+        assert (uncropped_bounding_box_zyx[1] >= bounding_box_zyx[1]).all(), \
+            f"Volume config bounding box ({bounding_box_zyx}) exceeds the bounding box of the data ({uncropped_bounding_box_zyx})."
 
         # Replace -1 bounds with auto
         missing_bounds = (bounding_box_zyx == -1)
-        bounding_box_zyx[missing_bounds] = auto_bb[missing_bounds]
+        bounding_box_zyx[missing_bounds] = uncropped_bounding_box_zyx[missing_bounds]
 
         # Store members
+        self._uncropped_bounding_box_zyx = uncropped_bounding_box_zyx
         self._bounding_box_zyx = bounding_box_zyx
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
         self._preferred_grid_offset_zyx = preferred_grid_offset_zyx
@@ -208,6 +208,10 @@ class N5VolumeService(VolumeServiceWriter):
     @property
     def block_width(self):
         return self._block_width
+
+    @property
+    def uncropped_bounding_box_zyx(self):
+        return self._uncropped_bounding_box_zyx
 
     @property
     def bounding_box_zyx(self):

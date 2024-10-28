@@ -97,8 +97,9 @@ class BrainMapsVolumeServiceReader(VolumeServiceReader):
 
         preferred_grid_offset_zyx = np.array( volume_config["geometry"]["message-grid-offset"][::-1] )
 
+        uncropped_bounding_box_zyx = self._brainmaps_client.bounding_box
         bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
-        replace_default_entries(bounding_box_zyx, self._brainmaps_client.bounding_box)
+        replace_default_entries(bounding_box_zyx, uncropped_bounding_box_zyx)
 
         assert  (bounding_box_zyx[0] >= self._brainmaps_client.bounding_box[0]).all() \
             and (bounding_box_zyx[1] <= self._brainmaps_client.bounding_box[1]).all(), \
@@ -109,6 +110,7 @@ class BrainMapsVolumeServiceReader(VolumeServiceReader):
         fetch_blockwise = volume_config["brainmaps"]["fetch-blockwise"]
 
         # Store members
+        self._uncropped_bounding_box_zyx = uncropped_bounding_box_zyx
         self._bounding_box_zyx = bounding_box_zyx
         self._resource_manager_client = resource_manager_client
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
@@ -138,6 +140,10 @@ class BrainMapsVolumeServiceReader(VolumeServiceReader):
     @property
     def block_width(self):
         return self._block_width
+
+    @property
+    def uncropped_bounding_box_zyx(self):
+        return self._uncropped_bounding_box_zyx
 
     @property
     def bounding_box_zyx(self):

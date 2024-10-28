@@ -158,9 +158,17 @@ class ScaledVolumeService(VolumeServiceWriter):
         return offset
 
     @property
+    def uncropped_bounding_box_zyx(self):
+        bb = (self.original_volume_service.uncropped_bounding_box_zyx // 2.0**self.scale_delta).astype(np.int32)
+
+        # Avoid shrinking the bounding box to 0 pixels in any dimension.
+        bb[1] = np.maximum(bb[1], bb[0]+1)
+        return bb
+
+    @property
     def bounding_box_zyx(self):
         bb = (self.original_volume_service.bounding_box_zyx // 2.0**self.scale_delta).astype(np.int32)
-        
+
         # Avoid shrinking the bounding box to 0 pixels in any dimension.
         bb[1] = np.maximum(bb[1], bb[0]+1)
         return bb
