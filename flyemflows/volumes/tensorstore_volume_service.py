@@ -175,7 +175,10 @@ TensorStoreServiceSchema = {
             ]
         },
         "subprocess-timeout": {
-            "description": "If nonzero, make requests in a subprocess and retry them if they take longer than this many seconds.",
+            "description":
+                "If nonzero, make requests in a subprocess and retry them if they take longer than this many seconds.\n"
+                "Note: The current implementation has to reinitialize the store on every read/write (during unpickling)\n"
+                "      unless reinitialize-via is 'unpickle', which has its own problems.",
             "type": "number",
             "default": 0.0
         }
@@ -530,26 +533,33 @@ class TensorStoreVolumeService(VolumeServiceWriter):
     @auto_retry(3, pause_between_tries=30.0, logging_name=__name__,
                 predicate=lambda ex: '503' not in str(ex) and '504' not in str(ex))
     def get_subvolume(self, box_zyx, scale=0):
-        if not self._subprocess_timeout:
-            return self._get_boundschecked_subvolume(box_zyx, scale)
-
+        box_zyx = np.asarray(box_zyx)
+        req_bytes = 8 * np.prod(box_zyx[1] - box_zyx[0])
         try:
-            return (
-                self._pool()
-                .apply_async(self._get_boundschecked_subvolume, (box_zyx, scale))
-                .get(self._subprocess_timeout)
-            )
-        except mp.TimeoutError:
-            logger.warning(
-                "TensorStoreVolumeService.get_subvolume(): TimeoutError: "
-                f"{box_zyx[:, ::-1].tolist()} (XYZ), scale={scale}"
-            )
-            # That process could be corrupt now...
-            self._reset_pool()
-            raise
+            resource_name = self.volume_config['tensorstore']['spec']['kvstore']['bucket']
+        except KeyError:
+            resource_name = self.volume_config['tensorstore']['spec']['kvstore']['path']
+
+        with self._resource_manager_client.access_context(resource_name, True, 1, req_bytes):
+            if not self._subprocess_timeout:
+                return self._get_boundschecked_subvolume(box_zyx, scale)
+
+            try:
+                return (
+                    self._pool()
+                    .apply_async(self._get_boundschecked_subvolume, (box_zyx, scale))
+                    .get(self._subprocess_timeout)
+                )
+            except mp.TimeoutError:
+                logger.warning(
+                    "TensorStoreVolumeService.get_subvolume(): TimeoutError: "
+                    f"{box_zyx[:, ::-1].tolist()} (XYZ), scale={scale}"
+                )
+                # That process could be corrupt now...
+                self._reset_pool()
+                raise
 
     def _get_boundschecked_subvolume(self, box_zyx, scale=0):
-        logger.info(f"Tensorstore: Fetching {box_zyx[:, ::-1].tolist()} (XYZ)")
         box_zyx = np.asarray(box_zyx)
         full_shape_xyzc = self.store(scale).shape
         full_shape_zyx = full_shape_xyzc[-2::-1]
@@ -579,14 +589,7 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         return result
 
     def _get_subvolume_nocheck(self, box_zyx, scale):
-        box_zyx = np.asarray(box_zyx)
-        req_bytes = 8 * np.prod(box_zyx[1] - box_zyx[0])
-        try:
-            resource_name = self.volume_config['tensorstore']['spec']['kvstore']['bucket']
-        except KeyError:
-            resource_name = self.volume_config['tensorstore']['spec']['kvstore']['path']
-
-        with self._resource_manager_client.access_context(resource_name, True, 1, req_bytes):
+        with Timer(f"Tensorstore: Fetching {box_zyx[:, ::-1].tolist()} (XYZ)", logger):
             store = self.store(scale)
 
             # Tensorstore uses X,Y,Z conventions, so it's best to
@@ -624,24 +627,30 @@ class TensorStoreVolumeService(VolumeServiceWriter):
                ...: dset.chunk_layout.write_chunk.shape
             Out[1]: (2048, 2048, 2048, 1)
         """
-        if not self._subprocess_timeout:
-            return self._write_boundschecked_subvolume(subvolume, offset_zyx, scale)
-
         try:
-            return (
-                self._pool()
-                .apply_async(self._write_boundschecked_subvolume, (subvolume, offset_zyx, scale))
-                .get(self._subprocess_timeout)
-            )
-        except mp.TimeoutError:
-            box_zyx = np.array([offset_zyx, subvolume.shape])
-            logger.warning(
-                "TensorStoreVolumeService.write_subvolume(): TimeoutError: "
-                f"{box_zyx[:, ::-1].tolist()} (XYZ), scale={scale}"
-            )
-            # That process could be corrupt now...
-            self._reset_pool()
-            raise
+            resource_name = self.volume_config['tensorstore']['spec']['kvstore']['bucket']
+        except KeyError:
+            resource_name = self.volume_config['tensorstore']['spec']['kvstore']['path']
+
+        with self._resource_manager_client.access_context(resource_name, False, 1, subvolume.nbytes):
+            if not self._subprocess_timeout:
+                return self._write_boundschecked_subvolume(subvolume, offset_zyx, scale)
+
+            try:
+                return (
+                    self._pool()
+                    .apply_async(self._write_boundschecked_subvolume, (subvolume, offset_zyx, scale))
+                    .get(self._subprocess_timeout)
+                )
+            except mp.TimeoutError:
+                box_zyx = np.array([offset_zyx, subvolume.shape])
+                logger.warning(
+                    "TensorStoreVolumeService.write_subvolume(): TimeoutError: "
+                    f"{box_zyx[:, ::-1].tolist()} (XYZ), scale={scale}"
+                )
+                # That process could be corrupt now...
+                self._reset_pool()
+                raise
 
     def _write_boundschecked_subvolume(self, subvolume, offset_zyx, scale=0):
         offset_zyx = np.array(offset_zyx)
