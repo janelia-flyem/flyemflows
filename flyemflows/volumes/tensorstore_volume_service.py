@@ -589,7 +589,7 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         return result
 
     def _get_subvolume_nocheck(self, box_zyx, scale):
-        with Timer(f"Tensorstore: Fetching {box_zyx[:, ::-1].tolist()} (XYZ)", logger):
+        with Timer(f"Tensorstore: Fetching scale={scale} {box_zyx[:, ::-1].tolist()} (XYZ)", logger):
             store = self.store(scale)
 
             # Tensorstore uses X,Y,Z conventions, so it's best to
@@ -702,7 +702,7 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         # regardless of the actual memory order.  So it's best to send a Fortran array.
         vol_xyzc = subvolume[None, ...].transpose()
         box_xyzc = box_czyx[:, ::-1]
-        with Timer(f"Tensorstore: Writing {box_xyzc[:, :-1].tolist()} (XYZ)", logger):
+        with Timer(f"Tensorstore: Writing scale={scale} {box_xyzc[:, :-1].tolist()} (XYZ)", logger):
             store = self.store(scale)
             fut = store[box_to_slicing(*box_xyzc)].write(vol_xyzc)
             fut.result()
