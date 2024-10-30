@@ -210,11 +210,9 @@ class TensorStoreVolumeService(VolumeServiceWriter):
 
     Note:
         To double-check the shard size for a given chunk_size, preshift bits, etc., try:
-        cloudvolume.datasource.precomputed.ShardingSpecification(...).image_shard_shape()
+        cloudvolume.datasource.precomputed.sharding.ShardingSpecification(...).image_shard_shape()
 
     Here's an example config:
-
-
 
         tensorstore:
             spec: {
@@ -589,6 +587,8 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         return result
 
     def _get_subvolume_nocheck(self, box_zyx, scale):
+        import tensorstore as ts
+
         with Timer(f"Tensorstore: Fetching scale={scale} {box_zyx[:, ::-1].tolist()} (XYZ)", logger):
             store = self.store(scale)
 
@@ -694,6 +694,8 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         self._write_subvolume_nocheck(clipped_subvolume, clipped_box[0], scale)
 
     def _write_subvolume_nocheck(self, subvolume, offset_zyx, scale):
+        import tensorstore as ts
+
         offset_czyx = np.array((0, *offset_zyx))
         shape_czyx = np.array((1, *subvolume.shape))
         box_czyx = np.array([offset_czyx, offset_czyx + shape_czyx])
@@ -702,7 +704,20 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         # regardless of the actual memory order.  So it's best to send a Fortran array.
         vol_xyzc = subvolume[None, ...].transpose()
         box_xyzc = box_czyx[:, ::-1]
+
         with Timer(f"Tensorstore: Writing scale={scale} {box_xyzc[:, :-1].tolist()} (XYZ)", logger):
             store = self.store(scale)
-            fut = store[box_to_slicing(*box_xyzc)].write(vol_xyzc)
-            fut.result()
+
+            # I'm not sure if a transaction helps in our case, since we're just
+            # copying from a numpy array (presumably treated as just one chunk).
+            # But I don't think it can hurt.
+            # https://google.github.io/tensorstore/python/api/tensorstore.Transaction.html
+            # https://github.com/google/tensorstore/issues/202#issuecomment-2420892190
+            with ts.Transaction() as txn:
+                (
+                    store
+                    .with_transaction(txn)
+                    [box_to_slicing(*box_xyzc)]
+                    .write(vol_xyzc)
+                    .result()
+                )
