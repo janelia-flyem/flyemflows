@@ -573,7 +573,7 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         # Note that this message shows the true tenstorestore storage bounds,
         # and doesn't show the logical bounds according to global_offset (if any).
         msg = (f"TensorStore Request is out-of-bounds (XYZ): {box_zyx[:, ::-1].tolist()}"
-                " relative to volume extents (XYZC): {full_shape_xyzc.tolist()}")
+               f" relative to volume extents (XYZC): {full_shape_xyzc}")
         if self._out_of_bounds_access in ("permit", "permit-empty"):
             logger.warning(msg)
         else:
