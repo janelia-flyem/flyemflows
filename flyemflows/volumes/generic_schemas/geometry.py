@@ -28,6 +28,7 @@ GeometrySchema = \
     "default": {},
     "properties": {
         "bounding-box": BoundingBoxSchema,
+        "uncropped-bounding-box": BoundingBoxSchema,
 
         "message-block-shape": {
             "description": "The preferred access pattern block shape.\n"

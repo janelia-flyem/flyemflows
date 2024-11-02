@@ -97,7 +97,9 @@ class BrainMapsVolumeServiceReader(VolumeServiceReader):
 
         preferred_grid_offset_zyx = np.array( volume_config["geometry"]["message-grid-offset"][::-1] )
 
-        uncropped_bounding_box_zyx = self._brainmaps_client.bounding_box
+        uncropped_bounding_box_zyx = np.array(volume_config["geometry"]["uncropped-bounding-box"])[:,::-1]
+        replace_default_entries(uncropped_bounding_box_zyx, self._brainmaps_client.bounding_box)
+
         bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
         replace_default_entries(bounding_box_zyx, uncropped_bounding_box_zyx)
 
@@ -121,6 +123,7 @@ class BrainMapsVolumeServiceReader(VolumeServiceReader):
 
         # Overwrite config entries that we might have modified
         volume_config["geometry"]["block-width"] = self._block_width
+        volume_config["geometry"]["uncropped-bounding-box"] = self._uncropped_bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["bounding-box"] = self._bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["message-block-shape"] = self._preferred_message_shape_zyx[::-1].tolist()
         volume_config["geometry"]["message-grid-offset"] = self._preferred_grid_offset_zyx[::-1].tolist()

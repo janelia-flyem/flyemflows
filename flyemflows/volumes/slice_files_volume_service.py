@@ -86,8 +86,10 @@ class SliceFilesVolumeService(VolumeServiceWriter):
         bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
 
         # Determine complete bounding box
-        uncropped_bounding_box_zyx, dtype = determine_stack_attributes(slice_fmt)
-        uncropped_bounding_box_zyx[:,1:] += self.slice_corner_yx
+        stored_bounding_box_zyx, dtype = determine_stack_attributes(slice_fmt)
+        stored_bounding_box_zyx[:,1:] += self.slice_corner_yx
+        uncropped_bounding_box_zyx = np.array(volume_config["geometry"]["uncropped-bounding-box"])[:,::-1]
+        replace_default_entries(uncropped_bounding_box_zyx, stored_bounding_box_zyx)
 
         if -1 in bounding_box_zyx.flat:
             replace_default_entries(bounding_box_zyx, uncropped_bounding_box_zyx)
@@ -127,6 +129,7 @@ class SliceFilesVolumeService(VolumeServiceWriter):
 
         # Overwrite config entries that we might have modified
         volume_config["slice-files"]["slice-path-format"] = slice_fmt
+        volume_config["geometry"]["uncropped-bounding-box"] = uncropped_bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["bounding-box"] = bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["message-block-shape"] = preferred_message_shape_zyx[::-1].tolist()
         volume_config["geometry"]["message-grid-offset"] = self._preferred_grid_offset_zyx[::-1].tolist()

@@ -97,8 +97,10 @@ class BossVolumeServiceReader(VolumeServiceReader):
         # from the remote service (BOSS in this case), and allow the user to select a
         # subset of that in the bounding-box config entry.
         # But I haven't yet learned the BOSS API, so I require the user to provide the
-        # bounding-box and I assume it's the same as the uncropped-bounding box.
-        uncropped_bounding_box = bounding_box_zyx
+        # uncropped-bounding-box.
+        uncropped_bounding_box = np.array(volume_config["geometry"]["uncropped-bounding-box"])[:,::-1]
+        if not (uncropped_bounding_box[1] - uncropped_bounding_box[0]).all():
+            raise RuntimeError("Please provide the complete boss volume's uncropped-bounding-box in your config.")
 
         if -1 in bounding_box_zyx.flat:
             raise RuntimeError("For BOSS volumes, you must explicity supply the entire bounding box in your config.")
@@ -123,6 +125,7 @@ class BossVolumeServiceReader(VolumeServiceReader):
 
         # Overwrite config entries that we might have modified
         volume_config["geometry"]["block-width"] = self._block_width
+        volume_config["geometry"]["uncropped-bounding-box"] = self._uncropped_bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["bounding-box"] = self._bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["message-block-shape"] = self._preferred_message_shape_zyx[::-1].tolist()
         volume_config["geometry"]["message-grid-offset"] = self._preferred_grid_offset_zyx[::-1].tolist()

@@ -123,9 +123,15 @@ class Hdf5VolumeService(VolumeServiceWriter):
                                                           chunks=tuple(chunks) )
 
         ###
+        ### uncropped_bounding_box_zyx
+        ###
+        stored_bounding_box_zyx = np.array([(0,0,0), self._dataset.shape])
+        uncropped_bounding_box_zyx = np.array(volume_config["geometry"]["uncropped-bounding-box"])[:,::-1]
+        replace_default_entries(uncropped_bounding_box_zyx, stored_bounding_box_zyx)
+
+        ###
         ### bounding_box_zyx
         ###
-        uncropped_bounding_box_zyx = np.array([(0,0,0), self._dataset.shape])
         replace_default_entries(bounding_box_zyx, uncropped_bounding_box_zyx)
         assert (bounding_box_zyx[0] >= uncropped_bounding_box_zyx[0]).all()
         assert (bounding_box_zyx[1] <= uncropped_bounding_box_zyx[1]).all(), \
@@ -179,6 +185,7 @@ class Hdf5VolumeService(VolumeServiceWriter):
         ##
         volume_config["hdf5"]["dtype"] = self._dtype.name
         volume_config["geometry"]["block-width"] = chunk_shape[0]
+        volume_config["geometry"]["uncropped-bounding-box"] = self._uncropped_bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["bounding-box"] = self._bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["message-block-shape"] = self._preferred_message_shape_zyx[::-1].tolist()
         volume_config["geometry"]["message-grid-offset"] = self._preferred_grid_offset_zyx[::-1].tolist()

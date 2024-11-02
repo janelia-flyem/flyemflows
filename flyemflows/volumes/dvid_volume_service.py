@@ -370,23 +370,20 @@ class DvidVolumeService(VolumeServiceWriter):
             block_width = 64
 
         ##
+        ## uncropped-bounding-box
+        ##
+        # Note:
+        #   If the instance has been created but not yet written to,
+        #   then the default uncropped_bounding_box_zyx will be [[0,0,0], [0,0,0]]
+        uncropped_bounding_box_zyx = np.array(volume_config["geometry"]["uncropped-bounding-box"])[:,::-1]
+        stored_bounding_box = fetch_volume_box(self._server, self.uuid, self._instance_name)
+        replace_default_entries(uncropped_bounding_box_zyx, stored_bounding_box)
+
+        ##
         ## bounding-box
         ##
         bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
-
-        try:
-            # Note:
-            #   If the instance has been created but not yet written to,
-            #   then uncropped_bounding_box_zyx will be [[0,0,0], [0,0,0]]
-            uncropped_bounding_box_zyx = fetch_volume_box(self._server, self.uuid, self._instance_name)
-        except HTTPError:
-            uncropped_bounding_box_zyx = bounding_box_zyx
-            assert -1 not in uncropped_bounding_box_zyx.flat[:], \
-                f"Instance '{self._instance_name}' does not yet exist on the server, "\
-                "so your volume_config must specify explicit values for bounding-box"
-        else:
-            if uncropped_bounding_box_zyx.any():
-                replace_default_entries(bounding_box_zyx, uncropped_bounding_box_zyx)
+        replace_default_entries(bounding_box_zyx, uncropped_bounding_box_zyx)
 
         ##
         ## message-block-shape
@@ -437,6 +434,7 @@ class DvidVolumeService(VolumeServiceWriter):
         ## Overwrite config entries that we might have modified
         ##
         volume_config["geometry"]["block-width"] = self._block_width
+        volume_config["geometry"]["uncropped-bounding-box"] = self._uncropped_bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["bounding-box"] = self._bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["message-block-shape"] = self._preferred_message_shape_zyx[::-1].tolist()
         volume_config["geometry"]["message-grid-offset"] = self._preferred_grid_offset_zyx[::-1].tolist()

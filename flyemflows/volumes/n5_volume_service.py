@@ -170,7 +170,10 @@ class N5VolumeService(VolumeServiceWriter):
             # The notion of 'block-width' doesn't really make sense if the chunks aren't cubes.
             block_width = -1
         
-        uncropped_bounding_box_zyx = np.array([(0,0,0), self.n5_dataset(0).shape])
+        stored_bounding_box_zyx = np.array([(0,0,0), self.n5_dataset(0).shape])
+        uncropped_bounding_box_zyx = np.array(volume_config["geometry"]["uncropped-bounding-box"])[:,::-1]
+        replace_default_entries(uncropped_bounding_box_zyx, stored_bounding_box_zyx)
+
         bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
         assert (uncropped_bounding_box_zyx[1] >= bounding_box_zyx[1]).all(), \
             f"Volume config bounding box ({bounding_box_zyx}) exceeds the bounding box of the data ({uncropped_bounding_box_zyx})."
@@ -189,6 +192,7 @@ class N5VolumeService(VolumeServiceWriter):
 
         # Overwrite config entries that we might have modified
         volume_config["geometry"]["block-width"] = self._block_width
+        volume_config["geometry"]["uncropped-bounding-box"] = self._uncropped_bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["bounding-box"] = self._bounding_box_zyx[:,::-1].tolist()
         volume_config["geometry"]["message-block-shape"] = self._preferred_message_shape_zyx[::-1].tolist()
         volume_config["geometry"]["message-grid-offset"] = self._preferred_grid_offset_zyx[::-1].tolist()
