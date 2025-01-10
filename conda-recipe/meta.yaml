@@ -37,10 +37,17 @@ requirements:
     - neuprint-python
 
     - dask
+
     # With dask-jobqueue 0.8.5, we were getting stung by the following issue,
     # so I downgraded to a version that worked in our old env (flyem-310).
     # https://github.com/dask/dask-jobqueue/issues/637
-    - dask-jobqueue 0.8.1
+    #- dask-jobqueue 0.8.1
+
+    # Supposedly the above issue is fixed via this PR:
+    # https://github.com/dask/dask-jobqueue/pull/661
+# So let's try 0.9
+    - dask-jobqueue 0.9
+
     - distributed
 
     # Misc. serialization tools
