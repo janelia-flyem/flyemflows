@@ -115,7 +115,7 @@ class BossVolumeServiceReader(VolumeServiceReader):
         available_scales = list(volume_config["geometry"]["available-scales"])
 
         # Store members
-        self._uncropped_bounding_box = uncropped_bounding_box
+        self._uncropped_bounding_box_zyx = uncropped_bounding_box
         self._bounding_box_zyx = bounding_box_zyx
         self._resource_manager_client = resource_manager_client
         self._preferred_message_shape_zyx = preferred_message_shape_zyx
