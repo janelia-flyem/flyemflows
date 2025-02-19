@@ -33,6 +33,14 @@ BodyListSchema = {
 
 
 def load_body_list(config_data, is_supervoxels):
+    """
+    Load a list of body IDs (or supervoxel IDs) from the given config data.
+    The config data can be a list of body IDs (directly listed in the config),
+    or a path to a CSV/feather file with a column of body IDs.
+
+    If multiple columns are present, we select either the 'body' or 'sv' columns,
+    depending on whether ``is_supervoxels`` is True.
+    """
     if isinstance(config_data, list):
         return np.array(config_data, dtype=np.uint64)
 
