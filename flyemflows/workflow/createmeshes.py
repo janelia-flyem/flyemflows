@@ -324,7 +324,7 @@ class CreateMeshes(Workflow):
         self._init_input_service()
         prepare_mesh_output(
             self.config["output"],
-            self.config["format"],
+            self.config["createmeshes"]["format"],
             self.input_service
         )
 
