@@ -156,7 +156,10 @@ class ChunkedBodyMeshes(Workflow):
             try:
                 completed_bodies = []
                 for _, body in tqdm_proxy(ac, total=len(futures)):
-                    completed_bodies.append(body)
+                    if np.issubdtype(type(body), np.integer):
+                        completed_bodies.append(body)
+                    else:
+                        logger.warning(f"Body {body} is not an integer")
                     if len(completed_bodies) % 100 == 0:
                         cb = pd.Series(completed_bodies, name='body', dtype=np.uint64)
                         cb.to_csv('completed-bodies.csv', index=False, header=True)
