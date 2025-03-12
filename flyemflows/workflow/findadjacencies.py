@@ -661,7 +661,10 @@ def _export_brick_edges(best_edges_df, logical_box, brickwall_extents):
     )
     dirname = '/'.join(names)
     filename = '-'.join(names) + '.feather'
-    os.makedirs(f'brickwise-edges/{dirname}')
+
+    # I have to use exist_ok=True to avoid FileExistsError that
+    # occurs due to race conditions when creating the intermediate z/y directories.
+    os.makedirs(f'brickwise-edges/{dirname}', exist_ok=True)
     feather.write_feather(best_edges_df, f'brickwise-edges/{dirname}/{filename}')
 
 
