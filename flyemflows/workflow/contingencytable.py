@@ -220,12 +220,7 @@ class ContingencyTable(Workflow):
             scale = 0
             if isinstance(volume_service, ScaledVolumeService):
                 scale = volume_service.scale_delta
-                if len(set(scale)) > 1:
-                    raise NotImplementedError("FIXME: Can't use anisotropic scaled volume with an roi")
-
-                scale = scale[0]
-                scale = volume_service.scale_delta
-                assert scale <= 5, \
+                assert (scale <= 5).all(), \
                     "The 'roi' option doesn't support volumes downscaled beyond level 5"
 
             server, uuid, _seg_instance = base_service.instance_triple
