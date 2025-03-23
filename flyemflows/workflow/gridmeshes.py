@@ -355,7 +355,7 @@ class GridMeshes(Workflow):
     def _load_subset_labels(self):
         options = self.config["gridmeshes"]
         subset_supervoxels = load_body_list(options["subset-supervoxels"], True)
-        subset_bodies = load_body_list(options["subset-bodies"], True)
+        subset_bodies = load_body_list(options["subset-bodies"], False)
 
         if len(subset_supervoxels) and len(subset_bodies):
             raise RuntimeError("Can't use both subset-supervoxels and subset-bodies.  Choose one.")
