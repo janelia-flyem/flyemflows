@@ -14,6 +14,19 @@ DaskBaseSchemaProperties = \
             {"type": "null"}
         ],
         "default": None
+    },
+    "dataframe": {
+        "type": "object",
+        "default": {},
+        "properties": {
+            "convert-string": {
+                "description":
+                    "Must be False, because our code uses DataFrames whose elements are sometimes complex objects.\n"
+                    "See https://github.com/dask/dask/issues/10494#issuecomment-1729188244",
+                "type": "boolean",
+                "default": False
+            }
+        }
     }
 }
 
