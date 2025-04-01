@@ -124,7 +124,7 @@ def setup_createmeshes_config(setup_segmentation_input, disable_auto_retry):
 
         createmeshes:
           subset-supervoxels: []
-          halo: 0
+          halo: 1
 
           pre-stitch-parameters:
             smoothing: 0
