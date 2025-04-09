@@ -8,7 +8,7 @@ import dask.config
 import distributed
 
 from neuclease.util import tqdm_proxy, Timer
-from neuclease.dvid import set_default_dvid_session_timeout
+from neuclease.dvid import set_default_dvid_session_timeout, fetch_mutations, compute_affected_bodies
 from neuclease.misc.bodymesh import (
     init_mesh_instances, BodyMeshParametersSchema, MeshChunkConfigSchema, update_body_mesh)
 
@@ -63,6 +63,14 @@ class ChunkedBodyMeshes(Workflow):
             "body-meshes": BodyMeshParametersSchema,
             "chunk-meshes": MeshChunkConfigSchema,
             "bodies": BodyListSchema,
+            "bodies-from-mutations": {
+                "description":
+                    "A UUID range as accepted by neuclease.dvid.resolve_ref_range().\n"
+                    "If provided, fetch the mutations from that UUID range to determine which bodies should be processed.\n"
+                    "Cannot be used with the 'bodies' option.",
+                "type": "string",
+                "default": ""
+            },
             "force-update": {
                 "description":
                     "Ignore body meshes on the server and regenerate them from the component chunks.\n",
@@ -123,7 +131,16 @@ class ChunkedBodyMeshes(Workflow):
         server = cbm_cfg['dvid']['server']
         uuid = cbm_cfg['dvid']['uuid']
         seg_instance = cbm_cfg['dvid']['segmentation-name']
-        bodies = load_body_list(cbm_cfg['bodies'], False)
+        if cbm_cfg['bodies-from-mutations'] and cbm_cfg['bodies']:
+            raise ValueError("Cannot specify both 'bodies-from-mutations' and 'bodies' options.")
+
+        if cbm_cfg['bodies-from-mutations']:
+            muts = fetch_mutations(server, cbm_cfg['bodies-from-mutations'], seg_instance)
+            mutated_bodies = compute_affected_bodies(muts)
+            bodies = [*mutated_bodies.new_bodies, *mutated_bodies.changed_bodies, *mutated_bodies.removed_bodies]
+        else:
+            bodies = load_body_list(cbm_cfg['bodies'], False)
+
         batch_size = cbm_cfg['body-batch-size']
 
         resource_config = self.config["resource-manager"]
