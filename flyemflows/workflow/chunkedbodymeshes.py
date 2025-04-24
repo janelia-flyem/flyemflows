@@ -8,9 +8,10 @@ import dask.config
 import distributed
 
 from neuclease.util import tqdm_proxy, Timer
-from neuclease.dvid import set_default_dvid_session_timeout, fetch_mutations, compute_affected_bodies
+from neuclease.dvid import set_default_dvid_session_timeout, resolve_ref, fetch_mutations, compute_affected_bodies
 from neuclease.misc.bodymesh import (
     init_mesh_instances, BodyMeshParametersSchema, MeshChunkConfigSchema, update_body_mesh)
+from neuclease.misc.derived_updates import mutated_bodies_since_previous_update
 
 from dvid_resource_manager.client import ResourceManagerClient
 from flyemflows.workflow.util.config_helpers import BodyListSchema, load_body_list
@@ -71,6 +72,14 @@ class ChunkedBodyMeshes(Workflow):
                 "type": "string",
                 "default": ""
             },
+            "select-bodies-after-derived-update": {
+                "description":
+                    "If true, select bodies automatically according to the ones which have been mutated since the last derived-data update.\n"
+                    "Cannot be used with the 'bodies' or 'bodies-from-mutations' options.\n"
+                    "Note: This workflow will not actually store any update receipt for the completed meshes, it will just update the meshes.\n",
+                "type": "boolean",
+                "default": False
+            },
             "force-update": {
                 "description":
                     "Ignore body meshes on the server and regenerate them from the component chunks.\n",
@@ -129,12 +138,23 @@ class ChunkedBodyMeshes(Workflow):
 
         cbm_cfg = self.config['chunkedbodymeshes']
         server = cbm_cfg['dvid']['server']
-        uuid = cbm_cfg['dvid']['uuid']
+        uuid = resolve_ref(server, cbm_cfg['dvid']['uuid'], expand=True)
         seg_instance = cbm_cfg['dvid']['segmentation-name']
-        if cbm_cfg['bodies-from-mutations'] and cbm_cfg['bodies']:
-            raise ValueError("Cannot specify both 'bodies-from-mutations' and 'bodies' options.")
+        if sum([bool(cbm_cfg['bodies-from-mutations']), bool(cbm_cfg['bodies']), bool(cbm_cfg['select-bodies-after-derived-update'])]) > 1:
+            raise ValueError("Must specify only one body selection method: 'bodies-from-mutations', 'bodies', or 'select-bodies-after-derived-update'.")
 
-        if cbm_cfg['bodies-from-mutations']:
+        if cbm_cfg['select-bodies-after-derived-update']:
+            prev_update, affected, last_mutid = mutated_bodies_since_previous_update(server, uuid, seg_instance, "meshes")
+            prev_uuid = prev_update['uuid']
+            prev_mutid = prev_update['mutid']
+            prev_timestamp = prev_update.get('timestamp', '<unknown time>')
+            bodies = [*affected.changed_bodies, *affected.removed_bodies, *affected.new_bodies]
+            logger.info(
+                f"Detected {len(bodies)} mutated bodies since the previous mesh update "
+                f"in uuid {prev_uuid} (mutid: {prev_mutid}) at {prev_timestamp}"
+            )
+            logger.info(f"changed: {len(affected.changed_bodies)}, removed: {len(affected.removed_bodies)}, new: {len(affected.new_bodies)}")
+        elif cbm_cfg['bodies-from-mutations']:
             muts = fetch_mutations(server, cbm_cfg['bodies-from-mutations'], seg_instance)
             mutated_bodies = compute_affected_bodies(muts)
             bodies = [*mutated_bodies.new_bodies, *mutated_bodies.changed_bodies, *mutated_bodies.removed_bodies]
