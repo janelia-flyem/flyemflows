@@ -149,6 +149,12 @@ def load_and_overwrite_dask_config(cluster_type, dask_config_path=None, overwrit
         dask_config = {}
         validate(dask_config, DaskConfigSchema, inject_defaults=True)
 
+    if dask.config.get("dataframe.convert-string"):
+        # See https://github.com/dask/dask/issues/10494#issuecomment-1729188244
+        raise RuntimeError("Bad dask config: dataframe.convert-string must be False because we use DataFrames with complex elements.")
+
+    dask.config.set({"dataframe.convert-string": False})
+
     # Don't pollute the config file with extra jobqueue parameters we aren't using
     if "jobqueue" in dask_config:
         for key in list(dask_config["jobqueue"].keys()):

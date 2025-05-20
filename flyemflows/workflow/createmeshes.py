@@ -1053,6 +1053,11 @@ def compute_brick_labelcounts(brick_df, subset_labels, export_labelcounts):
         inner_vol = extract_subvol(brick.volume, inner_box)
         brick.compress()  # Discard uncompressed
 
+        if not isinstance(subset_labels, np.ndarray):
+            # For some reason this case is now necessary in tests,
+            # even though it wasn't needed in the past.
+            subset_labels = subset_labels.compute()
+
         if len(subset_labels) > 0:
             # Relabel everything to 0 except for our subset of interest,
             # to reduce the size of the dataframe that we send back to the driver.
