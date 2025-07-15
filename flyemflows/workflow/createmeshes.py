@@ -796,7 +796,8 @@ class CreateMeshes(Workflow):
                             .drop(columns=['brick_index'])
                             .merge(brick_counts_grouped_ddf, 'inner', left_index=True, right_on='brick_index'))
 
-            bricks_ddf = drop_empty_partitions(bricks_ddf).reset_index(drop=True)
+            # This doesn't work any more?
+            # bricks_ddf = drop_empty_partitions(bricks_ddf).reset_index(drop=True)
 
             if len(too_many_df):
                 n = len(brick_counts_grouped_df)
@@ -814,7 +815,10 @@ class CreateMeshes(Workflow):
         options = self.config["createmeshes"]
 
         def compute_meshes_for_bricks(bricks_partition_df):
-            assert len(bricks_partition_df) > 0, "partition is empty"  # drop_empty_partitions() should have eliminated these.
+            # We don't use drop_empty_partitions() any more,
+            # so we can't assert that the partition is non-empty.
+            # assert len(bricks_partition_df) > 0, "partition is empty"  # drop_empty_partitions() should have eliminated these.
+
             result_dfs = []
             for row in bricks_partition_df.itertuples():
                 assert len(row.sv) > 0
@@ -929,7 +933,9 @@ class CreateMeshes(Workflow):
             dtypes = {'sv': np.uint64, 'mesh': object, 'vertex_count': np.int64, 'compressed_size': int}
             sv_meshes_ddf = sv_brick_meshes_dgb.apply(assemble_sv_meshes, meta=dtypes)
             del sv_brick_meshes_dgb
-            sv_meshes_ddf = drop_empty_partitions(sv_meshes_ddf)
+
+            # This doesn't work any more?
+            # sv_meshes_ddf = drop_empty_partitions(sv_meshes_ddf)
 
             # Export stitched mesh statistics
             os.makedirs('stitched-mesh-stats')

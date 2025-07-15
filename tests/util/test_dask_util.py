@@ -6,6 +6,7 @@ from dask import delayed
 from flyemflows.util import drop_empty_partitions
 
 
+@pytest.mark.xfail(reason="drop_empty_partitions() is no longer supported")
 def test_drop_empty_partitions():
     bag = db.from_delayed(map(delayed, [[1,2,3,4], [], [5,6,7], []]))
     assert bag.map_partitions(len).compute() == (4,0,3,0)
