@@ -370,19 +370,32 @@ class DvidVolumeService(VolumeServiceWriter):
             block_width = 64
 
         ##
+        ## bounding-box
+        ##
+        bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
+        self._bounding_box_zyx = bounding_box_zyx
+
+        ##
         ## uncropped-bounding-box
         ##
         # Note:
         #   If the instance has been created but not yet written to,
         #   then the default uncropped_bounding_box_zyx will be [[0,0,0], [0,0,0]]
+        created = False
         uncropped_bounding_box_zyx = np.array(volume_config["geometry"]["uncropped-bounding-box"])[:,::-1]
-        stored_bounding_box = fetch_volume_box(self._server, self.uuid, self._instance_name)
+        if self._instance_name not in fetch_repo_instances(self._server, self._uuid):
+            if volume_config["dvid"]["create-if-necessary"]:
+                self._create_instance(volume_config)
+                created = True
+            else:
+                raise RuntimeError(f"Instance '{self._instance_name}' does not exist in {self._server} / {self._uuid} and create-if-necessary is false.")
+
+        stored_bounding_box = fetch_volume_box(self._server, self._uuid, self._instance_name)
         replace_default_entries(uncropped_bounding_box_zyx, stored_bounding_box)
 
         ##
-        ## bounding-box
+        ## bounding-box (again)
         ##
-        bounding_box_zyx = np.array(volume_config["geometry"]["bounding-box"])[:,::-1]
         replace_default_entries(bounding_box_zyx, uncropped_bounding_box_zyx)
 
         ##
@@ -442,7 +455,7 @@ class DvidVolumeService(VolumeServiceWriter):
         # TODO: Check the server for available scales and overwrite in the config?
         #volume_config["geometry"]["available-scales"] = [0]
 
-        if volume_config["dvid"]["create-if-necessary"]:
+        if not created and volume_config["dvid"]["create-if-necessary"]:
             self._create_instance(volume_config)
 
     @property
