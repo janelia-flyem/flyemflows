@@ -146,7 +146,7 @@ class SparseMeshes(Workflow):
                     try:
                         with Timer() as timer:
                             sparsevol_ranges[body] = (
-                                fetch_sparsevol(server, uuid, instance, body, scale, format='ranges'),
+                                fetch_sparsevol(server, uuid, instance, body, scale, is_supervoxels, format='ranges'),
                                 timer.seconds,
                                 ''
                             )
