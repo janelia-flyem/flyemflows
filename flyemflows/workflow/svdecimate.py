@@ -426,9 +426,9 @@ def process_sv(decimation, decimation_lib, max_sv_vertices, output_format, sv: i
             if decimation_lib == "openmesh":
                 mesh.simplify_openmesh(final_decimation)
             elif decimation_lib == "fq-in-memory":
-                mesh.simplify(decimation, True)
+                mesh.simplify(decimation)
             elif decimation_lib == "fq-via-disk":
-                mesh.simplify(decimation, False)
+                raise RuntimeError("fq-via-disk is no longer supported")
             else:
                 raise AssertionError()
 
