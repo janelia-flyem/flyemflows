@@ -40,7 +40,8 @@ STATS_DTYPE = [('body_id',    np.uint64),
                ('z',          np.int32),
                ('y',          np.int32),
                ('x',          np.int32),
-               ('count',      np.uint32)]
+               ('count',      np.uint32),
+               ('segment_needs_tombstone', np.bool_)]
 
 AGGLO_MAP_COLUMNS = ['segment_id', 'body_id']
 
@@ -84,7 +85,7 @@ def main():
     parser.add_argument('uuid')
     parser.add_argument('labelmap_instance')
     parser.add_argument('supervoxel_block_stats_h5', nargs='?', # not required if only ingesting mapping
-                        help=f'An HDF5 file with a single dataset "stats", with dtype: {STATS_DTYPE[1:]} (Note: No column for body_id)')
+                        help=f'An HDF5 file with a single dataset "stats", with dtype: {STATS_DTYPE[1:-1]} (Note: No columns for body_id nor segment_needs_tombstone)')
 
     args = parser.parse_args()
 
@@ -439,26 +440,40 @@ def _overwrite_body_id_column(block_sv_stats, segment_to_body_df=None):
 
     assert STATS_DTYPE[0][0] == 'body_id'
     assert STATS_DTYPE[1][0] == 'segment_id'
+    assert STATS_DTYPE[-1][0] == 'segment_needs_tombstone'
     
-    block_sv_stats = block_sv_stats.view( [STATS_DTYPE[0], STATS_DTYPE[1], ('other_cols', STATS_DTYPE[2:])] )
-
     if segment_to_body_df is None:
-        # No agglomeration
+        # No agglomeration, no tombstones.
         block_sv_stats['body_id'] = block_sv_stats['segment_id']
-    else:
-        assert list(segment_to_body_df.columns) == AGGLO_MAP_COLUMNS
-        
-        # This could be done via pandas merge(), followed by fillna(), etc.,
-        # but I suspect LabelMapper is faster and more frugal with RAM.
-        mapper = LabelMapper(segment_to_body_df['segment_id'].values, segment_to_body_df['body_id'].values)
-        del segment_to_body_df
+        block_sv_stats['segment_needs_tombstone'] = False
+        return
+
+    assert list(segment_to_body_df.columns) == AGGLO_MAP_COLUMNS
     
-        # Remap in batches to save RAM
-        batch_size = 1_000_000
-        for chunk_start in range(0, len(block_sv_stats), batch_size):
-            chunk_stop = min(chunk_start+batch_size, len(block_sv_stats))
-            chunk_segments = block_sv_stats['segment_id'][chunk_start:chunk_stop]
-            block_sv_stats['body_id'][chunk_start:chunk_stop] = mapper.apply(chunk_segments, allow_unmapped=True)
+    # This could be done via pandas merge(), followed by fillna(), etc.,
+    # but I suspect LabelMapper is faster and more frugal with RAM.
+    mapper = LabelMapper(segment_to_body_df['segment_id'].values, segment_to_body_df['body_id'].values)
+    del segment_to_body_df
+
+    # Remap in batches to save RAM
+    bodies = []
+    batch_size = 1_000_000
+    for chunk_start in range(0, len(block_sv_stats), batch_size):
+        chunk_stop = min(chunk_start+batch_size, len(block_sv_stats))
+        # This copy() is crucial.  Otherwise, the mapper seems to get misaligned values and gives garbage results!
+        chunk_segments = block_sv_stats['segment_id'][chunk_start:chunk_stop].copy('C')
+        block_sv_stats['body_id'][chunk_start:chunk_stop] = mapper.apply(chunk_segments, allow_unmapped=True)
+        bodies.append(np.unique(block_sv_stats[chunk_start:chunk_stop]['body_id']))
+
+    # We can only send tombstones for segments which aren't also a valid body ID.
+    # Instead of passing a set of valid bodies, we just include a column in the stats array.
+    # This results in redundancy (since many segments are listed in several chunks),
+    # but it's simple to distribute since we're already batching up the stats array.
+    with Timer(f"Determining tombstone IDs", logger):
+        bodies = pd.Index(np.concatenate(bodies)).unique()
+        block_sv_stats['segment_needs_tombstone'] = ~(pd.Index(block_sv_stats['segment_id']).isin(bodies))
+
+    return
 
 
 # This is a dirty little trick:
@@ -571,12 +586,14 @@ class StatsBatchProcessor:
             segment_dtype = STATS_DTYPE[1]
             coords_dtype = ('coord_cols', STATS_DTYPE[2:5])
             count_dtype = STATS_DTYPE[5]
+            tombstone_flag_dtype = STATS_DTYPE[6]
             assert body_dtype[0] == 'body_id'
             assert segment_dtype[0] == 'segment_id'
             assert np.dtype(coords_dtype[1]).names == ('z', 'y', 'x')
             assert count_dtype[0] == 'count'
-            
-            body_group = body_group.view([body_dtype, segment_dtype, coords_dtype, count_dtype])
+            assert tombstone_flag_dtype[0] == 'segment_needs_tombstone'
+
+            body_group = body_group.view([body_dtype, segment_dtype, coords_dtype, count_dtype, tombstone_flag_dtype])
             coord_cols = body_group['coord_cols'].view((np.int32, 3)).reshape(-1, 3)
             for block_group in groupby_presorted(body_group, coord_cols):
                 coord = block_group['coord_cols'][0]
@@ -586,11 +603,9 @@ class StatsBatchProcessor:
             label_indexes.append(label_index)
         
         if self.tombstone_mode in ('include', 'only'):
-            # All segments in this body should no longer get a real index
-            # (except for the segment that matches the body_id itself).
-            # We'll send an empty LabelIndex (a 'tombstone') for each one.
-            all_segments = np.unique(body_group['segment_id'])
-            tombstone_segments = all_segments[all_segments != body_id]
+            # We'll send an empty LabelIndex (a 'tombstone') for each segment marked as needing a
+            # tombstone (because they are supervoxels which don't happen to also match a body ID).
+            tombstone_segments = np.unique(body_group[body_group['segment_needs_tombstone']]['segment_id'])
             for segment_id in tombstone_segments:
                 tombstone_index = LabelIndex()
                 tombstone_index.label = segment_id
@@ -646,21 +661,31 @@ def load_stats_h5_to_records(h5_path):
         with Timer(f"Allocating RAM for {len(dset)} block stats rows", logger):
             block_sv_stats = np.empty(dset.shape, dtype=STATS_DTYPE)
 
-        if 'body_id' in dset.dtype.names:
-            dest_view = block_sv_stats
-        else:
-            full_view = block_sv_stats.view([('body_col', [STATS_DTYPE[0]]), ('other_cols', STATS_DTYPE[1:])])
-            dest_view = full_view['other_cols']
+        src_cols = [col for col, dtype in STATS_DTYPE if col in dset.dtype.names]
 
+        bodies = []
         with Timer(f"Loading block stats into RAM", logger):
             h5_batch_size = 1_000_000
             for batch_start in range(0, len(dset), h5_batch_size):
                 batch_stop = min(batch_start + h5_batch_size, len(dset))
-                dest_view[batch_start:batch_stop] = dset[batch_start:batch_stop]
+                block_sv_stats[batch_start:batch_stop][src_cols] = dset[batch_start:batch_stop][src_cols]
 
-        if 'body_id' not in dset.dtype.names:
-            block_sv_stats['body_id'] = block_sv_stats['segment_id']
-    
+                if 'body_id' not in dset.dtype.names:
+                    # Stats file is for supervoxels only.  Every supervoxel is its own body.
+                    block_sv_stats[batch_start:batch_stop]['body_id'] = block_sv_stats[batch_start:batch_stop]['segment_id']
+                    block_sv_stats[batch_start:batch_stop]['segment_needs_tombstone'] = False
+                
+                bodies.append(np.unique(block_sv_stats[batch_start:batch_stop]['body_id']))
+
+        if 'body_id' in dset.dtype.names:
+            # We can only send tombstones for segments which aren't also a valid body ID.
+            # Instead of passing a set of valid bodies, we just add a column to the stats array.
+            # This results in redundancy (since many segments are listed in several chunks),
+            # but it's simple to distribute since we're already batching up the stats array.
+            with Timer(f"Determining tombstone IDs", logger):
+                bodies = pd.Index(np.concatenate(bodies)).unique()
+                block_sv_stats['segment_needs_tombstone'] = ~(pd.Index(block_sv_stats['segment_id']).isin(bodies))
+
         try:
             presorted_by = dset.attrs['presorted-by']
             assert presorted_by in ('segment_id', 'body_id')
@@ -720,54 +745,17 @@ def group_sums_presorted(a, sorted_cols):
 if __name__ == "__main__":
     DEBUG = False
     if DEBUG:
-        print("Starting with debug arguments")
-        os.chdir('/tmp/compute-frankenbody-blockstats-20190227.013919')
+        print("************** Starting with debug arguments *******************")
+        os.chdir('/Users/bergs/workspace/fabg')
         sys.argv += """
-              --operation=mappings \
-              --agglomeration-mapping=frankenbody-mapping-after-cc.csv \
-              --subset-labels=frankenbody-label.csv \
+              --operation=indexes \
+              --agglomeration-mapping=fabg-mapping-63bbe8.npy \
               --tombstones=include \
-              --num-threads=4 \
-              emdata1:8900 \
-              c6591f6368eb4e96b255e11087781e6b \
+              --num-threads=0 \
+              --batch-size=10_000 \
+              emdata5.janelia.org:8700 \
+              63bbe888bff8497db2cffd5bb690073e \
               segmentation \
-              block-statistics.h5 \
+              block-statistics-63bbe8.h5 \
             """.split()
-        
-    if False:
-        import DVIDSparkServices
-        os.chdir(os.path.dirname(DVIDSparkServices.__file__) + '/..')
-        
-        import yaml
-        test_dir = os.path.dirname(DVIDSparkServices.__file__) + '/../integration_tests/test_copyseg/temp_data'
-        with open(f'{test_dir}/config.yaml', 'r') as f:
-            config = yaml.load(f)
-
-        dvid_config = config['outputs'][0]['dvid']
-        
-        ##
-        mapping_file = f'{test_dir}/../LABEL-TO-BODY-mod-100-labelmap.csv'
-        block_stats_file = f'{test_dir}/block-statistics.h5'
-
-        # SPECIAL DEBUGGING TEST
-        #mapping_file = f'{test_dir}/../LABEL-TO-BODY-mod-100-labelmap.csv'
-        #block_stats_file = f'/tmp/block-statistics-testvol.h5'
-        
-        sys.argv += (f"--operation=indexes"
-                     #f"--operation=sort-only"
-                     #f"--operation=both"
-                     #f" --agglomeration-mapping={mapping_file}"
-                     f" --agglomeration-mapping={dvid_config['uuid']}"
-                     f" --num-threads=8"
-                     f" --batch-size=1000"
-                     f" --tombstones=exclude"
-                     f" --check-mismatches"
-                     f" {dvid_config['server']}"
-                     f" {dvid_config['uuid']}"
-                     f" {dvid_config['segmentation-name']}"
-                     f" {block_stats_file}".split())
-
     main()
-
-
-
