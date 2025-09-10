@@ -263,4 +263,4 @@ class SparseMeshes(Workflow):
                 if len(failed_df) > 0:
                     logger.warning(f"{len(failed_df)} meshes could not be generated. See mesh-stats.feather")
                     logger.warning("Result summary:\n")
-                    logger.warning(f"{all_results_df['result'].value_counts()}")
+                    logger.warning(f"{all_results_df['status'].value_counts()}")
