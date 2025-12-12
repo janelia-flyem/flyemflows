@@ -187,8 +187,7 @@ class SparseMeshes(Workflow):
             assert destination_type in ('directory', 'directory-of-tarfiles', 'keyvalue', 'tarsupervoxels')
 
             meshes_df['name'] = [f"{body}.{fmt}" for body in meshes_df['body']]
-            keyvalues = meshes_df.set_index('name')['buf'].to_dict()
-            keyvalues = {k:v for (k,v) in keyvalues.items() if v}
+            keyvalues = meshes_df.query('status == "success"').set_index('name')['buf'].to_dict()
 
             if destination_type == 'directory':
                 for name, mesh_bytes in keyvalues.items():
