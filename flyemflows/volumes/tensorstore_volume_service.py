@@ -437,6 +437,7 @@ class TensorStoreVolumeService(VolumeServiceWriter):
             context = copy.deepcopy(self.volume_config['tensorstore']['context'])
 
             create = spec.get('create', False)
+            allow_open = spec.get('open', True)
             if create:
                 # We can't actually supply scale_index when creating a new scale,
                 # despite what the docs claim.
@@ -451,7 +452,7 @@ class TensorStoreVolumeService(VolumeServiceWriter):
             else:
                 spec['scale_index'] = scale
 
-            store = ts.open(spec, read=True, write=create, context=ts.Context(context)).result()
+            store = ts.open(spec, read=True, write=create, open=allow_open, context=ts.Context(context)).result()
             self._stores[scale] = store
             return store
 
