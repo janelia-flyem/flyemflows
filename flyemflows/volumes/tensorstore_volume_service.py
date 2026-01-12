@@ -455,10 +455,18 @@ class TensorStoreVolumeService(VolumeServiceWriter):
 
                 res = np.asarray(spec['scale_metadata']['resolution'])
                 spec['scale_metadata']['resolution'] = (res * (2**scale)).tolist()
+                store = ts.open(spec, read=True, write=allow_write, open=allow_open, context=ts.Context(context)).result()
             else:
-                spec['scale_index'] = scale
+                # Just open the existing scale and ignore the user's spec settings.
+                # This is not pretty, but our existing approach needs a rewrite, I think.
+                spec = {
+                    'driver': spec['driver'],
+                    'kvstore': spec['kvstore'],
+                    'scale_index': scale,
+                    'open': allow_open,
+                }
+                store = ts.open(spec, read=True, write=allow_write, open=allow_open, context=ts.Context(context)).result()
 
-            store = ts.open(spec, read=True, write=allow_write, open=allow_open, context=ts.Context(context)).result()
             self._stores[scale] = store
             return store
 
