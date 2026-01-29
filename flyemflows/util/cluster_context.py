@@ -18,7 +18,6 @@ from .dask_util import load_and_overwrite_dask_config, update_jobqueue_config_wi
 logger = logging.getLogger(__name__)
 JOBQUEUE_CLUSTERS = ["lsf", "sge", "slurm"]
 
-
 class ClusterContext:
     """
     Context manager.
@@ -140,8 +139,18 @@ class ClusterContext:
             update_jobqueue_config_with_defaults(self.cluster_type)
 
             if self.cluster_type == "lsf":
-                from dask_jobqueue import LSFCluster
-                cluster = LSFCluster()
+                from dask_jobqueue.lsf import LSFCluster, LSFJob
+
+                # Same as LSFJob, but uses the -d command when killing the job
+                # so it gets marked as 'done'.
+                class JaneliaLSFJob(LSFJob):
+                    cancel_command = "bkill -d"
+
+                # Same as LSFCluster, but uses the JaneliaLSFJob class.
+                class JaneliaLSFCluster(LSFCluster):
+                    job_cls = JaneliaLSFJob
+
+                cluster = JaneliaLSFCluster()
             elif self.cluster_type == "sge":
                 from dask_jobqueue import SGECluster
                 cluster = SGECluster()
