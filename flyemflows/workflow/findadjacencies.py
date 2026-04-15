@@ -1029,6 +1029,16 @@ def compute_dense_rag_table(volume):
     return edges_df
 
 
+def select_closest_edges(all_edges_df):
+    """
+    Filter the given edges to include only the edge with
+    the minimum distance for each [label_a,label_b] pair.
+    """
+    return (all_edges_df
+                .sort_values(['label_a', 'label_b', 'distance'])
+                .drop_duplicates(['label_a', 'label_b'], keep='first'))
+
+
 def select_central_edges(all_edges_df, coord_cols=['za', 'ya', 'xa']):
     """
     Given a DataFrame with at least columns [label_a, label_b, *coord_cols, distance],
@@ -1085,11 +1095,164 @@ def select_central_edges(all_edges_df, coord_cols=['za', 'ya', 'xa']):
     return best_edges_df
 
 
-def select_closest_edges(all_edges_df):
+def select_central_edges_duckdb(input_path_or_df, coord_cols=['za', 'ya', 'xa'], temp_dir='/tmp/duckdb_spill'):
     """
-    Filter the given edges to include only the edge with
-    the minimum distance for each [label_a,label_b] pair.
+    Alternative implementation of select_central_edges() using DuckDB.
+
+    Given a parquet/feather file path or DataFrame with at least columns
+    [label_a, label_b, *coord_cols, distance], select the row with the
+    most-central point for each unique [label_a, label_b] pair.
+
+    The most-central point is defined as the row whose coordinates are
+    closest to the centroid of the points that belong to the group of
+    rows with matching [label_a, label_b] columns.
+
+    If a column named 'edge_area' is present, it specifies the weight
+    used when computing the centroid. In the output, edge_area is replaced
+    with the total (summed) edge_area for the group.
+
+    Any extra columns are passed on in the output.
     """
-    return (all_edges_df
-                .sort_values(['label_a', 'label_b', 'distance'])
-                .drop_duplicates(['label_a', 'label_b'], keep='first'))
+    import pandas as pd
+    import duckdb
+    import os
+
+    os.makedirs(temp_dir, exist_ok=True)
+
+    con = duckdb.connect()
+    con.execute(f"SET temp_directory = '{temp_dir}'")
+    con.execute("SET memory_limit = '1000GB'")
+
+    Z, Y, X = coord_cols
+
+    assert isinstance(input_path_or_df, (pd.DataFrame, str))
+    if isinstance(input_path_or_df, pd.DataFrame):
+        con.register('input_df', input_path_or_df)
+        source = 'input_df'
+    elif input_path_or_df.endswith(('.feather', '.arrow', '.arrows', '.ipc')):
+        source = f"read_ipc('{input_path_or_df}')"
+    else:
+        source = f"read_parquet('{input_path_or_df}')"
+
+    cols_df = con.execute(f"DESCRIBE SELECT * FROM {source}").df()
+    col_names = cols_df['column_name'].tolist()
+    has_edge_area = 'edge_area' in col_names
+    ea = 'edge_area' if has_edge_area else '1'
+
+    # Build final column list, replacing edge_area with the group sum
+    out_cols = []
+    for c in col_names:
+        if c == 'edge_area':
+            out_cols.append('c.total_edge_area AS edge_area')
+        else:
+            out_cols.append(f'e.{c}')
+    out_cols_str = ', '.join(out_cols)
+
+    # Pass 1: compute centroids (much smaller result)
+    con.execute(f"""
+        CREATE TEMP TABLE centroids AS
+        SELECT
+            label_a,
+            label_b,
+            SUM({Z}::INT64 * {ea}::INT64) / SUM({ea}::INT64) AS cz,
+            SUM({Y}::INT64 * {ea}::INT64) / SUM({ea}::INT64) AS cy,
+            SUM({X}::INT64 * {ea}::INT64) / SUM({ea}::INT64) AS cx,
+            SUM({ea}::INT64) AS total_edge_area
+        FROM {source}
+        GROUP BY label_a, label_b
+    """)
+
+    # Pass 2: join + argmin, stream result to parquet to avoid peak memory
+    output_path = os.path.join(temp_dir, 'result.parquet')
+    con.execute(f"""
+        COPY (
+            SELECT {out_cols_str}
+            FROM {source} e
+            JOIN centroids c USING (label_a, label_b)
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY e.label_a, e.label_b
+                ORDER BY sqrt(({Z} - c.cz) * ({Z} - c.cz)
+                            + ({Y} - c.cy) * ({Y} - c.cy)
+                            + ({X} - c.cx) * ({X} - c.cx))
+            ) = 1
+        ) TO '{output_path}' (FORMAT PARQUET)
+    """)
+
+    con.close()
+    return pd.read_parquet(output_path)
+
+
+def select_central_edges_bigquery(uploaded_brickwise_adjacencies_table, scale, new_table_name):
+    """
+    Alternative implementation of select_central_edges() using BigQuery.
+
+    This is here mostly for reference.
+
+    Presumably you're using this function because the data is huge.
+    Therefore, we don't attempt to download the results; the SQL creates a new table.
+
+    For the input, we assume you've already uploaded the concatenated brickwise adjacency
+    tables to a single BigQuery table.
+    For example:
+
+    .. code-block:: python
+
+        import glob
+        import pyarrow.feather as pf
+        import pyarrow as pa
+
+        tables = [pf.read_table(p) for p in tqdm_proxy(sorted(glob.glob('brickwise-edges/*/*/*/*.feather')))]
+
+        combined = pa.concat_tables(tables, promote_options='default')
+        # Drop the index column(s) before converting
+        combined = combined.drop([col for col in combined.schema.names if col == '__index_level_0__'])
+        brick_df = combined.to_pandas(self_destruct=True)
+        brick_df.to_parquet('my-aggregated-brickwise-adjacencies.parquet')
+
+    .. code-block:: bash
+
+        gsutil cp my-aggregated-brickwise-adjacencies.parquet gs://my-bucket/my-tables/
+        bq load --source_format=PARQUET fullbrain_uploads.my-aggregated-brickwise-adjacencies gs://my-bucket/my-tables/my-aggregated-brickwise-adjacencies.parquet
+    """
+
+    scale_factor = 2**scale
+    q = f"""\
+        CREATE OR REPLACE TABLE `{new_table_name}` AS
+
+        WITH centroids AS (
+            SELECT
+                label_a,
+                label_b,
+                SUM(CAST(za AS INT64) * CAST(edge_area AS INT64)) / SUM(CAST(edge_area AS INT64)) AS cz,
+                SUM(CAST(ya AS INT64) * CAST(edge_area AS INT64)) / SUM(CAST(edge_area AS INT64)) AS cy,
+                SUM(CAST(xa AS INT64) * CAST(edge_area AS INT64)) / SUM(CAST(edge_area AS INT64)) AS cx,
+                SUM(CAST(edge_area AS INT64)) AS total_edge_area
+            FROM `{uploaded_brickwise_adjacencies_table}`
+            GROUP BY label_a, label_b
+        )
+        SELECT
+        e.label_a as body_a,
+        e.label_b as body_b,
+
+        -- Original edges were taken from scale 2 voxels
+        {scale_factor} * e.xa as xa,
+        {scale_factor} * e.ya as ya,
+        {scale_factor} * e.za as za,
+
+        {scale_factor} * e.xb as xb,
+        {scale_factor} * e.yb as yb,
+        {scale_factor} * e.zb as zb,
+
+        {scale_factor} * {scale_factor} * c.total_edge_area AS edge_area
+        FROM `{uploaded_brickwise_adjacencies_table}` e
+        JOIN centroids c USING (label_a, label_b)
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY e.label_a, e.label_b
+            ORDER BY SQRT(
+                (e.za - c.cz) * (e.za - c.cz) +
+                (e.ya - c.cy) * (e.ya - c.cy) +
+                (e.xa - c.cx) * (e.xa - c.cx))
+        ) = 1;
+    """
+    from neuclease.util import perform_bigquery
+    perform_bigquery(q)
