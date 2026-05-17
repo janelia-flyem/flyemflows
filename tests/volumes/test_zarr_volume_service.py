@@ -27,9 +27,10 @@ def volume_setup():
 
     volume = np.random.randint(100, size=(512, 256, 128))
 
-    store = zarr.NestedDirectoryStore(path)
-    f = zarr.open(store=store, mode='w')
-    f.create_dataset(dataset, data=volume, chunks=(64,64,64), compressor=None)
+    store = zarr.storage.LocalStore(path)
+    f = zarr.open(store=store, mode='a')
+    arr = f.create_array(dataset, shape=volume.shape, dtype=volume.dtype, chunks=(64,64,64), compressors=None)
+    arr[:] = volume
 
     return config, volume
 
@@ -151,8 +152,8 @@ def test_write_empty_blocks(volume_setup):
     #
     service = ZarrVolumeService(config)
     service.write_subvolume(subvol, box[0])
-    d = config["zarr"]["path"] + '/' + config["zarr"]["dataset"]
-    _, subdirs, files = next(os.walk(d))
+    # zarr v3 native chunk layout: {dataset}/c/{cz}/{cy}/{cx}
+    d = config["zarr"]["path"] + '/' + config["zarr"]["dataset"] + '/c'
 
     empty_chunks = {(0,0,0), (1,1,1), (1,1,2)}
     nonempty_chunks = {*np.ndindex(4,4,4)} - empty_chunks
@@ -173,8 +174,7 @@ def test_write_empty_blocks(volume_setup):
 
     service = ZarrVolumeService(config)
     service.write_subvolume(subvol, box[0])
-    d = config["zarr"]["path"] + '/' + config["zarr"]["dataset"]
-    _, subdirs, files = next(os.walk(d))
+    d = config["zarr"]["path"] + '/' + config["zarr"]["dataset"] + '/c'
 
     empty_chunks = {(0,0,0), (1,1,1), (1,1,2)}
     nonempty_chunks = {*np.ndindex(4,4,4)} - empty_chunks

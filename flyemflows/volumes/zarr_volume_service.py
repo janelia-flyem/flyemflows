@@ -1,5 +1,4 @@
 import os
-import json
 import platform
 
 import zarr
@@ -8,7 +7,7 @@ import numpy as np
 from skimage.util import view_as_blocks
 
 from confiddler import validate, flow_style
-from neuclease.util import box_to_slicing, choose_pyramid_depth, box_intersection, boxes_from_grid, ndrange, dump_json
+from neuclease.util import box_to_slicing, choose_pyramid_depth, box_intersection, boxes_from_grid
 
 from ..util import replace_default_entries
 from . import VolumeServiceWriter, GeometrySchema, GrayscaleAdapters
@@ -69,6 +68,13 @@ ZarrCreationSettingsSchema = \
             "minItems": 3,
             "maxItems": 3,
             "default": flow_style([8.0, 8.0, 8.0])
+        },
+        "zarr-format": {
+            "description": "Which zarr on-disk data format to use when creating new arrays.\n"
+                           "Existing arrays are always read using their stored format (auto-detected).\n",
+            "type": "integer",
+            "enum": [2, 3],
+            "default": 3
         }
     }
 }
@@ -94,17 +100,6 @@ ZarrServiceSchema = \
                            "In this config, please list the scale-0 name, e.g. 'my-grayscale0', or '22-34/s0', etc.\n",
             "type": "string",
             "minLength": 1
-        },
-        "store-type": {
-            # https://github.com/zarr-developers/zarr-python/issues/530
-            "description": "Zarr supports an assortment of 'store' types, and unfortunately it's\n"
-                           "impossible to infer the type of store used from the zarr metadata.\n"
-                           "We must specify which type of store to use when opening the volume.\n"
-                           "In general, you should use NestedDirectoryStore if your volume is large.\n"
-                           'Choices: ["DirectoryStore", "NestedDirectoryStore", "N5Store", "ZipStore", "DBMStore", "LMDBStore", "SQLiteStore", "FSStore"]',
-            "type": "string",
-            "enum": ["DirectoryStore", "NestedDirectoryStore", "N5Store", "ZipStore", "DBMStore", "LMDBStore", "SQLiteStore", "FSStore"],
-            "default": "NestedDirectoryStore"
         },
         "global-offset": {
             "description": "Indicates what global coordinate corresponds to item (0,0,0) of the zarr array.\n"
@@ -184,14 +179,12 @@ class ZarrVolumeService(VolumeServiceWriter):
             self._dataset_name = self._dataset_name[1:]
         volume_config["zarr"]["dataset"] = self._dataset_name
 
-        self._store_cls = getattr(zarr, volume_config["zarr"]["store-type"])
         self._zarr_file = None
         self._zarr_datasets = {}
 
         self._ensure_datasets_exist(volume_config)
-        self._ensure_multires_n5_attributes(volume_config)
 
-        if isinstance(self.zarr_dataset(0), zarr.hierarchy.Group):
+        if isinstance(self.zarr_dataset(0), zarr.Group):
             raise RuntimeError("The Zarr dataset you specified appears to be a 'group', not a volume.\n"
                                "Please pass the complete dataset name.  If your dataset is multi-scale,\n"
                                "pass the name of scale 0 as the dataset name (e.g. 's0').\n")
@@ -396,9 +389,16 @@ class ZarrVolumeService(VolumeServiceWriter):
         # This member is memoized because that makes it
         # easier to support pickling/unpickling.
         if self._zarr_file is None:
-            need_permissions_fix = not os.path.exists(self._path)
-            store = self._store_cls(self._path)
-            self._zarr_file = zarr.open(store=store, mode=self._filemode)
+            creating = self._filemode != 'r' and not os.path.exists(self._path)
+            store = zarr.storage.LocalStore(self._path, read_only=(self._filemode == 'r'))
+            # Only force a zarr_format when creating from scratch -- when reading
+            # or extending an existing file, let zarr auto-detect the on-disk format.
+            # (Otherwise zarr.open treats zarr_format as a hard constraint and refuses
+            # to open files written in a different format.)
+            open_kwargs = {"zarr_format": self._create_zarr_format} if creating else {}
+            self._zarr_file = zarr.open(store=store, mode=self._filemode, **open_kwargs)
+
+            need_permissions_fix = creating
 
             if need_permissions_fix:
                 # Set default permissions to be group-writable
@@ -445,14 +445,12 @@ class ZarrVolumeService(VolumeServiceWriter):
         creation_shape = np.array(volume_config["zarr"]["creation-settings"]["shape"][::-1])
         replace_default_entries(creation_shape, bounding_box_zyx[1] - global_offset)
 
+        zarr_format = volume_config["zarr"]["creation-settings"]["zarr-format"]
         compression = volume_config["zarr"]["creation-settings"]["compression"]
-        if compression == 'gzip':
-            compressor = numcodecs.GZip()
-        elif compression.startswith('blosc-'):
-            cname = compression[len('blosc-'):]
-            compressor = numcodecs.Blosc(cname)
-        else:
-            assert compression == "", f"Unimplemented compression: {compression}"
+        compressors = self._compressors_for_format(compression, zarr_format)
+        # Used when opening the parent group; controls the format for newly-created arrays.
+        # On reads of existing arrays, zarr auto-detects the format from disk regardless.
+        self._create_zarr_format = zarr_format
 
         self._write_empty_blocks = volume_config["zarr"]["write-empty-blocks"]
 
@@ -506,56 +504,41 @@ class ZarrVolumeService(VolumeServiceWriter):
                     logger.warning(f"Block shape ({block_shape}) is too small for "
                                    f"the dataset shape ({creation_shape}). Shrinking block shape.")
 
-                self._zarr_datasets[scale] = self.zarr_file.create_dataset( name,
-                                                                            shape=scaled_shape.tolist(),
-                                                                            dtype=np.dtype(dtype),
-                                                                            chunks=chunks,
-                                                                            compressor=compressor )
+                create_kwargs = dict(
+                    name=name,
+                    shape=tuple(scaled_shape.tolist()),
+                    dtype=np.dtype(dtype),
+                    chunks=tuple(chunks),
+                    compressors=compressors,
+                )
+                # For v2, use nested chunk keys so chunks land in directories like 0/1/2
+                # (matches the on-disk layout produced by zarr v2's NestedDirectoryStore).
+                if zarr_format == 2:
+                    create_kwargs["chunk_key_encoding"] = {
+                        "name": "v2",
+                        "configuration": {"separator": "/"},
+                    }
+                self._zarr_datasets[scale] = self.zarr_file.create_array(**create_kwargs)
 
-    def _ensure_multires_n5_attributes(self, volume_config):
+    @staticmethod
+    def _compressors_for_format(compression, zarr_format):
         """
-        If we're writing to n5, then the parent directory containing
-        s0, s1, etc. should have an attributes.json file with certain values
-        that neuroglancer (and BigDataViewer) knows how to interpret.
+        Build the `compressors=` argument for zarr.Group.create_array,
+        choosing numcodecs (v2) or zarr.codecs (v3) classes as appropriate.
         """
-        if volume_config["zarr"]["store-type"] != "N5Store":
-            return
-
-        writable = volume_config["zarr"]["writable"]
-        if writable is None:
-            writable = volume_config["zarr"]["create-if-necessary"]
-
-        if not writable:
-            return
-
-        max_scale = volume_config["zarr"]["creation-settings"]["max-scale"]
-        assert max_scale >= 0
-        scales = [[2**s, 2**s, 2**s] for s in range(1+max_scale)]
-
-        new_attributes = {
-            "pixelResolution": {
-                "dimensions": volume_config["zarr"]["creation-settings"]["resolution"],
-                "unit":"nm"
-            },
-            "multiScale": True,
-            "scales": scales,
-            "axes":["x", "y", "z"],
-            "units":["nm", "nm", "nm"],
-            #"n5":"2.5.0",
-            #"translate":[0, 0, 0]
-        }
-
-        path = volume_config["zarr"]["path"]
-        dset_name = volume_config["zarr"]["dataset"]
-        dset_path = f'{path}/{dset_name}'
-        dset_dir = os.path.dirname(dset_path)
-        attrs_path = f'{dset_dir}/attributes.json'
-
-        # Combine with existing attributes (if any)
-        with open(attrs_path, 'r') as f:
-            attributes = json.load(f)
-
-        attributes.update(new_attributes)
-        attributes.setdefault('n5', '2.5.0')
-
-        dump_json(attributes, attrs_path, unsplit_int_lists=True)
+        if compression == "":
+            return None
+        if zarr_format == 2:
+            # v2 arrays accept exactly one numcodecs compressor.
+            if compression == 'gzip':
+                return [numcodecs.GZip()]
+            assert compression.startswith('blosc-'), f"Unimplemented compression: {compression}"
+            cname = compression[len('blosc-'):]
+            return [numcodecs.Blosc(cname)]
+        # zarr v3 uses its own codec classes.
+        from zarr.codecs import BloscCodec, GzipCodec
+        if compression == 'gzip':
+            return [GzipCodec()]
+        assert compression.startswith('blosc-'), f"Unimplemented compression: {compression}"
+        cname = compression[len('blosc-'):]
+        return [BloscCodec(cname=cname)]
