@@ -7,6 +7,7 @@ from .adapters import (TransposedVolumeService, NewAxisOrderSchema,
                        TranslatedVolumeService, TranslateSchema,
                        ScaledVolumeService, RescaleLevelSchema,
                        LabelmappedVolumeService, LabelMapSchema,
+                       DtypeConversionVolumeService, DtypeConversionSchema,
                        GrayscaleAdapters, SegmentationAdapters)
 from .hdf5_volume_service import Hdf5VolumeService, Hdf5ServiceSchema, Hdf5VolumeSchema
 from .boss_volume_service import BossVolumeServiceReader, BossServiceSchema

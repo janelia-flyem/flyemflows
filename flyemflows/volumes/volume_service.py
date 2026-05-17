@@ -164,6 +164,13 @@ class VolumeService(metaclass=ABCMeta):
 
             service = ScaledVolumeService(service, scale_delta, method, available_scales)
 
+        # Wrap with dtype-conversion service. Goes last so prior adapters operate
+        # on the underlying dtype (e.g. ScaledVolumeService's uint64 == labels check).
+        from . import DtypeConversionVolumeService
+        assert ADAPTER_ORDER[(adapter_index := adapter_index + 1)] == 'convert-dtype'
+        if "convert-dtype" in adapter_config and adapter_config["convert-dtype"].get("dtype"):
+            service = DtypeConversionVolumeService(service, adapter_config["convert-dtype"])
+
         return service
 
     @classmethod

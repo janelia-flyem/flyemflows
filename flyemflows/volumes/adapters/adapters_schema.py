@@ -1,6 +1,6 @@
-from . import NewAxisOrderSchema, TranslateSchema, RescaleLevelSchema, LabelMapSchema
+from . import NewAxisOrderSchema, TranslateSchema, RescaleLevelSchema, LabelMapSchema, DtypeConversionSchema
 
-ADAPTER_ORDER = ['apply-labelmap', 'transpose-axes', 'translate', 'rescale-level']
+ADAPTER_ORDER = ['apply-labelmap', 'transpose-axes', 'translate', 'rescale-level', 'convert-dtype']
 
 GrayscaleAdapters = {
     "description": "Adapter properties that can be applied to a grayscale service\n",
@@ -8,7 +8,8 @@ GrayscaleAdapters = {
     "properties": {
         "transpose-axes": NewAxisOrderSchema,
         "translate": TranslateSchema,
-        "rescale-level": RescaleLevelSchema
+        "rescale-level": RescaleLevelSchema,
+        "convert-dtype": DtypeConversionSchema,
     }
 }
 
@@ -23,7 +24,8 @@ SegmentationAdapters = {
         "apply-labelmap": LabelMapSchema,
         "transpose-axes": NewAxisOrderSchema,
         "translate": TranslateSchema,
-        "rescale-level": RescaleLevelSchema
+        "rescale-level": RescaleLevelSchema,
+        "convert-dtype": DtypeConversionSchema,
     }
 }
 
