@@ -1,6 +1,5 @@
 import os
 import sys
-import time
 import logging
 from functools import partial
 
@@ -294,12 +293,6 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
     if boxes_bag.npartitions != num_partitions:
         boxes_bag = boxes_bag.repartition(num_partitions)
 
-    # Trying different things (scatter, non-scatter...) to work around this issue (I think).
-    # https://github.com/dask/distributed/issues/3703#issuecomment-619446739
-    with Timer() as scatter_timer:
-        boxes_bag = client.scatter(boxes_bag).result()
-    time.sleep(2.0)
-
     boxes_bag = boxes_bag.persist()
     boxes_bag.compute()
 
@@ -311,7 +304,6 @@ def generate_bricks_from_volume_source( bounding_box, grid, volume_accessor_func
     total_volume = sum(map(brick_size, logical_and_physical_boxes))
     logger.info(f"Initializing bag of {num_bricks} Bricks "
                 f"(over {boxes_bag.npartitions} partitions) with total volume {total_volume/1e9:.1f} Gvox ")
-                #f"(scatter took {scatter_timer.timedelta})")
 
     if not isinstance(client, DebugClient) and os.environ.get("DEBUG_FLOW", "0") != "0":
         def worker_address(part):
