@@ -15,6 +15,9 @@ outputs:
       license_file: LICENSE.txt
       summary: A "meta-package" to allow installing third-party dependencies of flyemflows without installing flyemflows itself.
 
+    build:
+      noarch: python
+
     requirements:
       run:
         - python {{ python }}
