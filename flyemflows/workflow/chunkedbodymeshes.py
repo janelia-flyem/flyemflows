@@ -7,7 +7,7 @@ import pandas as pd
 import dask.config
 import distributed
 
-from neuclease.util import tqdm_proxy, Timer
+from neuclease.util import tqdm_proxy, Timer, iter_batches
 from neuclease.dvid import set_default_dvid_session_timeout, resolve_ref, fetch_mutations, compute_affected_bodies
 from neuclease.misc.bodymesh import (
     init_mesh_instances, BodyMeshParametersSchema, MeshChunkConfigSchema, update_body_mesh)
@@ -92,6 +92,13 @@ class ChunkedBodyMeshes(Workflow):
                 "minimum": 1,
                 "maximum": int(1e6),
                 "default": 100,
+            },
+            "superbatch-size": {
+                "description": "The number of bodies to process in each superbatch.",
+                "type": "integer",
+                "minimum": 1,
+                "maximum": int(1e6),
+                "default": 100_000,
             },
             "chunk-processes": {
                 "description":
@@ -182,28 +189,31 @@ class ChunkedBodyMeshes(Workflow):
             )
             return body
 
-        with Timer(f"Processing {len(bodies)} bodies", logger):
-            task_names = [f'_update_body_mesh-{body}' for body in bodies]
-            futures = self.client.map(_update_body_mesh, bodies, key=task_names, priority=0, batch_size=batch_size)
-            if hasattr(self.client, 'DEBUG'):
-                ac = as_completed_synchronous(futures, with_results=True)
-            else:
-                ac = distributed.as_completed(futures, with_results=True)
-
-            try:
-                completed_bodies = []
-                for _, body in tqdm_proxy(ac, total=len(futures)):
-                    if np.issubdtype(type(body), np.integer):
-                        completed_bodies.append(body)
+        completed_bodies = []
+        try:
+            for i, superbatch_bodies in enumerate(iter_batches(bodies, cbm_cfg['superbatch-size'])):
+                with Timer(f"Superbatch {i}: Processing {len(superbatch_bodies)} bodies", logger):
+                    task_names = [f'_update_body_mesh-{body}' for body in superbatch_bodies]
+                    futures = self.client.map(_update_body_mesh, superbatch_bodies, key=task_names, priority=0, batch_size=batch_size)
+                    if hasattr(self.client, 'DEBUG'):
+                        ac = as_completed_synchronous(futures, with_results=True)
                     else:
-                        logger.warning(f"Body {body} is not an integer")
-                    if len(completed_bodies) % 100 == 0:
-                        cb = pd.Series(completed_bodies, name='body', dtype=np.uint64)
-                        cb.to_csv('completed-bodies.csv', index=False, header=True)
-            finally:
-                cb = pd.Series(completed_bodies, name='body', dtype=np.uint64)
-                cb.to_csv('completed-bodies.csv', index=False, header=True)
-                if incomplete_bodies := {*bodies} - {*completed_bodies}:
-                    logger.warning(f"Did not complete {len(incomplete_bodies)} body meshes (out of {len(bodies)}).")
-                    logger.warning("See complete-bodies.csv and incomplete-bodies.csv")
-                    pd.Series(sorted(incomplete_bodies), name='body').to_csv('incomplete-bodies.csv', index=False, header=True)
+                        ac = distributed.as_completed(futures, with_results=True)
+
+                        for _, body in tqdm_proxy(ac, total=len(futures)):
+                            if np.issubdtype(type(body), np.integer):
+                                completed_bodies.append(body)
+                            else:
+                                logger.warning(f"Body {body} is not an integer")
+                            
+                            # Periodically update the completed-bodies.csv file in case we want to view it during the job.
+                            if len(completed_bodies) % 100 == 0:
+                                cb = pd.Series(completed_bodies, name='body', dtype=np.uint64)
+                                cb.to_csv('completed-bodies.csv', index=False, header=True)
+        finally:
+            cb = pd.Series(completed_bodies, name='body', dtype=np.uint64)
+            cb.to_csv('completed-bodies.csv', index=False, header=True)
+            if incomplete_bodies := {*bodies} - {*completed_bodies}:
+                logger.warning(f"Did not complete {len(incomplete_bodies)} body meshes (out of {len(bodies)}).")
+                logger.warning("See complete-bodies.csv and incomplete-bodies.csv")
+                pd.Series(sorted(incomplete_bodies), name='body').to_csv('incomplete-bodies.csv', index=False, header=True)

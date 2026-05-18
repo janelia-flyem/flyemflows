@@ -234,7 +234,7 @@ class DecimateMeshes(Workflow):
 
         failed_df = stats_df.query('result != "success"')
         if len(failed_df) > 0:
-            logger.warning(f"{len(failed_df)} meshes could not be generated. See mesh-stats.csv")
+            logger.warning(f"{len(failed_df)} meshes could not be generated. See mesh-stats.csv and/or the job-logs")
             logger.warning(f"Results:\n{stats_df['result'].value_counts()}")
 
 

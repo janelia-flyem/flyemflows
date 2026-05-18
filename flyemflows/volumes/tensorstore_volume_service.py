@@ -143,6 +143,10 @@ TensorStoreServiceSchema = {
     "properties": {
         "spec": TensorStoreSpecSchema,
         "context": TensorStoreContextSchema,
+        "allow-write": {
+            "type": "boolean",
+            "default": False
+        },
         "out-of-bounds-access": {
             "description": "If 'forbid', any out-of-bounds read/write is an error.\n"
                            "If 'permit', out-of-bounds reads are permitted, and filled with zeros, and out-of-bounds writes are merely ignored.\n"
@@ -436,6 +440,9 @@ class TensorStoreVolumeService(VolumeServiceWriter):
             spec = copy.deepcopy(self.volume_config['tensorstore']['spec'])
             context = copy.deepcopy(self.volume_config['tensorstore']['context'])
 
+            allow_write = self.volume_config['tensorstore']['allow-write']
+            allow_open = spec.get('open', True)
+
             create = spec.get('create', False)
             if create:
                 # We can't actually supply scale_index when creating a new scale,
@@ -448,10 +455,18 @@ class TensorStoreVolumeService(VolumeServiceWriter):
 
                 res = np.asarray(spec['scale_metadata']['resolution'])
                 spec['scale_metadata']['resolution'] = (res * (2**scale)).tolist()
+                store = ts.open(spec, read=True, write=allow_write, open=allow_open, context=ts.Context(context)).result()
             else:
-                spec['scale_index'] = scale
+                # Just open the existing scale and ignore the user's spec settings.
+                # This is not pretty, but our existing approach needs a rewrite, I think.
+                spec = {
+                    'driver': spec['driver'],
+                    'kvstore': spec['kvstore'],
+                    'scale_index': scale,
+                    'open': allow_open,
+                }
+                store = ts.open(spec, read=True, write=allow_write, open=allow_open, context=ts.Context(context)).result()
 
-            store = ts.open(spec, read=True, write=create, context=ts.Context(context)).result()
             self._stores[scale] = store
             return store
 
@@ -632,6 +647,12 @@ class TensorStoreVolumeService(VolumeServiceWriter):
                ...: dset.chunk_layout.write_chunk.shape
             Out[1]: (2048, 2048, 2048, 1)
         """
+        if not self.volume_config['tensorstore']['allow-write']:
+            raise RuntimeError(
+                "To enable writing, please set 'allow-write' to True in your config. "
+                "You may also need to check the 'open' and 'create' settings in the tensorstore spec."
+            )
+
         try:
             resource_name = self.volume_config['tensorstore']['spec']['kvstore']['bucket']
         except KeyError:

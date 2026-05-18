@@ -439,7 +439,9 @@ class BrickWall:
         dtypes.update({col: np.int32 for col in cols})
         dtypes['brick'] = object
         bricks_ddf = brick_table.to_dataframe(dtypes)
-        bricks_ddf = drop_empty_partitions(bricks_ddf)
+
+        # This doesn't work any more?
+        # bricks_ddf = drop_empty_partitions(bricks_ddf)
 
         if set_index:
             # Add it as both the index and as a column, to permit either downstream preference.

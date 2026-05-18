@@ -146,7 +146,7 @@ class SparseMeshes(Workflow):
                     try:
                         with Timer() as timer:
                             sparsevol_ranges[body] = (
-                                fetch_sparsevol(server, uuid, instance, body, scale, format='ranges'),
+                                fetch_sparsevol(server, uuid, instance, body, scale, is_supervoxels, format='ranges'),
                                 timer.seconds,
                                 ''
                             )
@@ -187,8 +187,7 @@ class SparseMeshes(Workflow):
             assert destination_type in ('directory', 'directory-of-tarfiles', 'keyvalue', 'tarsupervoxels')
 
             meshes_df['name'] = [f"{body}.{fmt}" for body in meshes_df['body']]
-            keyvalues = meshes_df.set_index('name')['buf'].to_dict()
-            keyvalues = {k:v for (k,v) in keyvalues.items() if v}
+            keyvalues = meshes_df.query('status == "success"').set_index('name')['buf'].to_dict()
 
             if destination_type == 'directory':
                 for name, mesh_bytes in keyvalues.items():
@@ -263,4 +262,4 @@ class SparseMeshes(Workflow):
                 if len(failed_df) > 0:
                     logger.warning(f"{len(failed_df)} meshes could not be generated. See mesh-stats.feather")
                     logger.warning("Result summary:\n")
-                    logger.warning(f"{all_results_df['result'].value_counts()}")
+                    logger.warning(f"{all_results_df['status'].value_counts()}")
