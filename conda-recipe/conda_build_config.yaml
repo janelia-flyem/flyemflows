@@ -5,9 +5,9 @@
 # https://docs.conda.io/projects/conda-build/en/latest/resources/variants.html
 
 python:
-  - 3.6
+  - 3.12.* *_cpython
 lz4:
-  - 3
+  - 4
 
 pin_run_as_build:
   python: x.x
