@@ -80,7 +80,7 @@ requirements:
     # - tensorstore # install with pip!
 
     # FlyEM mesh library
-    - vol2mesh >=0.1.post5
+    - vol2mesh >=0.2.post3
 
     # neuprint
     - neuprint-python
