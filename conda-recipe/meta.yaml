@@ -7,117 +7,105 @@ package:
 source:
   path: ../
 
-outputs:
-  - name: flyemflows-dependencies
-    about:
-      home: http://github.com/janelia-flyem/flyemflows
-      license: BSD (3-clause)
-      license_file: LICENSE.txt
-      summary: A "meta-package" to allow installing third-party dependencies of flyemflows without installing flyemflows itself.
+build:
+  number: 0
+  string: {{PKG_BUILDNUM}}_g{{GIT_FULL_HASH[:7]}}
+  noarch: python
 
-    build:
-      noarch: python
+  script: python setup.py install --single-version-externally-managed --record=record.txt
+  entry_points:
+    - launchflow = flyemflows.bin.launchflow:main
 
-    requirements:
-      run:
-        - python {{ python }}
-        - requests
-        - psutil
-        - numpy
-        - pandas
-        - numba
-        - scipy
-        - scikit-image
-        - fabric
-        - pyarrow
+requirements:
+  host:
+    - python {{ python }}
+    - setuptools
+  run:
+    - python {{ python }}
+    - requests
+    - psutil
+    - numpy
+    - pandas
+    - numba
+    - scipy
+    - scikit-image
+    - fabric
+    - pyarrow
 
-        - dask
+    - dask
 
-        # With dask-jobqueue 0.8.5, we were getting stung by the following issue,
-        # so I downgraded to a version that worked in our old env (flyem-310).
-        # https://github.com/dask/dask-jobqueue/issues/637
-        #- dask-jobqueue 0.8.1
+    # With dask-jobqueue 0.8.5, we were getting stung by the following issue,
+    # so I downgraded to a version that worked in our old env (flyem-310).
+    # https://github.com/dask/dask-jobqueue/issues/637
+    #- dask-jobqueue 0.8.1
 
-        # Supposedly the above issue is fixed via this PR:
-        # https://github.com/dask/dask-jobqueue/pull/661
-        # So let's try 0.9.0
-        - dask-jobqueue 0.9
+    # Supposedly the above issue is fixed via this PR:
+    # https://github.com/dask/dask-jobqueue/pull/661
+    # So let's try 0.9.0
+    - dask-jobqueue 0.9
 
-        - distributed
+    - distributed
 
-        # Misc. serialization tools
+    # Misc. serialization tools
 
-        # Note:
-        #  Previously, the lz4 packages were named 'lz4' (c library) and 'python-lz4' (python bindings)
-        #  but now they are named 'lz4-c' (c library) and 'lz4' (python bindings)
-        - lz4 {{ lz4 }}
+    # Note:
+    #  Previously, the lz4 packages were named 'lz4' (c library) and 'python-lz4' (python bindings)
+    #  but now they are named 'lz4-c' (c library) and 'lz4' (python bindings)
+    - lz4 {{ lz4 }}
 
-        - cloudpickle
-        - tblib
+    - cloudpickle
+    - tblib
 
-        - confiddler
+    - confiddler
 
-        # misc. image formats
-        - pillow
-        - vigra
-        - h5py
-        - zarr >=2.2
-        - intern # APL Boss service
+    # misc. image formats
+    - pillow
+    - vigra
+    - h5py
+    - zarr >=2.2
+    - intern # APL Boss service
 
-        # Optional dependency.
-        # The N5VolumeService uses z5py,
-        # but the ZarrVolumeservice is capable of reading/writing N5 volumes, too.
-        #- z5py
-        
-        # Needed for brainmaps support:
-        - httplib2
-        - oauth2client
-        - snappy
-        - python-snappy
+    # Optional dependency.
+    # The N5VolumeService uses z5py,
+    # but the ZarrVolumeservice is capable of reading/writing N5 volumes, too.
+    #- z5py
+    
+    # Needed for brainmaps support:
+    - httplib2
+    - oauth2client
+    - snappy
+    - python-snappy
 
-        # Not included:
-        # - tensorstore # install with pip!
+    # Not included:
+    # - tensorstore # install with pip!
 
-  - name: flyemflows
-    build:
-      noarch: python
-      script: python setup.py install --single-version-externally-managed --record=record.txt
-      entry_points:
-        - launchflow = flyemflows.bin.launchflow:main
-    requirements:
-      build:
-        - python {{ python }}
-        - setuptools
-      run:
-        - {{ pin_subpackage('flyemflows-dependencies', exact=True) }}
+    # FlyEM mesh library
+    - vol2mesh >=0.1.post5
 
-        # FlyEM mesh library
-        - vol2mesh >=0.1.post5
+    # neuprint
+    - neuprint-python
 
-        # neuprint
-        - neuprint-python
+    # DVID support
+    - libdvid-cpp >=0.2
+    - neuclease >=0.2.post107
+    - dvidutils >=0.0.post44
+    - dvid-resource-manager
 
-        # DVID support
-        - libdvid-cpp >=0.2
-        - neuclease >=0.2.post107
-        - dvidutils >=0.0.post44
-        - dvid-resource-manager
+  ##
+  ## For now, we don't run the tests during the recipe build.
+  ##
+  #test:
+  #  requires:
+  #    - pytest
+  #    - numpy-allocation-tracking
+  #    - dvid
+  #    - scipy
+  #
+  #  imports:
+  #    - flyemflows
 
-    ##
-    ## For now, we don't run the tests during the recipe build.
-    ##
-    #test:
-    #  requires:
-    #    - pytest
-    #    - numpy-allocation-tracking
-    #    - dvid
-    #    - scipy
-    #
-    #  imports:
-    #    - flyemflows
-
-    about:
-      home: http://github.com/janelia-flyem/flyemflows
-      license: BSD (3-clause)
-      license_file: LICENSE.txt
-      summary: Various compute-cluster workflows for the FlyEM project.
+about:
+  home: http://github.com/janelia-flyem/flyemflows
+  license: BSD (3-clause)
+  license_file: LICENSE.txt
+  summary: Various compute-cluster workflows for the FlyEM project.
