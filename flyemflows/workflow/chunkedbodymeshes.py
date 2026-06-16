@@ -138,7 +138,8 @@ class ChunkedBodyMeshes(Workflow):
 
         timeout = cbm_cfg['dvid']['timeout']
         set_default_dvid_session_timeout(timeout, timeout)
-        init_mesh_instances(server, uuid, seg_instance, body=True, chunks=True, sv=False)
+        multires = (cbm_cfg['body-meshes']['format'] == 'neuroglancer-multi-res')
+        init_mesh_instances(server, uuid, seg_instance, body=True, chunks=True, sv=False, multires=multires)
 
     def execute(self):
         self._init()
