@@ -48,7 +48,10 @@ class SparseMeshes(Workflow):
                 "default": 0
             },
             "rescale-factor": {
-                "description": "Optionally rescale the vertex positions before storing the mesh.\n",
+                "description":
+                    "Optionally rescale the vertex positions before storing the mesh.\n"
+                    "Note that the vertices are already scaled to match scale-0, regardless of the 'scale' setting.\n"
+                    "The rescale-factor setting is useful to further rescale the vertices, e.g. to nanometers instead of scale-0 voxel units.\n",
                 "type": "array",
                 "items": { "type": "number" },
                 "minItems": 3,
@@ -169,7 +172,7 @@ class SparseMeshes(Workflow):
                         m = Mesh.from_binary_blocks(masks, boxes * 2**scale)
                         m.laplacian_smooth(smoothing_iterations)
                         m.simplify(decimation_fraction)
-                        m.vertices_zyx *= rescale
+                        m.vertices_zyx *= rescale[::-1]
                         buf = m.serialize(fmt=fmt)
                         mesh_results[body] = MeshResult(
                             body, 'success', buf, len(buf), len(m.vertices_zyx), download_seconds, timer.seconds, download_error, ''
