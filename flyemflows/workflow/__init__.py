@@ -19,6 +19,7 @@ from .roistats import RoiStats
 from .samplepoints import SamplePoints
 from .sparseblockstats import SparseBlockstats
 from .sparsemeshes import SparseMeshes
+from .sparseskeletons import SparseSkeletons
 from .stitchedmeshes import StitchedMeshes
 from .svdecimate import SVDecimate
 
@@ -45,6 +46,7 @@ BUILTIN_WORKFLOWS = [
     SamplePoints,
     SparseBlockstats,
     SparseMeshes,
+    SparseSkeletons,
     StitchedMeshes,
     SVDecimate,
 ]
