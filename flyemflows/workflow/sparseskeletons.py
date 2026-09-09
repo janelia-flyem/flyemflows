@@ -76,6 +76,24 @@ class SparseSkeletons(Workflow):
                 "type": "integer",
                 "default": 5
             },
+            "coordinate-units": {
+                "description":
+                    "(method 'neuclease' only.)\n"
+                    "Units for the skeleton coordinates stored in the SWC file.\n"
+                    "'nanometers' requires the segmentation's voxel size (fetched from DVID).\n",
+                "type": "string",
+                "enum": ["voxels", "nanometers"],
+                "default": "voxels"
+            },
+            "radius-units": {
+                "description":
+                    "(method 'neuclease' only.)\n"
+                    "Units for the skeleton radii stored in the SWC file.\n"
+                    "'voxels' is only valid for isotropic datasets (it raises otherwise).\n",
+                "type": "string",
+                "enum": ["voxels", "nanometers"],
+                "default": "voxels"
+            },
             "heal-max-distance": {
                 "description":
                     "If greater than 0, disconnected skeleton fragments are reconnected via\n"
@@ -138,6 +156,8 @@ class SparseSkeletons(Workflow):
         block_shape = options["block-shape"][::-1]  # XYZ config -> ZYX
         halo = options["halo"]
         closing_radius = options["closing-radius"]
+        coordinate_units = options["coordinate-units"]
+        radius_units = options["radius-units"]
         heal_max_distance = options["heal-max-distance"] or None
         fmt = options["format"]
         threads = options["processing-threads"]
@@ -188,6 +208,8 @@ class SparseSkeletons(Workflow):
                             closing_radius=closing_radius,
                             heal_max_distance=heal_max_distance,
                             voxel_size_xyz=voxel_size_xyz,
+                            coordinate_units=coordinate_units,
+                            radius_units=radius_units,
                             format=fmt,
                             threads=threads,
                             uuid=uuid,
