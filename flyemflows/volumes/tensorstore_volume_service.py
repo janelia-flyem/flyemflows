@@ -455,7 +455,9 @@ class TensorStoreVolumeService(VolumeServiceWriter):
 
                 res = np.asarray(spec['scale_metadata']['resolution'])
                 spec['scale_metadata']['resolution'] = (res * (2**scale)).tolist()
-                store = ts.open(spec, read=True, write=allow_write, open=allow_open, context=ts.Context(context)).result()
+                # Note: Explicitly passing open=... overrides the spec's open mode entirely,
+                # so we must also pass create=... explicitly or it will be dropped.
+                store = ts.open(spec, read=True, write=allow_write, open=allow_open, create=True, context=ts.Context(context)).result()
             else:
                 # Just open the existing scale and ignore the user's spec settings.
                 # This is not pretty, but our existing approach needs a rewrite, I think.
