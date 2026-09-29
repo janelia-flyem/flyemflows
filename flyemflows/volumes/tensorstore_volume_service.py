@@ -330,6 +330,12 @@ class TensorStoreVolumeService(VolumeServiceWriter):
 
         self.volume_config = volume_config
 
+        if volume_config['tensorstore']['subprocess-timeout'] and self._using_daemonic_dask_workers():
+            msg = ("Your tensorstore config uses subprocess-timeout, which requires multiprocessing, "
+                   "so you must configure your dask workers NOT to be daemons.\n"
+                   "In your dask-config, set distributed.worker.daemon: false")
+            raise RuntimeError(msg)
+
         if volume_config['tensorstore']['spec']['path']:
             raise RuntimeError("The tensorstore.spec.path property is deprecated.  Please use tensorstore.spec.kvstore.path instead.")
 
@@ -406,6 +412,21 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         self._pools = {}
         self._pools_lock = threading.Lock()
         self._subprocess_timeout = volume_config["tensorstore"]["subprocess-timeout"]
+
+    @staticmethod
+    def _using_daemonic_dask_workers():
+        """
+        Return True if a distributed cluster is active and its workers are
+        daemon processes (the default), which cannot spawn subprocesses.
+        """
+        import dask
+        try:
+            from distributed import get_client
+            get_client()
+        except (ImportError, ValueError):
+            # No distributed client, so we're using a synchronous/threaded/processes scheduler.
+            return False
+        return dask.config.get('distributed.worker.daemon', True)
 
     def _pool(self):
         """
