@@ -98,11 +98,17 @@ class MaskedCopy(Workflow):
         input_service, mask_service, output_service = self.init_services()
 
         def _masked_copy(box):
-            seg_vol = input_service.get_subvolume(box)
             mask_vol = mask_service.get_subvolume(box).astype(bool)
+            mask_voxels = mask_vol.sum()
+            if mask_voxels == 0:
+                # Nothing to copy.  Skip the input read and output write entirely,
+                # since the output is presumed to be zeros by default.
+                return (*box[0], 0)
+
+            seg_vol = input_service.get_subvolume(box)
             seg_vol[~mask_vol] = 0
             output_service.write_subvolume(seg_vol, box[0])
-            return (*box[0], mask_vol.sum())
+            return (*box[0], mask_voxels)
 
         # Boxes are determined by the left volume/labels/roi
         boxes = self.init_boxes( input_service, options["roi"] )
