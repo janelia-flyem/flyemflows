@@ -131,6 +131,10 @@ class MitoRepair(Workflow):
                         "description": "name of the ROI",
                         "type": "string",
                         "default": ""
+                    },
+                    "relative-scale": {
+                        "type": "integer",
+                        "default": 5
                     }
                 }
             }
@@ -265,7 +269,8 @@ class MitoRepair(Workflow):
         """
         Return a set of bounding boxes to tile the given ROI.
         Scale 0 of the volume service should correspond to full-res data,
-        which is 32x higher-res than ROI resolution.
+        which is typically 32x higher-res than ROI resolution
+        (but is configurable using the "relative-scale" option).
         """
         if not roi["name"]:
             boxes = boxes_from_grid(volume_service.bounding_box_zyx, chunk_shape_s0, clipped=True)
@@ -280,18 +285,18 @@ class MitoRepair(Workflow):
         roi["server"] = (roi["server"] or volume_service.server)
         roi["uuid"] = (roi["uuid"] or volume_service.uuid)
 
-        assert not (chunk_shape_s0 % 2**5).any(), \
-            "If using an ROI, select a chunk shape that is divisible by 32"
+        assert not (chunk_shape_s0 % 2**roi["relative-scale"]).any(), \
+            "If using an ROI, select a chunk shape that is divisible by the ROI voxel size relative to your base resolution."
 
         seg_box_s0 = volume_service.bounding_box_zyx
-        seg_box_s0 = round_box(seg_box_s0, 2**5)
-        seg_box_s5 = seg_box_s0 // 2**5
+        seg_box_s0 = round_box(seg_box_s0, 2**roi["relative-scale"])
+        seg_box_s5 = seg_box_s0 // 2**roi["relative-scale"]
 
         with Timer(f"Fetching mask for ROI '{roi['name']}' ({seg_box_s0[:, ::-1].tolist()})", logger):
             roi_mask_s5, _ = fetch_roi(roi["server"], roi["uuid"], roi["name"], format='mask', mask_box=seg_box_s5)
 
         # SBM 'full-res' corresponds to the input service voxels, not necessarily scale-0.
-        sbm = SparseBlockMask(roi_mask_s5, seg_box_s0, 2**5)
+        sbm = SparseBlockMask(roi_mask_s5, seg_box_s0, 2**roi["relative-scale"])
         boxes = sbm.sparse_boxes(chunk_shape_s0)
 
         # Clip boxes to the true (not rounded) bounding box
