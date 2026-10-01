@@ -194,11 +194,19 @@ class MitoRepair(Workflow):
                 pickle.dump(combined_table, f)
 
         with Timer("Selecting top merge for each mito body", logger):
-            filtered_table = (combined_table[['body_size_local_vol', 'hull_body']]
+            # Keep all stats columns from the chunk that saw the most of each mito body.
+            filtered_table = (combined_table
                                 .query('hull_body != 0')
                                 .sort_values('body_size_local_vol', ascending=False)
                                 .groupby('body')
-                                .head(1))
+                                .head(1)
+                                .copy())
+
+            # The voxel counts were stored as float32; convert them back to integers.
+            count_cols = ['mito_vol', 'non_mito_vol', 'body_size_local_vol', 'body_size_central', 'halo_size', 'body_size',
+                          'mito_edge', 'non_mito_edge', 'body_size_local_edge']
+            count_cols = [c for c in count_cols if c in filtered_table.columns]
+            filtered_table[count_cols] = filtered_table[count_cols].astype(np.int64)
 
         try:
             filtered_table = self.append_synapse_columns(filtered_table, options["neuprint"])
@@ -237,6 +245,7 @@ class MitoRepair(Workflow):
 
         with Timer("Writing final results", logger):
             filtered_table.to_csv('final-fragment-table.csv', header=True, index=True)
+            filtered_table.reset_index().to_feather('final-fragment-table.feather')
             with open('final-fragment-table.pkl', 'wb') as f:
                 pickle.dump(filtered_table, f)
 
@@ -411,6 +420,9 @@ def identify_mito_bodies(body_seg, mito_binary, box, scale, halo, body_seg_dvid_
                     .value_counts()
                     .rename('body_size_central')
                     .rename_axis('body'))
+
+    # Express in scale-0 voxels, like the other sizes above.
+    central_sizes *= ((2**scale)**3)
 
     central_mask = np.ones(central_box[1] - central_box[0], bool)
     update_mask_layer(viewer, 'central-box', central_mask, scale, central_box + box[0])
