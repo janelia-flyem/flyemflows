@@ -212,9 +212,9 @@ class MitoRepair(Workflow):
                                 .head(1)
                                 .copy())
 
-            # The voxel counts were stored as float32; convert them back to integers.
+            # The voxel counts and coordinates were stored as float32; convert them back to integers.
             count_cols = ['mito_vol', 'non_mito_vol', 'body_size_local_vol', 'body_size_central', 'halo_size', 'body_size',
-                          'mito_edge', 'non_mito_edge', 'body_size_local_edge']
+                          'mito_edge', 'non_mito_edge', 'body_size_local_edge', 'x', 'y', 'z']
             count_cols = [c for c in count_cols if c in filtered_table.columns]
             filtered_table[count_cols] = filtered_table[count_cols].astype(np.int64)
 
@@ -377,6 +377,10 @@ def mito_body_assignments_for_box(body_seg_svc, mito_class_svc, central_box_s0, 
     stats about the size of each body, including its size within the
     "central" box vs. "halo" that was also used when this block was processed.
 
+    The table also includes 'x', 'y', 'z' columns: the centroid of each mito body,
+    computed from only the portion of the body within this box (including halo),
+    in scale-0 coordinates.
+
     If roi_crop is provided (see roi_crop_for_box()), the table also includes
     an 'in_roi' column, indicating whether any voxels of each mito body
     (within this box) lie inside the ROI.
@@ -406,6 +410,10 @@ def mito_body_assignments_for_box(body_seg_svc, mito_class_svc, central_box_s0, 
         mito_bodies, mito_bodies_mask, mito_body_ct = identify_mito_bodies(body_seg, mito_binary, box, scale, halo, body_seg_dvid_src, viewer, res0, resource_mgr_client)
         if mito_bodies is None:
             return None
+
+    with Timer("Computing local mito body centroids", logger):
+        centroids = local_centroids_s0(body_seg, mito_bodies_mask, mito_bodies, box, scale)
+        mito_body_ct[['x', 'y', 'z']] = centroids[['x', 'y', 'z']].values
 
     if roi_crop is not None:
         with Timer("Checking which mito bodies are inside the ROI", logger):
@@ -514,6 +522,36 @@ def identify_mito_bodies(body_seg, mito_binary, box, scale, halo, body_seg_dvid_
         return None, None, None
 
     return mito_bodies, mito_bodies_mask, filtered_ct.copy()
+
+
+def local_centroids_s0(body_seg, mito_bodies_mask, mito_bodies, box, scale):
+    """
+    Compute the centroid of each mito body, using only the voxels within this box
+    (including the halo), and return it in scale-0 coordinates, rounded down to integers.
+
+    Note:
+        The centroid of a non-convex body may not lie on the body itself.
+
+    Args:
+        body_seg, mito_bodies_mask, box:
+            The segmentation, mask of mito body voxels, and box (with halo),
+            all at the analysis scale.
+        mito_bodies:
+            The mito body IDs
+        scale:
+            The analysis scale
+
+    Returns:
+        DataFrame indexed by body, with int64 columns ['z', 'y', 'x'], aligned with mito_bodies
+    """
+    coords = np.nonzero(mito_bodies_mask)
+    df = pd.DataFrame({'body': body_seg[coords], 'z': coords[0], 'y': coords[1], 'x': coords[2]})
+    centroids = df.groupby('body')[['z', 'y', 'x']].mean()
+
+    # Convert from local analysis-scale voxel indexes to global scale-0 coordinates,
+    # using the center of each analysis-scale voxel.
+    centroids = (centroids + box[0] + 0.5) * 2**scale
+    return np.floor(centroids.reindex(mito_bodies)).astype(np.int64)
 
 
 def roi_crop_for_box(roi_mask, roi_box, roi_scale, central_box_s0, halo_s0):
