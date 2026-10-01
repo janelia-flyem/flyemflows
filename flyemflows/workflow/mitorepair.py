@@ -15,9 +15,10 @@ from dvid_resource_manager.client import ResourceManagerClient
 from neuclease.dvid import fetch_roi, fetch_sizes
 from neuclease.util import (Timer, round_box, SparseBlockMask, boxes_from_grid, tqdm_proxy,
                             iter_batches, contingency_table, edge_mask, mask_for_labels,
-                            approximate_hulls_for_segments, apply_mask_for_labels, box_to_slicing)
+                            approximate_hulls_for_segments, apply_mask_for_labels, box_to_slicing,
+                            box_intersection)
 
-from ..util import replace_default_entries, auto_retry
+from ..util import replace_default_entries, auto_retry, upsample
 from ..volumes import VolumeService, SegmentationVolumeSchema, DvidVolumeService
 from . import Workflow
 
@@ -170,22 +171,31 @@ class MitoRepair(Workflow):
 
         # Boxes are determined by the left volume/labels/roi
         chunk_shape = np.array(3*(options["chunk-width-s0"],))
-        boxes = self.init_boxes(seg_service, options["roi"], chunk_shape)
+        boxes, roi_info = self.init_boxes(seg_service, options["roi"], chunk_shape)
         logger.info(f"Processing {len(boxes)} bricks in total.")
 
+        # Each task gets the small piece of the ROI mask that covers its box (including halo),
+        # so it can determine which mito bodies are inside the ROI.
+        if roi_info is None:
+            roi_crops = [None] * len(boxes)
+        else:
+            roi_crops = [roi_crop_for_box(*roi_info, box, options["halo-width-s0"]) for box in boxes]
+
         with Timer("Finding merges to repair mito fragmentation in the segmentation", logger):
-            def process_box(central_box):
+            def process_box(box_and_roi_crop):
+                central_box, roi_crop = box_and_roi_crop
                 fragment_table = mito_body_assignments_for_box( seg_service,
                                                                 mask_service,
                                                                 central_box,
                                                                 options["halo-width-s0"],
                                                                 options["analysis-scale"],
                                                                 body_seg_dvid_src,
-                                                                resource_mgr_client=resource_mgr_client )
+                                                                resource_mgr_client=resource_mgr_client,
+                                                                roi_crop=roi_crop )
                 return fragment_table
 
             # Compute block-wise, and drop empty results
-            fragment_tables = db.from_sequence(boxes, partition_size=1).map(process_box).compute()
+            fragment_tables = db.from_sequence([*zip(boxes, roi_crops)], partition_size=1).map(process_box).compute()
             fragment_tables = [*filter(lambda t: t is not None, fragment_tables)]
 
         with Timer("Combining fragment tables", logger):
@@ -207,6 +217,16 @@ class MitoRepair(Workflow):
                           'mito_edge', 'non_mito_edge', 'body_size_local_edge']
             count_cols = [c for c in count_cols if c in filtered_table.columns]
             filtered_table[count_cols] = filtered_table[count_cols].astype(np.int64)
+
+        if 'in_roi' in combined_table.columns:
+            with Timer("Dropping mito bodies outside the ROI", logger):
+                # A body may span several chunks.  Keep it if any chunk saw it inside the ROI,
+                # even if the chunk that determined its merge saw only the portion outside the ROI.
+                in_roi_bodies = combined_table.query('in_roi').index.unique()
+                num_before = len(filtered_table)
+                filtered_table = filtered_table.query('body in @in_roi_bodies').drop(columns=['in_roi'])
+                logger.info(f"Dropped {num_before - len(filtered_table)} of {num_before} mito bodies "
+                            "which lie entirely outside the ROI")
 
         try:
             filtered_table = self.append_synapse_columns(filtered_table, options["neuprint"])
@@ -280,10 +300,14 @@ class MitoRepair(Workflow):
         Scale 0 of the volume service should correspond to full-res data,
         which is typically 32x higher-res than ROI resolution
         (but is configurable using the "relative-scale" option).
+
+        Returns:
+            (boxes, roi_info), where roi_info is (roi_mask, roi_box, roi_scale)
+            or None if no ROI was specified.  roi_box is in ROI-resolution coordinates.
         """
         if not roi["name"]:
             boxes = boxes_from_grid(volume_service.bounding_box_zyx, chunk_shape_s0, clipped=True)
-            return np.array([*boxes])
+            return np.array([*boxes]), None
 
         base_service = volume_service.base_service
 
@@ -311,7 +335,7 @@ class MitoRepair(Workflow):
         # Clip boxes to the true (not rounded) bounding box
         boxes[:, 0] = np.maximum(boxes[:, 0], volume_service.bounding_box_zyx[0])
         boxes[:, 1] = np.minimum(boxes[:, 1], volume_service.bounding_box_zyx[1])
-        return boxes
+        return boxes, (roi_mask_s5, seg_box_s5, roi["relative-scale"])
 
     def append_synapse_columns(self, body_table, neuprint_info):
         server, dataset = neuprint_info["server"], neuprint_info["dataset"]
@@ -340,7 +364,8 @@ class MitoRepair(Workflow):
 
 
 def mito_body_assignments_for_box(body_seg_svc, mito_class_svc, central_box_s0, halo_s0=128, scale=1,
-                                  body_seg_dvid_src=None, viewer=None, res0=8, hull_scale=0, resource_mgr_client=None):
+                                  body_seg_dvid_src=None, viewer=None, res0=8, hull_scale=0, resource_mgr_client=None,
+                                  roi_crop=None):
     """
     Identify small bodies in the segmentation for whom a
     significant fraction are covered by the mito mask.
@@ -351,6 +376,10 @@ def mito_body_assignments_for_box(body_seg_svc, mito_class_svc, central_box_s0, 
     The results are returned in a DataFrame which also contains basic
     stats about the size of each body, including its size within the
     "central" box vs. "halo" that was also used when this block was processed.
+
+    If roi_crop is provided (see roi_crop_for_box()), the table also includes
+    an 'in_roi' column, indicating whether any voxels of each mito body
+    (within this box) lie inside the ROI.
     """
     hull_scale = max(hull_scale, scale)
     res = (2**scale) * res0
@@ -377,6 +406,10 @@ def mito_body_assignments_for_box(body_seg_svc, mito_class_svc, central_box_s0, 
         mito_bodies, mito_bodies_mask, mito_body_ct = identify_mito_bodies(body_seg, mito_binary, box, scale, halo, body_seg_dvid_src, viewer, res0, resource_mgr_client)
         if mito_bodies is None:
             return None
+
+    if roi_crop is not None:
+        with Timer("Checking which mito bodies are inside the ROI", logger):
+            mito_body_ct['in_roi'] = mito_bodies_in_roi(body_seg, mito_bodies_mask, mito_bodies, box, scale, *roi_crop)
 
     with Timer("Computing hull seeds", logger):
         hull_seeds_df, seed_bodies, hull_seed_mask, hull_seeds_cc = compute_hull_seeds(mito_bodies_mask, mito_binary, body_seg, box, scale, viewer, res0)
@@ -483,6 +516,67 @@ def identify_mito_bodies(body_seg, mito_binary, box, scale, halo, body_seg_dvid_
     return mito_bodies, mito_bodies_mask, filtered_ct.copy()
 
 
+def roi_crop_for_box(roi_mask, roi_box, roi_scale, central_box_s0, halo_s0):
+    """
+    Extract the portion of the ROI mask which covers the given box (plus halo).
+    The crop is expanded to align to the ROI voxel grid, and any portion
+    outside of the ROI mask's own bounding box is treated as outside the ROI.
+
+    Args:
+        roi_mask, roi_box, roi_scale:
+            The ROI mask, its bounding box (in ROI-resolution coordinates),
+            and the ROI's scale relative to scale 0, as returned by MitoRepair.init_boxes()
+        central_box_s0, halo_s0:
+            The box (without halo) and halo width, in scale-0 coordinates
+
+    Returns:
+        (crop_box, crop, roi_scale), where crop_box is in ROI-resolution coordinates.
+    """
+    box_s0 = np.asarray(central_box_s0) + [[-halo_s0]*3, [halo_s0]*3]
+    crop_box = round_box(box_s0, 2**roi_scale, 'out') // 2**roi_scale
+
+    crop = np.zeros(crop_box[1] - crop_box[0], bool)
+    isect = box_intersection(crop_box, roi_box)
+    if (isect[1] > isect[0]).all():
+        crop[box_to_slicing(*(isect - crop_box[0]))] = roi_mask[box_to_slicing(*(isect - roi_box[0]))]
+    return crop_box, crop, roi_scale
+
+
+def mito_bodies_in_roi(body_seg, mito_bodies_mask, mito_bodies, box, scale, roi_crop_box, roi_crop, roi_scale):
+    """
+    Determine which of the given mito bodies have any voxels inside the ROI.
+
+    Args:
+        body_seg, mito_bodies_mask, box:
+            The segmentation, mask of mito body voxels, and box (with halo),
+            all at the analysis scale.
+        mito_bodies:
+            The mito body IDs to check
+        scale:
+            The analysis scale
+        roi_crop_box, roi_crop, roi_scale:
+            As returned by roi_crop_for_box()
+
+    Returns:
+        Boolean array, aligned with mito_bodies
+    """
+    # In most boxes, the ROI is either entirely full or entirely empty,
+    # so we can avoid upsampling the ROI to the full analysis resolution.
+    if roi_crop.all():
+        return np.ones(len(mito_bodies), bool)
+    if not roi_crop.any():
+        return np.zeros(len(mito_bodies), bool)
+
+    assert roi_scale >= scale, \
+        f"The ROI scale ({roi_scale}) must not be finer than the analysis scale ({scale})"
+    factor = 2**(roi_scale - scale)
+    roi_mask = upsample(roi_crop, factor)
+    roi_mask = roi_mask[box_to_slicing(*(box - roi_crop_box[0] * factor))]
+
+    bodies_in_roi = pd.unique(body_seg[mito_bodies_mask & roi_mask])
+    return np.isin(np.asarray(mito_bodies), bodies_in_roi)
+
+
 def compute_hull_seeds(mito_bodies_mask, mito_binary, body_seg, box, scale, viewer=None, res0=8):
     # Select the voxels in the "mito bodies" that overlay the mito mask
     hull_seed_mask = mito_bodies_mask.copy()
@@ -578,6 +672,8 @@ def select_hulls_for_mito_bodies(mito_body_ct, mito_bodies_mask, mito_binary, bo
 
     dtypes = {col: np.float32 for col in mito_body_ct.columns}
     dtypes['hull_body'] = np.uint64
+    if 'in_roi' in dtypes:
+        dtypes['in_roi'] = bool
     mito_body_ct = mito_body_ct.astype(dtypes)
 
     if viewer:
