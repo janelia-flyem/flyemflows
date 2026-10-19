@@ -18,8 +18,6 @@ from neuclease.dvid import default_node_service
 
 from vol2mesh import Mesh, concatenate_meshes
 
-from libdvid import DVIDNodeService
-
 from ..util import as_completed_synchronous
 from ..brick import Brick, BrickWall
 from ..volumes import VolumeService, DvidVolumeService, DvidSegmentationVolumeSchema

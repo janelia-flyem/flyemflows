@@ -86,7 +86,6 @@ requirements:
     - neuprint-python
 
     # DVID support
-    - libdvid-cpp >=0.2
     - neuclease >=0.2.post107
     - dvidutils >=0.0.post44
     - dvid-resource-manager
