@@ -398,7 +398,13 @@ class CopyGrayscale(Workflow):
 
 
     def _hotknife_destripe(self, bricked_slab_wall, slab_index):
-        from dvidutils import destripe
+        try:
+            from dvidutils import destripe
+        except ImportError as ex:
+            raise ImportError(
+                "The hotknife-destripe contrast adjustment requires the 'dvidutils' package, "
+                "which is no longer a dependency of flyemflows.  Please install it separately."
+            ) from ex
 
         options = self.config["copygrayscale"]
         assert options["slab-axis"] == 'z', \

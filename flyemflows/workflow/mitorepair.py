@@ -9,7 +9,7 @@ import dask.bag as db
 from skimage.measure import label
 from skimage.morphology import binary_dilation, ball
 
-from dvidutils import LabelMapper
+from neuclease.util import LabelMapper
 from dvid_resource_manager.client import ResourceManagerClient
 
 from neuclease.dvid import fetch_roi, fetch_sizes

@@ -2,7 +2,7 @@ import os
 import lz4.frame
 import numpy as np
 
-from dvidutils import LabelMapper
+from neuclease.util import LabelMapper
 from confiddler import validate
 
 from .labelmap_utils import LabelMapSchema, load_labelmap

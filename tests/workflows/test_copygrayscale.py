@@ -7,7 +7,7 @@ from io import StringIO
 import h5py
 import numpy as np
 
-from dvidutils import downsample_labels
+from flyemflows.util import downsample
 from neuclease.util import box_to_slicing, boxes_from_grid
 from neuclease.dvid import create_voxel_instance, post_raw, fetch_raw
 
@@ -176,12 +176,12 @@ def test_copygrayscale_from_hdf5_to_dvid_multiscale(setup_hdf5_grayscale_input, 
     config["input"]["geometry"]["bounding-box"] = [[0,0,0],[128,256,128]]
     config["copygrayscale"]["min-pyramid-scale"] = 1
     config["copygrayscale"]["max-pyramid-scale"] = 2
-    config["copygrayscale"]["downsample-method"] = "label" # This test is easier to write if we use this downsampling method
+    config["copygrayscale"]["downsample-method"] = "labels-numba" # This test is easier to write if we use this downsampling method
  
     box_zyx, scale_0_vol = _run_to_dvid( setup_hdf5_grayscale_input, check_scale_0=False )
  
-    scale_1_vol = downsample_labels(scale_0_vol, 2, True)
-    scale_2_vol = downsample_labels(scale_1_vol, 2, True)
+    scale_1_vol = downsample(scale_0_vol, 2, 'labels-numba')
+    scale_2_vol = downsample(scale_1_vol, 2, 'labels-numba')
  
     # Check the other scales -- be careful to extract exactly one brick.
     output_vol = fetch_raw(dvid_address, repo_uuid, output_grayscale_name + '_1', box_zyx // 2)
