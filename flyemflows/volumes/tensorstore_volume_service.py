@@ -185,6 +185,15 @@ TensorStoreServiceSchema = {
                 "      unless reinitialize-via is 'unpickle', which has its own problems.",
             "type": "number",
             "default": 0.0
+        },
+        "request-timeout": {
+            "description":
+                "If nonzero, raise a TimeoutError if opening the store or reading a subvolume\n"
+                "takes longer than this many seconds, so the request can be retried.\n"
+                "Unlike subprocess-timeout, this runs in the calling process, so it's much cheaper.\n"
+                "Note: Not applied to writes.",
+            "type": "number",
+            "default": 0.0
         }
     }
 }
@@ -321,6 +330,12 @@ class TensorStoreVolumeService(VolumeServiceWriter):
 
         self.volume_config = volume_config
 
+        if volume_config['tensorstore']['subprocess-timeout'] and self._using_daemonic_dask_workers():
+            msg = ("Your tensorstore config uses subprocess-timeout, which requires multiprocessing, "
+                   "so you must configure your dask workers NOT to be daemons.\n"
+                   "In your dask-config, set distributed.worker.daemon: false")
+            raise RuntimeError(msg)
+
         if volume_config['tensorstore']['spec']['path']:
             raise RuntimeError("The tensorstore.spec.path property is deprecated.  Please use tensorstore.spec.kvstore.path instead.")
 
@@ -398,6 +413,21 @@ class TensorStoreVolumeService(VolumeServiceWriter):
         self._pools_lock = threading.Lock()
         self._subprocess_timeout = volume_config["tensorstore"]["subprocess-timeout"]
 
+    @staticmethod
+    def _using_daemonic_dask_workers():
+        """
+        Return True if a distributed cluster is active and its workers are
+        daemon processes (the default), which cannot spawn subprocesses.
+        """
+        import dask
+        try:
+            from distributed import get_client
+            get_client()
+        except (ImportError, ValueError):
+            # No distributed client, so we're using a synchronous/threaded/processes scheduler.
+            return False
+        return dask.config.get('distributed.worker.daemon', True)
+
     def _pool(self):
         """
         We maintain a dict of multiprocessing Pools
@@ -429,6 +459,19 @@ class TensorStoreVolumeService(VolumeServiceWriter):
             self._pools[(pid, thread_id)] = None
             del self._pools[(pid, thread_id)]
 
+    def _wait(self, future):
+        """
+        Wait for the given tensorstore Future, subject to the configured request-timeout (if any).
+        Tensorstore never times out a stalled network request on its own,
+        so without a timeout, a single stalled request can hang the whole job.
+        """
+        timeout = self.volume_config['tensorstore']['request-timeout'] or None
+        try:
+            return future.result(timeout=timeout)
+        except TimeoutError:
+            future.cancel()
+            raise
+
     def store(self, scale):
         try:
             return self._stores[scale]
@@ -457,7 +500,7 @@ class TensorStoreVolumeService(VolumeServiceWriter):
                 spec['scale_metadata']['resolution'] = (res * (2**scale)).tolist()
                 # Note: Explicitly passing open=... overrides the spec's open mode entirely,
                 # so we must also pass create=... explicitly or it will be dropped.
-                store = ts.open(spec, read=True, write=allow_write, open=allow_open, create=True, context=ts.Context(context)).result()
+                store = self._wait(ts.open(spec, read=True, write=allow_write, open=allow_open, create=True, context=ts.Context(context)))
             else:
                 # Just open the existing scale and ignore the user's spec settings.
                 # This is not pretty, but our existing approach needs a rewrite, I think.
@@ -467,7 +510,7 @@ class TensorStoreVolumeService(VolumeServiceWriter):
                     'scale_index': scale,
                     'open': allow_open,
                 }
-                store = ts.open(spec, read=True, write=allow_write, open=allow_open, context=ts.Context(context)).result()
+                store = self._wait(ts.open(spec, read=True, write=allow_write, open=allow_open, context=ts.Context(context)))
 
             self._stores[scale] = store
             return store
@@ -617,7 +660,7 @@ class TensorStoreVolumeService(VolumeServiceWriter):
             # Tensorstore uses X,Y,Z conventions, so it's best to
             # request a Fortran array and transpose it ourselves.
             box_xyz = box_zyx[:, ::-1]
-            vol_xyzc = store[box_to_slicing(*box_xyz)].read(order='F').result()
+            vol_xyzc = self._wait(store[box_to_slicing(*box_xyz)].read(order='F'))
             vol_xyz = vol_xyzc[..., 0]
             vol_zyx = vol_xyz.transpose()
 
