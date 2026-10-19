@@ -476,7 +476,7 @@ def apply_label_mapping(bricks, mapping_pairs):
              [orig,new],
              ... ],
     """
-    from dvidutils import LabelMapper
+    from neuclease.util import LabelMapper
     def remap_bricks(partition_bricks):
         domain, codomain = mapping_pairs.transpose()
         mapper = LabelMapper(domain, codomain)

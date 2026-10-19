@@ -14,7 +14,7 @@ import zarr
 import numpy as np
 import pandas as pd
 
-from dvidutils import downsample_labels
+from flyemflows.util import downsample
 
 from neuclease.util import box_to_slicing, extract_subvol, overwrite_subvol, box_intersection, mask_for_labels, apply_mask_for_labels, SparseBlockMask
 from neuclease.dvid import fetch_repo_instances, create_labelmap_instance, post_labelmap_voxels, fetch_raw, fetch_labelmap_voxels
@@ -426,8 +426,8 @@ def test_copysegmentation_from_hdf5_to_dvid_multiscale(setup_hdf5_segmentation_i
     box_zyx = np.array(box_zyx)
 
     scale_0_vol = volume[box_to_slicing(*box_zyx)]
-    scale_1_vol = downsample_labels(scale_0_vol, 2, True)
-    scale_2_vol = downsample_labels(scale_1_vol, 2, True)
+    scale_1_vol = downsample(scale_0_vol, 2, 'labels-numba')
+    scale_2_vol = downsample(scale_1_vol, 2, 'labels-numba')
  
     output_0_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, box_zyx // 1, scale=0)
     output_1_vol = fetch_labelmap_voxels(dvid_address, repo_uuid, output_segmentation_name, box_zyx // 2, scale=1)
@@ -474,8 +474,8 @@ def test_copysegmentation_dvid_to_zarr(setup_dvid_to_zarr):
     box_zyx = np.array(box_zyx)
 
     scale_0_vol = volume[box_to_slicing(*box_zyx)]
-    scale_1_vol = downsample_labels(scale_0_vol, 2, True)
-    scale_2_vol = downsample_labels(scale_1_vol, 2, True)
+    scale_1_vol = downsample(scale_0_vol, 2, 'labels-numba')
+    scale_2_vol = downsample(scale_1_vol, 2, 'labels-numba')
  
     store = zarr.NestedDirectoryStore(f"{execution_dir}/{output_file}")
     f = zarr.open(store, 'r')

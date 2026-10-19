@@ -19,7 +19,7 @@ from neuclease.dvid import (fetch_mappings,
                             fetch_supervoxels, fetch_mapping, set_default_dvid_session_timeout)
 
 from dvid_resource_manager.client import ResourceManagerClient
-from dvidutils import LabelMapper
+from neuclease.util import LabelMapper
 
 from vol2mesh import Mesh
 

@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import networkx as nx
 
-from dvidutils import LabelMapper
+from neuclease.util import LabelMapper
 
 from neuclease.util import Timer, tqdm_proxy, swap_df_cols, compute_parallel
 from neuclease.dvid import (fetch_instance_info, fetch_mapping, fetch_labels_batched, determine_bodies_of_interest,

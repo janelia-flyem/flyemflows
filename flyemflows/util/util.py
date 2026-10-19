@@ -23,7 +23,6 @@ from skimage.util import view_as_blocks
 from skimage.measure import block_reduce
 from skimage.transform import downscale_local_mean
 
-from dvidutils import downsample_labels
 from neuclease.util import Timer, parse_timestamp, downsample_labels_3d_suppress_zero, bincount_last_axis
 
 logger = logging.getLogger(__name__)
@@ -96,14 +95,12 @@ def downsample(volume, factor, method):
         else:
             return scipy.ndimage.zoom(volume, 1/factor)
 
-    if method == 'mode':
-        if len(set(factor)) > 1:
-            raise RuntimeError("The 'mode' downsampling implementation doesn't support anisotric downsampling.")
-        return downsample_labels(volume, factor, False)
-    if method in ('labels', 'label'):  # synonyms
-        if len(set(factor)) > 1:
-            raise RuntimeError("The 'labels' downsampling implementation doesn't support anisotric downsampling.")
-        return downsample_labels(volume, factor, True)
+    if method in ('mode', 'labels', 'label'):
+        # These methods were implemented via dvidutils.downsample_labels(),
+        # but flyemflows no longer depends on dvidutils.
+        raise NotImplementedError(
+            f"The '{method}' downsampling method is no longer supported. "
+            "Use 'labels-numba' instead.")
     if method == 'labels-numba':
         reduced_output, _reduced_box = downsample_labels_3d_suppress_zero(volume, factor)
         return reduced_output
@@ -115,7 +112,7 @@ def downsample(volume, factor, method):
 
 def block_mode_via_bincounts(volume, factor, suppress_zero=False):
     """
-    Same as dvidutils.downsample_labels(), but implemented using only numpy.
+    Block-mode downsampling, implemented using only numpy.
     However, this relies on bincount, and therefore cannot handle inputs with
     arbitrarily high label values.
 

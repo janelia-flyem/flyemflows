@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import dask.bag as db
 
-from dvidutils import LabelMapper
+from neuclease.util import LabelMapper
 
 from dvid_resource_manager.client import ResourceManagerClient
 from neuclease.util import Timer, round_box, SparseBlockMask, boxes_from_grid, ndindex_array

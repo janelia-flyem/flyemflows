@@ -17,7 +17,7 @@ from dvid_resource_manager.client import ResourceManagerClient
 from neuclease.util import Timer, connected_components_nonconsecutive, apply_mask_for_labels, block_stats_for_volume, BLOCK_STATS_DTYPES, round_box, SparseBlockMask
 from neuclease.dvid import fetch_instance_info, fetch_maxlabel, post_maxlabel, post_nextlabel, fetch_roi
 
-from dvidutils import LabelMapper
+from neuclease.util import LabelMapper
 
 from ..util import replace_default_entries
 from ..brick import Brick, BrickWall, extract_halos, PB_COLS, clip_to_logical

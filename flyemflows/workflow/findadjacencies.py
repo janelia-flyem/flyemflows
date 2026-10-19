@@ -15,7 +15,7 @@ from dvid_resource_manager.client import ResourceManagerClient
 from neuclease.util import (Timer, swap_df_cols, approximate_closest_approach, SparseBlockMask,
                             connected_components_nonconsecutive, apply_mask_for_labels)
 
-from dvidutils import LabelMapper
+from neuclease.util import LabelMapper
 
 from ..util import stdout_redirected
 from ..brick import BrickWall

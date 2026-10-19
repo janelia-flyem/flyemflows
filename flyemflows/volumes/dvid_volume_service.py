@@ -11,7 +11,7 @@ from requests import HTTPError
 from confiddler import validate
 from dvid_resource_manager.client import ResourceManagerClient
 
-from dvidutils import LabelMapper
+from neuclease.util import LabelMapper
 
 from neuclease.util import Timer, choose_pyramid_depth, round_box, parse_timestamp
 from neuclease.dvid import ( fetch_repo_instances, resolve_ref, fetch_instance_info, fetch_volume_box,
