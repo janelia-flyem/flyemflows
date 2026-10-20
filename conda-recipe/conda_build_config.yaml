@@ -10,5 +10,4 @@ lz4:
   - 4
 
 pin_run_as_build:
-  python: x.x
   lz4: x
