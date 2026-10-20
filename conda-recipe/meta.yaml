@@ -14,14 +14,16 @@ build:
 
   script: python setup.py install --single-version-externally-managed --record=record.txt
   entry_points:
-    - launchflow = flyemflows.bin.launchflow:main
+    {% for ep in data["entry_points"]["console_scripts"] %}
+    - {{ ep }}
+    {% endfor %}
 
 requirements:
   host:
     - python {{ python }}
     - setuptools
   run:
-    - python {{ python }}
+    - python >=3.10
     - requests
     - psutil
     - numpy
