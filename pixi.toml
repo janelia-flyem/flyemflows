@@ -1,0 +1,84 @@
+# Generated from conda-recipe/meta.yaml.
+# Allows flyemflows to be used as a pixi source dependency, e.g.
+#
+#   [dependencies]
+#   flyemflows = { path = "/path/to/flyemflows" }
+#
+# Keep the dependency lists below in sync with conda-recipe/meta.yaml.
+
+[workspace]
+name = "flyemflows"
+channels = ["conda-forge", "flyem-forge"]
+platforms = ["linux-64", "osx-64", "osx-arm64"]
+preview = ["pixi-build"]
+
+[package]
+name = "flyemflows"
+version = "0.7"
+
+[package.build]
+backend = { name = "pixi-build-python", version = "*" }
+
+[package.build.config]
+noarch = true
+# The default installer (uv) crashes on rattler-build's placeholder prefix; pip works.
+installer = "pip"
+
+[package.host-dependencies]
+python = ">=3.10"
+setuptools = "*"
+pip = "*"
+
+[package.run-dependencies]
+python = ">=3.10"
+requests = "*"
+psutil = "*"
+numpy = "*"
+pandas = "*"
+numba = "*"
+scipy = "*"
+scikit-image = "*"
+fabric = "*"
+pyarrow = "*"
+dask = "*"
+# See conda-recipe/meta.yaml for why this is pinned.
+dask-jobqueue = "0.9.*"
+distributed = "*"
+# conda_build_config.yaml pins lz4 to 4
+lz4 = "4.*"
+cloudpickle = "*"
+tblib = "*"
+confiddler = "*"
+pillow = "*"
+vigra = "*"
+h5py = "*"
+zarr = ">=2.2"
+intern = "*"
+httplib2 = "*"
+oauth2client = "*"
+snappy = "*"
+python-snappy = "*"
+vol2mesh = ">=0.2.post3"
+neuprint-python = "*"
+neuclease = ">=0.100"
+dvid-resource-manager = "*"
+
+# Optional dependencies (see conda-recipe/meta.yaml for notes)
+# z5py = "*"
+# tensorstore = "*"
+
+# Development environment for working on flyemflows itself.
+[dependencies]
+flyemflows = { path = "." }
+
+[feature.test.dependencies]
+pytest = "*"
+dvid = "*"
+
+# The recipe also lists numpy-allocation-tracking, but the only available build is for python 3.7.
+
+[feature.test.tasks]
+test = "pytest"
+
+[environments]
+test = ["test"]
