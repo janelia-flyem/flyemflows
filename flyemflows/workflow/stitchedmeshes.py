@@ -14,7 +14,6 @@ from distributed import as_completed
 from dvid_resource_manager.client import ResourceManagerClient
 
 from neuclease.util import Grid
-from neuclease.dvid import default_node_service
 
 from vol2mesh import Mesh, concatenate_meshes
 
@@ -144,6 +143,9 @@ class StitchedMeshes(Workflow):
             f"Largest available scale in the input ({max_scale}) is smaller than the scale you provided ({options['scale']})."
         
     def execute(self):
+        # FIXME: This is a deprecated function, and this whole workflow is deprecated anyway.
+        from neuclease.dvid import default_node_service
+
         self._init_service()
         mgr_client = self.mgr_client
 
