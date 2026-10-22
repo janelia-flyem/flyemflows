@@ -15,6 +15,7 @@ from .masksegmentation import MaskSegmentation
 from .mitodistances import MitoDistances
 from .mitorepair import MitoRepair
 from .mitostats import MitoStats
+from .multiresbodymeshes import MultiresBodyMeshes
 from .roistats import RoiStats
 from .samplepoints import SamplePoints
 from .sparseblockstats import SparseBlockstats
@@ -42,6 +43,7 @@ BUILTIN_WORKFLOWS = [
     MitoDistances,
     MitoRepair,
     MitoStats,
+    MultiresBodyMeshes,
     RoiStats,
     SamplePoints,
     SparseBlockstats,
