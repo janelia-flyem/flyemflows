@@ -52,6 +52,58 @@ SegmentationDvidInstanceSchema = {
     }
 }
 
+# Options for selecting the bodies to process, and processing them in batches.
+# (Shared with the multiresbodymeshes workflow.)
+BodyMeshBatchProperties = {
+    "bodies": BodyListSchema,
+    "bodies-from-mutations": {
+        "description":
+            "A UUID range as accepted by neuclease.dvid.resolve_ref_range().\n"
+            "If provided, fetch the mutations from that UUID range to determine which bodies should be processed.\n"
+            "Cannot be used with the 'bodies' option.",
+        "type": "string",
+        "default": ""
+    },
+    "select-bodies-after-derived-update": {
+        "description":
+            "If true, select bodies automatically according to the ones which have been mutated since the last derived-data update.\n"
+            "Cannot be used with the 'bodies' or 'bodies-from-mutations' options.\n"
+            "Note: This workflow will not actually store any update receipt for the completed meshes, it will just update the meshes.\n",
+        "type": "boolean",
+        "default": False
+    },
+    "force-update": {
+        "description":
+            "Ignore body meshes on the server and regenerate them from the component chunks.\n",
+        "type": "boolean",
+        "default": False
+    },
+    "body-batch-size": {
+        "description": "Bodies are processed in batches.\n",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": int(1e6),
+        "default": 100,
+    },
+    "superbatch-size": {
+        "description": "The number of bodies to process in each superbatch.",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": int(1e6),
+        "default": 100_000,
+    },
+    "chunk-processes": {
+        "description":
+            "How many processes to use within each worker to generate chunk meshes.\n"
+            "The special value -1 means 'schedule chunks onto the general cluster.\n'",
+        "type": "integer",
+        "minimum": -1,
+        # FIXME: Using a magic value (-1) like this is awkward.
+        # FIXME: It would be nice to infer the default value from the dask config.
+        "default": 0
+    }
+}
+
 
 class ChunkedBodyMeshes(Workflow):
 
@@ -63,53 +115,7 @@ class ChunkedBodyMeshes(Workflow):
             "dvid": SegmentationDvidInstanceSchema,
             "body-meshes": BodyMeshParametersSchema,
             "chunk-meshes": MeshChunkConfigSchema,
-            "bodies": BodyListSchema,
-            "bodies-from-mutations": {
-                "description":
-                    "A UUID range as accepted by neuclease.dvid.resolve_ref_range().\n"
-                    "If provided, fetch the mutations from that UUID range to determine which bodies should be processed.\n"
-                    "Cannot be used with the 'bodies' option.",
-                "type": "string",
-                "default": ""
-            },
-            "select-bodies-after-derived-update": {
-                "description":
-                    "If true, select bodies automatically according to the ones which have been mutated since the last derived-data update.\n"
-                    "Cannot be used with the 'bodies' or 'bodies-from-mutations' options.\n"
-                    "Note: This workflow will not actually store any update receipt for the completed meshes, it will just update the meshes.\n",
-                "type": "boolean",
-                "default": False
-            },
-            "force-update": {
-                "description":
-                    "Ignore body meshes on the server and regenerate them from the component chunks.\n",
-                "type": "boolean",
-                "default": False
-            },
-            "body-batch-size": {
-                "description": "Bodies are processed in batches.\n",
-                "type": "integer",
-                "minimum": 1,
-                "maximum": int(1e6),
-                "default": 100,
-            },
-            "superbatch-size": {
-                "description": "The number of bodies to process in each superbatch.",
-                "type": "integer",
-                "minimum": 1,
-                "maximum": int(1e6),
-                "default": 100_000,
-            },
-            "chunk-processes": {
-                "description":
-                    "How many processes to use within each worker to generate chunk meshes.\n"
-                    "The special value -1 means 'schedule chunks onto the general cluster.\n'",
-                "type": "integer",
-                "minimum": -1,
-                # FIXME: Using a magic value (-1) like this is awkward.
-                # FIXME: It would be nice to infer the default value from the dask config.
-                "default": 0
-            }
+            **BodyMeshBatchProperties,
         }
     }
 
@@ -127,19 +133,11 @@ class ChunkedBodyMeshes(Workflow):
         server = cbm_cfg['dvid']['server']
         uuid = cbm_cfg['dvid']['uuid']
         seg_instance = cbm_cfg['dvid']['segmentation-name']
-
-        needs_multiprocessing = (cbm_cfg['chunk-processes'] > 0)
-        workers_are_daemon = dask.config.get('distributed.worker.daemon', True)
-        if needs_multiprocessing and workers_are_daemon:
-            # daemons can't spawn their own child processes, I think.
-            msg = ("This workflow uses multiprocessing, so you must configure your dask workers NOT to be daemons.\n"
-                    "In your dask-config, set distributed.worker.daemon: false")
-            raise RuntimeError(msg)
+        check_chunk_processes(cbm_cfg)
 
         timeout = cbm_cfg['dvid']['timeout']
         set_default_dvid_session_timeout(timeout, timeout)
-        multires = (cbm_cfg['body-meshes']['format'] == 'neuroglancer-multi-res')
-        init_mesh_instances(server, uuid, seg_instance, body=True, chunks=True, sv=False, multires=multires)
+        init_mesh_instances(server, uuid, seg_instance, body=True, chunks=True, sv=False)
 
     def execute(self):
         self._init()
@@ -148,28 +146,7 @@ class ChunkedBodyMeshes(Workflow):
         server = cbm_cfg['dvid']['server']
         uuid = resolve_ref(server, cbm_cfg['dvid']['uuid'], expand=True)
         seg_instance = cbm_cfg['dvid']['segmentation-name']
-        if sum([bool(cbm_cfg['bodies-from-mutations']), bool(cbm_cfg['bodies']), bool(cbm_cfg['select-bodies-after-derived-update'])]) > 1:
-            raise ValueError("Must specify only one body selection method: 'bodies-from-mutations', 'bodies', or 'select-bodies-after-derived-update'.")
-
-        if cbm_cfg['select-bodies-after-derived-update']:
-            prev_update, affected, last_mutid = mutated_bodies_since_previous_update(server, uuid, seg_instance, "meshes")
-            prev_uuid = prev_update['uuid']
-            prev_mutid = prev_update['mutid']
-            prev_timestamp = prev_update.get('timestamp', '<unknown time>')
-            bodies = [*affected.changed_bodies, *affected.removed_bodies, *affected.new_bodies]
-            logger.info(
-                f"Detected {len(bodies)} mutated bodies since the previous mesh update "
-                f"in uuid {prev_uuid} (mutid: {prev_mutid}) at {prev_timestamp}"
-            )
-            logger.info(f"changed: {len(affected.changed_bodies)}, removed: {len(affected.removed_bodies)}, new: {len(affected.new_bodies)}")
-        elif cbm_cfg['bodies-from-mutations']:
-            muts = fetch_mutations(server, cbm_cfg['bodies-from-mutations'], seg_instance)
-            mutated_bodies = compute_affected_bodies(muts)
-            bodies = [*mutated_bodies.new_bodies, *mutated_bodies.changed_bodies, *mutated_bodies.removed_bodies]
-        else:
-            bodies = load_body_list(cbm_cfg['bodies'], False)
-
-        batch_size = cbm_cfg['body-batch-size']
+        bodies = select_bodies(cbm_cfg, server, uuid, seg_instance)
 
         resource_config = self.config["resource-manager"]
         resource_mgr = ResourceManagerClient(resource_config["server"], resource_config["port"])
@@ -190,31 +167,75 @@ class ChunkedBodyMeshes(Workflow):
             )
             return body
 
-        completed_bodies = []
-        try:
-            for i, superbatch_bodies in enumerate(iter_batches(bodies, cbm_cfg['superbatch-size'])):
-                with Timer(f"Superbatch {i}: Processing {len(superbatch_bodies)} bodies", logger):
-                    task_names = [f'_update_body_mesh-{body}' for body in superbatch_bodies]
-                    futures = self.client.map(_update_body_mesh, superbatch_bodies, key=task_names, priority=0, batch_size=batch_size)
-                    if hasattr(self.client, 'DEBUG'):
-                        ac = as_completed_synchronous(futures, with_results=True)
-                    else:
-                        ac = distributed.as_completed(futures, with_results=True)
+        process_bodies(self.client, bodies, _update_body_mesh, cbm_cfg)
 
-                        for _, body in tqdm_proxy(ac, total=len(futures)):
-                            if np.issubdtype(type(body), np.integer):
-                                completed_bodies.append(body)
-                            else:
-                                logger.warning(f"Body {body} is not an integer")
-                            
-                            # Periodically update the completed-bodies.csv file in case we want to view it during the job.
-                            if len(completed_bodies) % 100 == 0:
-                                cb = pd.Series(completed_bodies, name='body', dtype=np.uint64)
-                                cb.to_csv('completed-bodies.csv', index=False, header=True)
-        finally:
-            cb = pd.Series(completed_bodies, name='body', dtype=np.uint64)
-            cb.to_csv('completed-bodies.csv', index=False, header=True)
-            if incomplete_bodies := {*bodies} - {*completed_bodies}:
-                logger.warning(f"Did not complete {len(incomplete_bodies)} body meshes (out of {len(bodies)}).")
-                logger.warning("See complete-bodies.csv and incomplete-bodies.csv")
-                pd.Series(sorted(incomplete_bodies), name='body').to_csv('incomplete-bodies.csv', index=False, header=True)
+
+def check_chunk_processes(cfg):
+    needs_multiprocessing = (cfg['chunk-processes'] > 0)
+    workers_are_daemon = dask.config.get('distributed.worker.daemon', True)
+    if needs_multiprocessing and workers_are_daemon:
+        # daemons can't spawn their own child processes, I think.
+        msg = ("This workflow uses multiprocessing, so you must configure your dask workers NOT to be daemons.\n"
+                "In your dask-config, set distributed.worker.daemon: false")
+        raise RuntimeError(msg)
+
+
+def select_bodies(cfg, server, uuid, seg_instance):
+    """Determine which bodies to process, according to the BodyMeshBatchProperties options."""
+    if sum([bool(cfg['bodies-from-mutations']), bool(cfg['bodies']), bool(cfg['select-bodies-after-derived-update'])]) > 1:
+        raise ValueError("Must specify only one body selection method: 'bodies-from-mutations', 'bodies', or 'select-bodies-after-derived-update'.")
+
+    if cfg['select-bodies-after-derived-update']:
+        prev_update, affected, last_mutid = mutated_bodies_since_previous_update(server, uuid, seg_instance, "meshes")
+        prev_uuid = prev_update['uuid']
+        prev_mutid = prev_update['mutid']
+        prev_timestamp = prev_update.get('timestamp', '<unknown time>')
+        bodies = [*affected.changed_bodies, *affected.removed_bodies, *affected.new_bodies]
+        logger.info(
+            f"Detected {len(bodies)} mutated bodies since the previous mesh update "
+            f"in uuid {prev_uuid} (mutid: {prev_mutid}) at {prev_timestamp}"
+        )
+        logger.info(f"changed: {len(affected.changed_bodies)}, removed: {len(affected.removed_bodies)}, new: {len(affected.new_bodies)}")
+    elif cfg['bodies-from-mutations']:
+        muts = fetch_mutations(server, cfg['bodies-from-mutations'], seg_instance)
+        mutated_bodies = compute_affected_bodies(muts)
+        bodies = [*mutated_bodies.new_bodies, *mutated_bodies.changed_bodies, *mutated_bodies.removed_bodies]
+    else:
+        bodies = load_body_list(cfg['bodies'], False)
+    return bodies
+
+
+def process_bodies(client, bodies, update_body_mesh_fn, cfg):
+    """
+    Call update_body_mesh_fn(body) for each body on the cluster, in (super)batches,
+    and record which bodies were completed (in completed-bodies.csv and incomplete-bodies.csv).
+    """
+    batch_size = cfg['body-batch-size']
+    completed_bodies = []
+    try:
+        for i, superbatch_bodies in enumerate(iter_batches(bodies, cfg['superbatch-size'])):
+            with Timer(f"Superbatch {i}: Processing {len(superbatch_bodies)} bodies", logger):
+                task_names = [f'_update_body_mesh-{body}' for body in superbatch_bodies]
+                futures = client.map(update_body_mesh_fn, superbatch_bodies, key=task_names, priority=0, batch_size=batch_size)
+                if hasattr(client, 'DEBUG'):
+                    ac = as_completed_synchronous(futures, with_results=True)
+                else:
+                    ac = distributed.as_completed(futures, with_results=True)
+
+                    for _, body in tqdm_proxy(ac, total=len(futures)):
+                        if np.issubdtype(type(body), np.integer):
+                            completed_bodies.append(body)
+                        else:
+                            logger.warning(f"Body {body} is not an integer")
+                        
+                        # Periodically update the completed-bodies.csv file in case we want to view it during the job.
+                        if len(completed_bodies) % 100 == 0:
+                            cb = pd.Series(completed_bodies, name='body', dtype=np.uint64)
+                            cb.to_csv('completed-bodies.csv', index=False, header=True)
+    finally:
+        cb = pd.Series(completed_bodies, name='body', dtype=np.uint64)
+        cb.to_csv('completed-bodies.csv', index=False, header=True)
+        if incomplete_bodies := {*bodies} - {*completed_bodies}:
+            logger.warning(f"Did not complete {len(incomplete_bodies)} body meshes (out of {len(bodies)}).")
+            logger.warning("See complete-bodies.csv and incomplete-bodies.csv")
+            pd.Series(sorted(incomplete_bodies), name='body').to_csv('incomplete-bodies.csv', index=False, header=True)
