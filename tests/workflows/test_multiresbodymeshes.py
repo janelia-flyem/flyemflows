@@ -103,6 +103,31 @@ def test_multiresbodymeshes(setup_dvid_segmentation_input):
         fetch_key(dvid_address, repo_uuid, f"{seg}_multires_meshes", "200")
 
 
+def test_multiresbodymeshes_supervoxels(setup_dvid_segmentation_input):
+    template_dir, _config, dvid_address, repo_uuid, input_segmentation_name = setup_dvid_segmentation_input
+
+    # (In the test segmentation, supervoxel 100 is body 100.)
+    with open(f"{template_dir}/workflow.yaml", 'r') as f:
+        config_text = f.read()
+    config_text = config_text.replace("force-update: true", "supervoxels: true")
+    config_text = config_text.replace("lod-error-thresholds: [4.0, 40.0]",
+                                      "lod-error-thresholds: [4.0, 40.0]\n        supervoxel-storage: dvid")
+    assert "supervoxels: true" in config_text and "supervoxel-storage: dvid" in config_text
+    with open(f"{template_dir}/workflow.yaml", 'w') as f:
+        f.write(config_text)
+
+    _execution_dir, _workflow = launch_flow(template_dir, 1)
+
+    seg = input_segmentation_name
+    index = fetch_key(dvid_address, repo_uuid, f"{seg}_multires_sv_meshes", "100.index")
+    assert parse_manifest(index)['num_lods'] == 2
+    fetch_key(dvid_address, repo_uuid, f"{seg}_multires_sv_meshes", "100")
+
+    # Supervoxel 200 doesn't exist, so it was skipped.
+    with pytest.raises(HTTPError):
+        fetch_key(dvid_address, repo_uuid, f"{seg}_multires_sv_meshes", "200.index")
+
+
 if __name__ == "__main__":
     if 'CLUSTER_TYPE' in os.environ:
         import warnings
