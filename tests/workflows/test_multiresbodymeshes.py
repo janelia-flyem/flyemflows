@@ -109,10 +109,14 @@ def test_multiresbodymeshes_supervoxels(setup_dvid_segmentation_input):
     # (In the test segmentation, supervoxel 100 is body 100.)
     with open(f"{template_dir}/workflow.yaml", 'r') as f:
         config_text = f.read()
-    config_text = config_text.replace("force-update: true", "supervoxels: true")
+    config_text = config_text.replace("force-update: true\n", "")
+    config_text = config_text.replace("bodies: [100, 200]", "supervoxels: [100, 200]")
+    config_text = config_text.replace(f"segmentation-name: {input_segmentation_name}",
+                                      f"segmentation-name: {input_segmentation_name}\n        supervoxels: true")
     config_text = config_text.replace("lod-error-thresholds: [4.0, 40.0]",
                                       "lod-error-thresholds: [4.0, 40.0]\n        supervoxel-storage: dvid")
-    assert "supervoxels: true" in config_text and "supervoxel-storage: dvid" in config_text
+    assert "supervoxels: true" in config_text and "supervoxels: [100, 200]" in config_text
+    assert "supervoxel-storage: dvid" in config_text and "force-update" not in config_text
     with open(f"{template_dir}/workflow.yaml", 'w') as f:
         f.write(config_text)
 
