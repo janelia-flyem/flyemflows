@@ -1,6 +1,7 @@
 import os
 import copy
 import logging
+import traceback
 from pathlib import Path
 from collections import namedtuple
 
@@ -148,13 +149,13 @@ class SparseMeshes(Workflow):
                 for body in bodies:
                     try:
                         with Timer() as timer:
-                            sparsevol_ranges[body] = (
-                                fetch_sparsevol(server, uuid, instance, body, scale, is_supervoxels, format='ranges'),
-                                timer.seconds,
-                                ''
-                            )
-                    except Exception as ex:
-                        sparsevol_ranges[body] = (None, timer.seconds, str(ex))
+                            ranges = fetch_sparsevol(server, uuid, instance, body, scale, is_supervoxels, format='ranges')
+                        if ranges is None:
+                            sparsevol_ranges[body] = (None, timer.seconds, 'fetch_sparsevol() returned None')
+                        else:
+                            sparsevol_ranges[body] = (ranges, timer.seconds, '')
+                    except Exception:
+                        sparsevol_ranges[body] = (None, timer.seconds, traceback.format_exc())
             return sparsevol_ranges
 
         def generate_mesh_batch(sparsevol_ranges):
@@ -177,9 +178,9 @@ class SparseMeshes(Workflow):
                         mesh_results[body] = MeshResult(
                             body, 'success', buf, len(buf), len(m.vertices_zyx), download_seconds, timer.seconds, download_error, ''
                         )
-                    except Exception as ex:
+                    except Exception:
                         mesh_results[body] = MeshResult(
-                            body, 'failed-meshing', 0, 0, 0, download_seconds, timer.seconds, download_error, str(ex)
+                            body, 'failed-meshing', 0, 0, 0, download_seconds, timer.seconds, download_error, traceback.format_exc()
                         )
             return mesh_results
 
